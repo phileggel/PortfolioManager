@@ -1490,4 +1490,43 @@ mod tests {
             "global value = cash (250) + bond (0, unpriced) = 250"
         );
     }
+
+    // CSH-097 — Cash row hidden at quantity = 0 (the cash holding follows
+    // ACD-020's quantity > 0 filter without override). Setup: deposit then
+    // withdraw the full balance so the cash holding exists at quantity 0
+    // (Deposit + Withdrawal pair remains, so CSH-013 cleanup does not fire).
+    #[tokio::test]
+    async fn cash_holding_hidden_when_quantity_is_zero() {
+        let pool = make_pool().await;
+        let (account_svc, asset_svc) = setup(&pool).await;
+
+        let account = account_svc
+            .create(
+                "Cash drained".to_string(),
+                "EUR".to_string(),
+                UpdateFrequency::ManualMonth,
+            )
+            .await
+            .unwrap();
+        asset_svc.seed_cash_asset("EUR").await.unwrap();
+        account_svc
+            .record_deposit(&account.id, "2020-01-01".to_string(), 100_000_000, None)
+            .await
+            .unwrap();
+        account_svc
+            .record_withdrawal(&account.id, "2020-02-01".to_string(), 100_000_000, None)
+            .await
+            .unwrap();
+
+        let uc = AccountDetailsUseCase::new(account_svc, asset_svc);
+        let resp = uc.get_account_details(&account.id).await.unwrap();
+
+        assert!(
+            !resp
+                .holdings
+                .iter()
+                .any(|h| h.asset_id.starts_with("system-cash-")),
+            "cash row must be hidden when its quantity is 0 (CSH-097)"
+        );
+    }
 }

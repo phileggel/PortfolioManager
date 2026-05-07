@@ -1614,4 +1614,421 @@ mod tests {
         assert_eq!(h.quantity, micro(2));
         assert_eq!(h.average_price, micro(100));
     }
+
+    // -------------------------------------------------------------------------
+    // CSH spec coverage — dedicated assertions for the rules listed in
+    // docs/spec/cash-tracking.md. See docs/todo.md "(backend) Cash spec backend
+    // test coverage gaps" for the spec-checker run that surfaced them.
+    // -------------------------------------------------------------------------
+
+    // CSH-012 — Cash Holding lazy creation: a fresh account has no Cash Holding;
+    // the first Deposit creates it and sets quantity = deposited amount.
+    #[test]
+    fn csh_012_first_deposit_lazily_creates_cash_holding() {
+        let mut acc = base_account();
+        assert!(
+            acc.holdings.is_empty(),
+            "fresh account must have no holdings"
+        );
+        assert_eq!(acc.cash_holding_quantity(), 0);
+
+        acc.record_deposit("2020-01-01".to_string(), 500_000_000, None)
+            .unwrap();
+
+        assert_eq!(acc.cash_holding_quantity(), 500_000_000);
+        let cash = acc
+            .holdings
+            .iter()
+            .find(|h| h.asset_id == acc.cash_asset_id())
+            .expect("cash holding must exist after first deposit");
+        assert_eq!(cash.quantity, 500_000_000);
+        assert_eq!(cash.average_price, 1_000_000, "cash VWAP is constant 1.0");
+    }
+
+    // CSH-013 — Cash Holding lifecycle follows TRX-034: when no Deposit/Withdrawal
+    // remain after a delete and the running balance is zero, the holding is removed.
+    #[test]
+    fn csh_013_cash_holding_removed_when_last_deposit_cancelled() {
+        let mut acc = base_account();
+        let dep = acc
+            .record_deposit("2020-01-01".to_string(), 500_000_000, None)
+            .unwrap()
+            .clone();
+        assert!(acc.cash_holding_quantity() > 0);
+
+        acc.cancel_transaction(&dep.id).unwrap();
+
+        assert!(
+            !acc.holdings
+                .iter()
+                .any(|h| h.asset_id == acc.cash_asset_id()),
+            "cash holding must be removed when no cash-pair tx remains"
+        );
+        assert!(
+            acc.pending_changes.iter().any(|c| matches!(
+                c,
+                AccountChange::HoldingDeleted { asset_id, .. }
+                    if asset_id == &acc.cash_asset_id()
+            )),
+            "HoldingDeleted change must be queued for the cash asset"
+        );
+    }
+
+    // CSH-022 — Deposit creation: cash quantity rises by amount; AccountChanges
+    // include TransactionInserted (the deposit) + HoldingUpserted (cash).
+    #[test]
+    fn csh_022_deposit_emits_transaction_and_holding_changes() {
+        let mut acc = base_account();
+        let tx = acc
+            .record_deposit("2020-01-01".to_string(), 750_000_000, None)
+            .unwrap()
+            .clone();
+
+        assert_eq!(acc.cash_holding_quantity(), 750_000_000);
+        assert_eq!(tx.transaction_type, TransactionType::Deposit);
+        assert_eq!(tx.total_amount, 750_000_000);
+        assert!(
+            acc.pending_changes.iter().any(|c| matches!(
+                c,
+                AccountChange::TransactionInserted(t) if t.id == tx.id
+            )),
+            "TransactionInserted must be queued for the deposit"
+        );
+        assert!(
+            acc.pending_changes.iter().any(|c| matches!(
+                c,
+                AccountChange::HoldingUpserted(h)
+                    if h.asset_id == acc.cash_asset_id() && h.quantity == 750_000_000
+            )),
+            "HoldingUpserted must reflect the new cash balance"
+        );
+    }
+
+    // CSH-023 — Deposit edit re-applies chronological replay; the cash holding
+    // reflects the new amount.
+    #[test]
+    fn csh_023_deposit_edit_replays_cash_holding() {
+        let mut acc = base_account();
+        let dep = acc
+            .record_deposit("2020-01-01".to_string(), 500_000_000, None)
+            .unwrap()
+            .clone();
+
+        acc.correct_transaction(
+            &dep.id,
+            "2020-01-01".to_string(),
+            900_000_000,
+            1_000_000,
+            1_000_000,
+            0,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            acc.cash_holding_quantity(),
+            900_000_000,
+            "edited deposit must drive the new cash balance"
+        );
+    }
+
+    // CSH-024 — Deposit delete is rejected when the chronological replay would
+    // leave a remaining Withdrawal in violation of CSH-080.
+    #[test]
+    fn csh_024_deposit_delete_rejected_when_replay_would_overdraw() {
+        let mut acc = base_account();
+        let dep = acc
+            .record_deposit("2020-01-01".to_string(), 1_000_000_000, None)
+            .unwrap()
+            .clone();
+        acc.record_withdrawal("2020-02-01".to_string(), 800_000_000, None)
+            .unwrap();
+
+        let err = acc.cancel_transaction(&dep.id).unwrap_err();
+        assert!(
+            matches!(
+                err.downcast_ref::<AccountOperationError>(),
+                Some(AccountOperationError::InsufficientCash { .. })
+            ),
+            "expected InsufficientCash, got: {err}"
+        );
+    }
+
+    // CSH-032 — Withdrawal creation: cash quantity decreases by amount; queues
+    // both TransactionInserted and HoldingUpserted changes.
+    #[test]
+    fn csh_032_withdrawal_emits_transaction_and_holding_changes() {
+        let mut acc = cash_seeded_account();
+        let opening = acc.cash_holding_quantity();
+        let wtx = acc
+            .record_withdrawal("2020-02-01".to_string(), 250_000_000, None)
+            .unwrap()
+            .clone();
+
+        assert_eq!(acc.cash_holding_quantity(), opening - 250_000_000);
+        assert_eq!(wtx.transaction_type, TransactionType::Withdrawal);
+        assert!(
+            acc.pending_changes.iter().any(|c| matches!(
+                c,
+                AccountChange::TransactionInserted(t) if t.id == wtx.id
+            )),
+            "TransactionInserted must be queued for the withdrawal"
+        );
+        assert!(
+            acc.pending_changes.iter().any(|c| matches!(
+                c,
+                AccountChange::HoldingUpserted(h) if h.asset_id == acc.cash_asset_id()
+            )),
+            "HoldingUpserted must be queued reflecting the new balance"
+        );
+    }
+
+    // CSH-033 — Withdrawal edit re-applies replay; updated amount is reflected
+    // in the cash balance.
+    #[test]
+    fn csh_033_withdrawal_edit_replays_cash_holding() {
+        let mut acc = cash_seeded_account();
+        let opening = acc.cash_holding_quantity();
+        let wtx = acc
+            .record_withdrawal("2020-02-01".to_string(), 200_000_000, None)
+            .unwrap()
+            .clone();
+        acc.correct_transaction(
+            &wtx.id,
+            "2020-02-01".to_string(),
+            500_000_000,
+            1_000_000,
+            1_000_000,
+            0,
+            None,
+        )
+        .unwrap();
+        assert_eq!(acc.cash_holding_quantity(), opening - 500_000_000);
+    }
+
+    // CSH-034 — Withdrawal delete only ever raises the running balance, so it
+    // never produces an InsufficientCash rejection.
+    #[test]
+    fn csh_034_withdrawal_delete_never_raises_insufficient_cash() {
+        let mut acc = cash_seeded_account();
+        let opening = acc.cash_holding_quantity();
+        let wtx = acc
+            .record_withdrawal("2020-02-01".to_string(), 400_000_000, None)
+            .unwrap()
+            .clone();
+        acc.cancel_transaction(&wtx.id)
+            .expect("deleting a withdrawal must succeed — it can only raise the cash balance");
+        assert_eq!(acc.cash_holding_quantity(), opening);
+    }
+
+    // CSH-040 — Purchase debits cash by total_amount alongside its asset-side effect.
+    #[test]
+    fn csh_040_purchase_debits_cash_by_total_amount() {
+        let mut acc = cash_seeded_account();
+        let opening = acc.cash_holding_quantity();
+        // 2 units × 100 = 200 base; × exchange_rate 1.0 + fees 0 → total = 200.
+        acc.buy_holding(
+            "asset-1".to_string(),
+            "2024-01-01".to_string(),
+            micro(2),
+            micro(100),
+            micro(1),
+            0,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            acc.cash_holding_quantity(),
+            opening - micro(200),
+            "purchase must debit cash by total_amount (qty×price)"
+        );
+    }
+
+    // CSH-041 — Purchase eligibility: rejected with InsufficientCash when no
+    // Cash Holding exists or its balance < total_amount.
+    #[test]
+    fn csh_041_purchase_rejected_with_insufficient_cash() {
+        let mut acc = base_account(); // no cash deposit at all
+        let err = acc
+            .buy_holding(
+                "asset-1".to_string(),
+                "2024-01-01".to_string(),
+                micro(1),
+                micro(100),
+                micro(1),
+                0,
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                err.downcast_ref::<AccountOperationError>(),
+                Some(AccountOperationError::InsufficientCash { .. })
+            ),
+            "expected InsufficientCash, got: {err}"
+        );
+    }
+
+    // CSH-042 — Purchase edit re-runs the chronological replay; an edit that
+    // would leave a later cash-debit in violation is rejected.
+    #[test]
+    fn csh_042_purchase_edit_rejected_when_replay_would_overdraw() {
+        // Start with a tight cash budget so the edit pushes us over.
+        let mut acc = base_account();
+        acc.record_deposit("2020-01-01".to_string(), micro(300), None)
+            .unwrap();
+        let buy_tx = acc
+            .buy_holding(
+                "asset-1".to_string(),
+                "2024-01-01".to_string(),
+                micro(1),
+                micro(100),
+                micro(1),
+                0,
+                None,
+            )
+            .unwrap()
+            .clone();
+        // Re-edit to require 500 EUR — only 300 is available.
+        let err = acc
+            .correct_transaction(
+                &buy_tx.id,
+                "2024-01-01".to_string(),
+                micro(5),
+                micro(100),
+                micro(1),
+                0,
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                err.downcast_ref::<AccountOperationError>(),
+                Some(AccountOperationError::InsufficientCash { .. })
+            ),
+            "expected InsufficientCash on overspending edit, got: {err}"
+        );
+    }
+
+    // CSH-043 — Purchase delete returns cash; never violates CSH-080.
+    #[test]
+    fn csh_043_purchase_delete_returns_cash() {
+        let mut acc = cash_seeded_account();
+        let pre = acc.cash_holding_quantity();
+        let buy_tx = acc
+            .buy_holding(
+                "asset-1".to_string(),
+                "2024-01-01".to_string(),
+                micro(2),
+                micro(100),
+                micro(1),
+                0,
+                None,
+            )
+            .unwrap()
+            .clone();
+        assert_eq!(acc.cash_holding_quantity(), pre - micro(200));
+        acc.cancel_transaction(&buy_tx.id).unwrap();
+        assert_eq!(
+            acc.cash_holding_quantity(),
+            pre,
+            "deleting the buy must restore cash to its pre-buy balance"
+        );
+    }
+
+    // CSH-050 — Sell credits cash and lazy-creates the Cash Holding when this
+    // is the first cash-affecting transaction (no prior Deposit).
+    #[test]
+    fn csh_050_sell_credits_cash_and_lazy_creates_holding() {
+        // Seed a holding directly via open_holding so we can sell without the
+        // CSH-041 cash-prerequisite of a Deposit.
+        let mut acc = base_account();
+        acc.open_holding(
+            "asset-1".to_string(),
+            "2024-01-01".to_string(),
+            micro(10),
+            micro(1_000),
+        )
+        .unwrap();
+        assert_eq!(acc.cash_holding_quantity(), 0, "no cash before the sell");
+
+        acc.sell_holding(
+            "asset-1".to_string(),
+            "2024-06-01".to_string(),
+            micro(2),
+            micro(150),
+            micro(1),
+            0,
+            None,
+        )
+        .unwrap();
+
+        // Sell of 2 × 150 = 300 credits cash by total_amount.
+        assert_eq!(
+            acc.cash_holding_quantity(),
+            micro(300),
+            "sell must credit cash by total_amount and lazy-create the holding"
+        );
+    }
+
+    // CSH-080 — InsufficientCash payload's current_balance_micros equals the
+    // cash holding's balance immediately before the rejected mutation would have
+    // applied (so the FE can render it without a follow-up fetch).
+    #[test]
+    fn csh_080_insufficient_cash_payload_carries_pre_mutation_balance() {
+        let mut acc = base_account();
+        acc.record_deposit("2020-01-01".to_string(), 300_000_000, None)
+            .unwrap();
+        // Withdrawal of 500 against a balance of 300 → reject with current=300.
+        let err = acc
+            .record_withdrawal("2020-02-01".to_string(), 500_000_000, None)
+            .unwrap_err();
+        match err {
+            CashOperationError::Operation(AccountOperationError::InsufficientCash {
+                current_balance_micros,
+                currency,
+            }) => {
+                assert_eq!(current_balance_micros, 300_000_000);
+                assert_eq!(currency, "EUR");
+            }
+            other => panic!("expected InsufficientCash{{300_000_000, EUR}}, got: {other:?}"),
+        }
+    }
+
+    // CSH-051 — Sell delete triggers replay across both the sold-asset holding
+    // and the Cash Holding; cash returns to its pre-sell balance.
+    #[test]
+    fn csh_051_sell_delete_replays_cash_holding() {
+        let mut acc = base_account();
+        acc.open_holding(
+            "asset-1".to_string(),
+            "2024-01-01".to_string(),
+            micro(10),
+            micro(1_000),
+        )
+        .unwrap();
+        let sell_tx = acc
+            .sell_holding(
+                "asset-1".to_string(),
+                "2024-06-01".to_string(),
+                micro(2),
+                micro(150),
+                micro(1),
+                0,
+                None,
+            )
+            .unwrap()
+            .clone();
+        assert_eq!(acc.cash_holding_quantity(), micro(300));
+
+        acc.cancel_transaction(&sell_tx.id).unwrap();
+
+        // After the sell is gone, no cash-affecting tx remains → cash holding
+        // cleared per CSH-013.
+        assert_eq!(
+            acc.cash_holding_quantity(),
+            0,
+            "deleting the only cash-affecting tx must reset cash to 0"
+        );
+    }
 }

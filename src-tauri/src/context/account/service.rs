@@ -1150,4 +1150,76 @@ mod tests {
     // and write-side (delete) — are exercised end-to-end against a real
     // SQLite repository in tests/account_service_crud.rs
     // (B33 — avoid trivial mock-passthrough tests).
+
+    // CSH-100 — record_deposit and record_withdrawal publish TransactionUpdated.
+    // Frontend reactivity (ACD-039, MKT-036) re-fetches on this signal.
+    //
+    // Pattern: do all setup first, THEN subscribe to the bus. New subscribers
+    // see the latest value but `changed()` only fires on subsequent updates,
+    // so this avoids racing against events emitted during setup.
+    #[tokio::test]
+    async fn csh_100_record_deposit_publishes_transaction_updated_event() {
+        use std::time::Duration;
+        let pool = make_pool().await;
+        let bus = Arc::new(SideEffectEventBus::new());
+        let svc = AccountService::new(
+            Box::new(SqliteAccountRepository::new(pool.clone())),
+            Box::new(SqliteHoldingRepository::new(pool.clone())),
+            Box::new(SqliteTransactionRepository::new(pool.clone())),
+        )
+        .with_event_bus(Arc::clone(&bus));
+        let account = svc
+            .create(
+                "Acc".to_string(),
+                "EUR".to_string(),
+                UpdateFrequency::ManualMonth,
+            )
+            .await
+            .unwrap();
+        seed_cash_for_account(&pool, &svc, &account.id, "EUR").await;
+
+        // Subscribe AFTER setup — `changed()` fires only on the next publish.
+        let mut rx = bus.subscribe();
+        svc.record_deposit(&account.id, "2020-02-01".to_string(), 50_000_000, None)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_millis(200), rx.changed())
+            .await
+            .expect("TransactionUpdated event not received within 200ms")
+            .expect("watch sender dropped before event fired");
+        assert_eq!(*rx.borrow(), Event::TransactionUpdated);
+    }
+
+    #[tokio::test]
+    async fn csh_100_record_withdrawal_publishes_transaction_updated_event() {
+        use std::time::Duration;
+        let pool = make_pool().await;
+        let bus = Arc::new(SideEffectEventBus::new());
+        let svc = AccountService::new(
+            Box::new(SqliteAccountRepository::new(pool.clone())),
+            Box::new(SqliteHoldingRepository::new(pool.clone())),
+            Box::new(SqliteTransactionRepository::new(pool.clone())),
+        )
+        .with_event_bus(Arc::clone(&bus));
+        let account = svc
+            .create(
+                "Acc".to_string(),
+                "EUR".to_string(),
+                UpdateFrequency::ManualMonth,
+            )
+            .await
+            .unwrap();
+        seed_cash_for_account(&pool, &svc, &account.id, "EUR").await;
+
+        // Subscribe AFTER setup so we only observe the withdrawal's event.
+        let mut rx = bus.subscribe();
+        svc.record_withdrawal(&account.id, "2020-02-01".to_string(), 100_000_000, None)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_millis(200), rx.changed())
+            .await
+            .expect("TransactionUpdated event not received within 200ms")
+            .expect("watch sender dropped before event fired");
+        assert_eq!(*rx.borrow(), Event::TransactionUpdated);
+    }
 }

@@ -13,6 +13,37 @@ vi.mock("./useOpenBalance", () => ({
   useOpenBalance: (...args: unknown[]) => mockUseOpenBalance(...args),
 }));
 
+// CSH-018 — capture ComboboxField items so we can assert Cash assets are filtered.
+vi.mock("@/ui/components/field/ComboboxField", () => ({
+  ComboboxField: ({ id, items }: { id: string; items: { id: string; name: string }[] }) => (
+    <div data-testid={`combobox-${id}`} data-item-ids={items.map((i) => i.id).join(",")} />
+  ),
+}));
+
+vi.mock("@/lib/store", () => ({
+  useAppStore: vi.fn((selector) =>
+    selector({
+      assets: [
+        {
+          id: "asset-stock-1",
+          name: "Apple",
+          class: "Stocks",
+          is_archived: false,
+          currency: "USD",
+        },
+        {
+          id: "system-cash-eur",
+          name: "Cash EUR",
+          class: "Cash",
+          is_archived: false,
+          currency: "EUR",
+        },
+      ],
+      accounts: [{ id: "account-1", name: "My Account", currency: "EUR" }],
+    }),
+  ),
+}));
+
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => key,
@@ -58,6 +89,16 @@ describe("OpenBalanceModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseOpenBalance.mockReturnValue(makeHookReturn());
+  });
+
+  // CSH-018 — Cash Assets are filtered out of the asset combobox (only rendered
+  // when assetId is empty, i.e. opened from the page header without a pre-selection).
+  it("filters Cash assets from the asset combobox (CSH-018)", () => {
+    render(<OpenBalanceModal {...BASE_PROPS} assetId="" assetName="" />);
+    const combobox = screen.getByTestId("combobox-ob-asset-select");
+    const itemIds = combobox.getAttribute("data-item-ids")?.split(",") ?? [];
+    expect(itemIds).toContain("asset-stock-1");
+    expect(itemIds).not.toContain("system-cash-eur");
   });
 
   // ── Form fields present (TRX-043: no fees, no exchange_rate, no unit_price) ─

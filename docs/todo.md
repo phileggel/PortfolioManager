@@ -10,15 +10,9 @@
 
 `docs/dashboard.md` is a loose planning doc for an **Account Performance Dashboard** (per-account, time-series, "Performance" tab inside `AccountAssetDetailsView`). It is not in the trigram registry, has no TRIGRAM-NNN numbering, and depends on two specs that do not exist (`docs/operations.md`, `docs/account-currency.md`). It also references stale concepts (`Operation`, separate `AssetAccount.average_price`) that predate the current `Transaction` + `Holding` model. Decide: (a) rewrite against the current domain and promote to a real TRIGRAM spec, or (b) retire the doc and fold the useful ideas into a future ACD extension. Leaving it as-is means it keeps surfacing in spec audits as drift.
 
-## (backend) — Cash spec: backend test coverage gaps
+## (frontend) — Standardise Zustand store seeding in component tests
 
-The cash-tracking spec (`docs/spec/cash-tracking.md`) ships with implementation but ~14 of its 28 rules lack a dedicated backend assertion (spec-checker run 2026-05-06):
-
-- Aggregate-level: CSH-012 (lazy create), CSH-013 (TRX-034 cleanup), CSH-022/023/024 (Deposit create/edit/delete replay), CSH-032/033/034 (Withdrawal create/edit/delete replay), CSH-040/041/042/043 (Purchase cash side-effect), CSH-050/051 (Sell credits cash, edit/delete replay).
-- Use-case level: CSH-061 (`OpeningBalanceOnCashAsset` rejection), CSH-080 payload assertion (current_balance_micros equals pre-mutation balance), CSH-097 (cash row hidden at quantity 0), CSH-100 (`TransactionUpdated` event after deposit/withdrawal).
-- Frontend: CSH-018 (no vitest case asserting Cash assets are filtered from the asset selector in AddTransactionModal/EditTransactionModal/OpenBalanceModal), CSH-095 (NoCashBanner has no direct test).
-
-Most are 1-2 `#[test]` or `#[tokio::test]` additions in `src-tauri/src/context/account/domain/account.rs` or `src-tauri/src/use_cases/account_details/orchestrator.rs#tests`. Surfaced by spec-checker on the cash closure branch.
+Several modal-level vitest test files seed `useAppStore` via the manual-selector wrapper pattern (`vi.mock("@/lib/store", () => ({ useAppStore: vi.fn((selector) => selector({...})) }))`) instead of the `useAppStore.setState({...})` in `beforeEach` pattern prescribed by `docs/test_convention.md` line 70-83. The wrapper bypasses Zustand's actual selector subscription so any derived/memoised selector logic goes untested. Files using the legacy pattern: `AddTransactionModal.test.tsx`, `EditTransactionModal.test.tsx`, `OpenBalanceModal.test.tsx`, `useAddTransaction.test.ts`, `useEditTransactionModal.test.ts`, `useTransactionList.test.ts`, `useBuyTransaction.test.ts`, `useHeaderConfig.test.ts`. Mechanical migration — each file replaces the `vi.mock` block with a `beforeEach` that calls `useAppStore.setState(...)` and removes the per-mock seeding. Surfaced during the cash spec coverage review (CSH-018).
 
 ## (backend) — Roll out untagged-composition pattern for boundary error types
 

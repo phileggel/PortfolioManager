@@ -322,6 +322,42 @@ mod tests {
         );
     }
 
+    // CSH-061 — open_holding rejects an OpeningBalance against a Cash Asset
+    // (user must record initial cash via record_deposit instead).
+    #[tokio::test]
+    async fn open_holding_rejects_cash_asset() {
+        let pool = setup_pool().await;
+        let (account_svc, asset_svc) = make_services(&pool);
+        let cash_asset = asset_svc.seed_cash_asset("EUR").await.unwrap();
+        let account = account_svc
+            .create(
+                "Acc".to_string(),
+                "EUR".to_string(),
+                UpdateFrequency::ManualMonth,
+            )
+            .await
+            .unwrap();
+
+        let uc = HoldingTransactionUseCase::new(account_svc, asset_svc);
+        let err = uc
+            .open_holding(
+                &account.id,
+                cash_asset.id,
+                "2024-01-01".to_string(),
+                micro(1),
+                micro(100),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.downcast_ref::<OpeningBalanceDomainError>()
+                .map(|e| matches!(e, OpeningBalanceDomainError::OpeningBalanceOnCashAsset))
+                .unwrap_or(false),
+            "expected OpeningBalanceOnCashAsset, got: {err}"
+        );
+    }
+
     // TRX-047 — happy path: transaction and holding created with correct fields
     #[tokio::test]
     async fn open_holding_happy_path() {
