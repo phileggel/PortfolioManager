@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Build production executable for Tauri desktop application
 # Usage: ./build.sh

@@ -12,7 +12,7 @@ concurrency:
 jobs:
   npm-audit:
     name: npm audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -24,21 +24,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        shell: bash
-        run: npm ci
 
       - name: Run npm audit
         shell: bash
         # --audit-level=moderate: fail on moderate, high, and critical CVEs.
         # Low-severity issues are informational only and do not block.
+        # No `npm ci` needed — `npm audit` reads package-lock.json directly.
         run: npm audit --audit-level=moderate
 
   cargo-audit:
     name: cargo audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read

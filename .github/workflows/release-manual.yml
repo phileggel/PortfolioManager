@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ${{ inputs.platform == 'windows' && 'windows-latest' || inputs.platform == 'linux' && 'ubuntu-22.04' || inputs.platform == 'macos-x86' && 'macos-13' || 'macos-latest' }}
+    runs-on: ${{ inputs.platform == 'windows' && 'windows-latest' || inputs.platform == 'linux' && 'ubuntu-24.04' || inputs.platform == 'macos-x86' && 'macos-13' || 'macos-latest' }}
     timeout-minutes: 60
     permissions:
       contents: write
