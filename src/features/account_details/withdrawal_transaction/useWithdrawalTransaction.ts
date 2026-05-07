@@ -64,6 +64,9 @@ export function useWithdrawalTransaction({
           note: formData.note || null,
         });
         if (result.status === "error") {
+          logger.error("[useWithdrawalTransaction] recordWithdrawal failed", {
+            error: result.error,
+          });
           // CSH-081 — InsufficientCash carries balance + currency for inline display.
           if (result.error.code === "InsufficientCash") {
             setError(

@@ -61,6 +61,7 @@ export function useDepositTransaction({ accountId, onSubmitSuccess }: UseDeposit
           note: formData.note || null,
         });
         if (result.status === "error") {
+          logger.error("[useDepositTransaction] recordDeposit failed", { error: result.error });
           const code = result.error.code;
           setError(t(`error.${code}`, { defaultValue: code }));
           return;

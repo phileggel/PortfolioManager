@@ -333,9 +333,16 @@ pub enum CashCommandBoundaryError {
     /// No account exists with the requested ID.
     #[error("Account not found")]
     AccountNotFound,
-    /// An unexpected server-side error occurred.
-    #[error("An unexpected error occurred")]
-    Unknown,
+    /// An unexpected server-side error occurred. `hint` carries a developer-only
+    /// diagnostic string mirroring the `tracing::error!` log so support reports
+    /// can be triaged without correlating timestamps.
+    #[error("An unexpected error occurred ({hint})")]
+    Unknown {
+        /// Developer-only diagnostic string. Not user-facing; the FE displays
+        /// the i18n key `error.Unknown` and forwards `hint` to the JS console
+        /// log via `logger.error`.
+        hint: String,
+    },
 }
 
 /// Typed error returned to the frontend for `record_deposit`.
@@ -384,12 +391,18 @@ fn to_record_deposit_error(e: anyhow::Error) -> RecordDepositCommandError {
             }
             _ => {
                 tracing::error!(target: BACKEND, err = ?err, "BUG: unexpected AccountDomainError in record_deposit");
-                RecordDepositCommandError::Boundary(CashCommandBoundaryError::Unknown)
+                RecordDepositCommandError::Boundary(CashCommandBoundaryError::Unknown {
+                    hint: format!("BUG: unexpected AccountDomainError::{err:?} in record_deposit"),
+                })
             }
         };
     }
     tracing::error!(target: BACKEND, err = ?e, "unexpected error in record_deposit command");
-    RecordDepositCommandError::Boundary(CashCommandBoundaryError::Unknown)
+    // {e:#} pretty-prints the full anyhow context chain on one line —
+    // {e} (Display) would drop any upstream `.context(...)` wrappers.
+    RecordDepositCommandError::Boundary(CashCommandBoundaryError::Unknown {
+        hint: format!("unexpected error in record_deposit: {e:#}"),
+    })
 }
 
 fn to_record_withdrawal_error(e: anyhow::Error) -> RecordWithdrawalCommandError {
@@ -403,12 +416,20 @@ fn to_record_withdrawal_error(e: anyhow::Error) -> RecordWithdrawalCommandError 
             }
             _ => {
                 tracing::error!(target: BACKEND, err = ?err, "BUG: unexpected AccountDomainError in record_withdrawal");
-                RecordWithdrawalCommandError::Boundary(CashCommandBoundaryError::Unknown)
+                RecordWithdrawalCommandError::Boundary(CashCommandBoundaryError::Unknown {
+                    hint: format!(
+                        "BUG: unexpected AccountDomainError::{err:?} in record_withdrawal"
+                    ),
+                })
             }
         };
     }
     tracing::error!(target: BACKEND, err = ?e, "unexpected error in record_withdrawal command");
-    RecordWithdrawalCommandError::Boundary(CashCommandBoundaryError::Unknown)
+    // {e:#} pretty-prints the full anyhow context chain on one line —
+    // {e} (Display) would drop any upstream `.context(...)` wrappers.
+    RecordWithdrawalCommandError::Boundary(CashCommandBoundaryError::Unknown {
+        hint: format!("unexpected error in record_withdrawal: {e:#}"),
+    })
 }
 
 /// Records a cash deposit into an account (CSH-022).

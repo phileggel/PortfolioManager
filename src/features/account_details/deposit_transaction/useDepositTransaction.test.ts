@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { logger } from "@/lib/logger";
 import { useDepositTransaction } from "./useDepositTransaction";
 
 const { mockRecordDeposit, mockShowSnackbar } = vi.hoisted(() => ({
@@ -34,6 +35,7 @@ describe("useDepositTransaction (CSH-020/021/022/025)", () => {
   beforeEach(() => {
     mockRecordDeposit.mockReset();
     mockShowSnackbar.mockReset();
+    vi.mocked(logger.error).mockClear();
   });
 
   // CSH-020 — initial form has today's date and empty amount
@@ -95,6 +97,27 @@ describe("useDepositTransaction (CSH-020/021/022/025)", () => {
     });
 
     expect(result.current.error).toBe("error.AmountNotPositive");
+    expect(mockShowSnackbar).not.toHaveBeenCalled();
+  });
+
+  // Unknown error path — diagnostic hint flows through to logger.error so
+  // support reports retain the developer-only triage info that error.Unknown hides.
+  it("logs full error including hint on Unknown backend error", async () => {
+    mockRecordDeposit.mockResolvedValue({
+      status: "error",
+      error: { code: "Unknown", hint: "test diagnostic" },
+    });
+    const { result } = renderHook(() => useDepositTransaction({ accountId: "account-1" }));
+
+    act(() => result.current.handleChange("amount", "100"));
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit);
+    });
+
+    expect(result.current.error).toBe("error.Unknown");
+    expect(logger.error).toHaveBeenCalledWith("[useDepositTransaction] recordDeposit failed", {
+      error: { code: "Unknown", hint: "test diagnostic" },
+    });
     expect(mockShowSnackbar).not.toHaveBeenCalled();
   });
 });

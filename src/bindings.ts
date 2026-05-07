@@ -830,9 +830,11 @@ export type CashCommandBoundaryError =
  */
 { code: "AccountNotFound" } | 
 /**
- * An unexpected server-side error occurred.
+ * An unexpected server-side error occurred. `hint` carries a developer-only
+ * diagnostic string mirroring the `tracing::error!` log so support reports
+ * can be triaged without correlating timestamps.
  */
-{ code: "Unknown" }
+{ code: "Unknown"; hint: string }
 /**
  * Typed error returned by `Account::record_deposit` / `Account::record_withdrawal`.
  * 
