@@ -56,13 +56,14 @@ Synced to `docs/` in downstream projects on first sync (copy-once — never over
 
 ### Spec & Planning Agents
 
-| Agent               | Trigger                                           | Description                                                                                                                                    |
-| ------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `spec-reviewer`     | After spec-writer, before /contract               | Quality gate on a spec doc: rule atomicity, scope, DDD alignment, UX completeness, contractability, conflicts                                  |
-| `contract-reviewer` | After /contract, before feature-planner           | Quality gate on a domain contract: coverage vs spec, traceability, error exhaustiveness, type correctness                                      |
-| `retro-spec`        | Onboarding an existing feature to the kit         | Infers TRIGRAM-NNN rules from existing code and writes a first-pass `docs/spec/{domain}.md` with `retro-inferred` annotations for human review |
-| `feature-planner`   | After spec-reviewer and contract-reviewer approve | Translates spec into `docs/plan/{feature}-plan.md` with DDD layer breakdown, rule-to-task mapping, Workflow TaskList                           |
-| `spec-checker`      | After implementation, before final commit         | Verifies every TRIGRAM-NNN rule is implemented and tested; checks all contract commands are covered in backend, frontend, and tests            |
+| Agent               | Trigger                                           | Description                                                                                                                                                                   |
+| ------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spec-reviewer`     | After spec-writer, before /contract               | Quality gate on a spec doc: rule atomicity, scope, DDD alignment, UX completeness, contractability, conflicts                                                                 |
+| `contract-reviewer` | After /contract, before feature-planner           | Quality gate on a domain contract: coverage vs spec, traceability, error exhaustiveness, type correctness                                                                     |
+| `retro-spec`        | Onboarding an existing feature to the kit         | Infers TRIGRAM-NNN rules from existing code and writes a first-pass `docs/spec/{domain}.md` with `retro-inferred` annotations for human review                                |
+| `feature-planner`   | After spec-reviewer and contract-reviewer approve | Translates spec into `docs/plan/{feature}-plan.md` with DDD layer breakdown, rule-to-task mapping, Workflow TaskList                                                          |
+| `plan-reviewer`     | After feature-planner, before any test-writer     | Quality gate on the plan: rule coverage, contract coverage, layer routing, ADR adherence, schema completeness, TaskList integrity, PR Plan, minimal-implementation discipline |
+| `spec-checker`      | After implementation, before final commit         | Verifies every TRIGRAM-NNN rule is implemented and tested; checks all contract commands are covered in backend, frontend, and tests                                           |
 
 > **Resuming after interruption or compaction:** The plan is always saved to `docs/plan/{feature}-plan.md`.
 > After any interruption, ground the agent explicitly:

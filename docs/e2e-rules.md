@@ -100,23 +100,17 @@ event-loop tick. The next `waitForEnabled` poll will see the updated disabled st
 
 ## E7 — Custom date pickers require locale-formatted input
 
-`DateField` renders `<input type="text">` and displays dates in the active
-i18n locale. `setReactInputValue` must receive the display format, not ISO,
-**and the format must match the runtime locale** — otherwise
-`useDateField.formatDateForStorage` parses the parts in the wrong positional
-order (e.g. `01/04/2019` becomes Jan 4 under en-US instead of April 1) and the
-form silently submits with the wrong date.
-
-This project's E2E suite forces `LANG=en_US.UTF-8` in `wdio.conf.ts`
-`beforeSession` so all aria-labels resolve to English. DateField therefore
-runs in `en-US` → `MM/DD/YYYY`:
+`DateField` renders `<input type="text">` and displays dates in the project's configured
+locale. `setReactInputValue` must receive the display format, not ISO. Adjust
+`isoToDisplayDate` to match your project's locale (e.g. `DD/MM/YYYY` for `fr-FR`,
+`MM/DD/YYYY` for `en-US`):
 
 ```typescript
-// Convert ISO to the DateField display format. Must match the runtime locale.
-// VaultCompass tests force en_US in wdio.conf.ts beforeSession.
+// Convert ISO to the DateField display format — adjust to project locale.
+// Example below uses DD/MM/YYYY (fr-FR). Change as needed.
 function isoToDisplayDate(iso: string): string {
   const [year, month, day] = iso.split("-");
-  return `${month}/${day}/${year}`; // "2020-01-15" → "01/15/2020" (en-US)
+  return `${day}/${month}/${year}`; // "2020-01-15" → "15/01/2020" (fr-FR)
 }
 
 await setReactInputValue("price-modal-date", isoToDisplayDate("2020-01-15"));
@@ -124,11 +118,6 @@ await setReactInputValue("price-modal-date", isoToDisplayDate("2020-01-15"));
 
 `DateField.handleInputChange` then parses the display value back to ISO and calls
 the parent `onChange` with the ISO date — React state updates correctly.
-
-> If your project does NOT force a locale in `beforeSession`, the runtime
-> locale follows `navigator.language` of the test runner host, which is usually
-> `en-US` on GitHub-hosted runners but can vary. Either force a locale or
-> pass an explicit `locale` prop to every `<DateField>` instance in tests.
 
 ## E8 — Tests MUST NOT call `browser.url()`
 

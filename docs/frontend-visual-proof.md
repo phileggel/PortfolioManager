@@ -113,6 +113,36 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 Each state is wrapped in `<div id="state-{name}">` so Playwright can target it for a per-element
 screenshot.
 
+#### Modal components — panel-only pattern
+
+Modal containers typically render a 50%-opacity black scrim across the viewport (e.g.
+`bg-m3-scrim/50 backdrop-blur-[2px]`) to dim the app shell behind the dialog. In a standalone
+preview there is no app shell — the scrim covers an empty wrapper, and in dark mode
+50% black over a dark surface produces a near-black image that misrepresents the component.
+
+**Render the modal panel directly, without the scrim wrapper.** Copy the panel's chrome
+(rounded corners, surface tier, shadow elevation, header / scrollable content / footer) and
+skip the modal container. Visual proof verifies the component, not the shell — and because
+Playwright captures the `#state-{name}` element, dropping the full-viewport scrim makes the
+screenshot panel-sized rather than viewport-sized, which is easier to scan in PR review.
+
+```tsx
+function PreviewModalPanel({ title, children, footer }) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="relative bg-{surface-container-lowest} rounded-[28px] shadow-elevation-4 w-full max-w-2xl overflow-hidden flex flex-col"
+    >
+      {/* same header / content / footer chrome as the real modal */}
+    </div>
+  );
+}
+```
+
+Wrap it in a `min-h-screen bg-{surface-container}` outer container so the dark-mode tone
+matches the production card surface, not page-level near-black.
+
 ### 2 — Capture with Playwright (light + dark)
 
 Start the Vite dev server on the configured port:
@@ -208,7 +238,7 @@ Because the preview page imports the same source files as the real app, design p
 | Component code              | ✅ direct import                                      |
 | i18n translations           | ✅ same initializer import                            |
 | Dark mode                   | ✅ Playwright `colorScheme` context                   |
-| Modal backdrop / app shell  | ⚠️ absent — preview is standalone                     |
+| Modal backdrop / app shell  | ⚠️ absent — use panel-only pattern (Process §1)       |
 | Platform WebView rendering  | ⚠️ preview uses Chromium — minor subpixel differences |
 
 The two caveats are cosmetic. If a change specifically touches modal chrome or backdrop blur, note
