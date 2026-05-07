@@ -66,6 +66,7 @@ Use **AskUserQuestion** to get:
 ### 6. Validate message format
 
 - Commit type must be one of: `feat`, `fix`, `docs`, `test`, `chore`, `refactor`, `ci`
+- For breaking changes, append `!` after the type (e.g. `refactor!: drop foo`); the release script will major-bump the version
 - Title ≤72 chars, body ≤5 lines (`BREAKING CHANGE:` footer lines excluded from count)
 - If non-compliant: return to step 5 and prompt the user to correct the message
 

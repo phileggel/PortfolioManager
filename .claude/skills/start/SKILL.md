@@ -77,8 +77,8 @@ Replace `{task}` with the user's description, `{type}` with the scope argument o
 - [ ] Implement backend (make tests green)
 - [ ] `just format`
 - [ ] `reviewer-backend` → fix issues
-- [ ] `just generate-types` → updates `src/bindings.ts` _(Tauri only)_
-- [ ] Fix TS compilation errors from new bindings only — no UI work _(Tauri only)_
+- [ ] `just generate-types` → updates `src/bindings.ts`
+- [ ] Fix TS compilation errors from new bindings only — no UI work
 - [ ] `just check` — TypeScript clean
 - [ ] `/smart-commit`: backend layer [HARD GATE]
 - [ ] `/create-pr` if the **PR Plan** section of `docs/plan/{feature}-plan.md` slices BE into its own PR; otherwise continue. After merge, branch the next phase off updated `main`.
@@ -87,16 +87,16 @@ Replace `{task}` with the user's description, `{type}` with the scope argument o
 - [ ] `test-writer-frontend` → Vitest stubs from contract, confirm red
 - [ ] Implement frontend (make tests green)
 - [ ] `just format`
-- [ ] `/visual-proof` → capture final state; stage screenshots before commit _(Tauri only — if .tsx/.css changed)_
+- [ ] `/visual-proof` → capture final state; stage screenshots before commit _(if .tsx/.css changed)_
 - [ ] `reviewer-frontend` → fix issues (Parts A + B + C)
 - [ ] `/smart-commit`: frontend layer [HARD GATE]
 - [ ] `/create-pr` if the **PR Plan** slices FE into its own PR; otherwise continue. After merge, branch the next phase off updated `main`.
 
 ### Phase 4 — Review & Closure _(main agent: sonnet — switch back to opus only if a reviewer surfaces a design-level finding)_
-- [ ] `test-writer-e2e` → E2E tests from contract, confirm green _(Tauri only — run `/setup-e2e` first if not done)_
-- [ ] `reviewer-frontend` _(Tauri only — reviews E2E test files)_
-- [ ] `/smart-commit`: E2E layer [HARD GATE] _(Tauri only)_
-- [ ] `reviewer-arch` (always) + `reviewer-sql` (if migrations) + `reviewer-infra` (if any config, script, hook, or workflow file changed) + `reviewer-security` _(Tauri only — if Tauri command, capability, or security-sensitive file modified)_
+- [ ] `test-writer-e2e` → E2E tests from contract, confirm green (run `/setup-e2e` first if not done)
+- [ ] `reviewer-frontend` _(reviews E2E test files)_
+- [ ] `/smart-commit`: E2E layer [HARD GATE]
+- [ ] `reviewer-arch` (always) + `reviewer-sql` (if migrations) + `reviewer-infra` (if any config, script, hook, or workflow file changed) + `reviewer-security` _(if Tauri command, capability, or security-sensitive file modified)_
 - [ ] Update `ARCHITECTURE.md` + `docs/todo.md`
 - [ ] `spec-checker` → all rules and contract commands covered
 - [ ] `/smart-commit`: tests & docs [HARD GATE]
@@ -125,7 +125,7 @@ Replace `{task}` with the user's description, `{type}` with the scope argument o
 - [ ] `just check` (or `just check-full` if tests needed)
 - [ ] `reviewer-backend` → if any `.rs` modified
 - [ ] `reviewer-frontend` → if any `.ts`/`.tsx` modified
-- [ ] `reviewer-arch` (always) + `reviewer-sql` (if migrations) + `reviewer-infra` (if scripts, hooks, config, or workflow files changed) + `reviewer-security` _(Tauri only — if Tauri command, capability, or security-sensitive file modified)_
+- [ ] `reviewer-arch` (always) + `reviewer-sql` (if migrations) + `reviewer-infra` (if scripts, hooks, config, or workflow files changed) + `reviewer-security` _(if Tauri command, capability, or security-sensitive file modified)_
 - [ ] Update `ARCHITECTURE.md` + `docs/todo.md` if behavior or module layout changed
 - [ ] Ask user if another task is needed
 - [ ] `/smart-commit` [HARD GATE]

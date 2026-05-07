@@ -37,12 +37,14 @@ merge:
     git branch -d "$branch"
     echo "✅ $branch fast-forwarded into main and deleted."
 
-# Tauri profile recipes — appended to common.just by sync
-
 # Run pending database migrations
 # Prerequisites: sqlx must be on $PATH and DATABASE_URL must be set
 migrate:
     cd src-tauri && sqlx migrate run
+
+# NOTE: kit v4.0.0 introduced a `generate-types` recipe here that conflicted
+# with our local `justfile` override (custom `[[bin]]` target). Removed pending
+# upstream fix — re-delete if it reappears after a future `just sync-kit`.
 
 # Regenerate SQLx offline query cache (run after schema or query changes)
 prepare-sqlx:

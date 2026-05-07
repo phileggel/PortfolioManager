@@ -82,8 +82,8 @@ A synthetic checklist for mandatory quality and process steps:
 - [ ] 🏗️ Backend Implementation (minimal — make failing tests pass, green confirmed)
 - [ ] 🧹 `just format` (rustfmt + clippy --fix)
 - [ ] 🔍 Backend Review (`reviewer-backend` → fix issues) — if .rs modified
-- [ ] 🔗 Type Synchronization (`just generate-types`) — Tauri profile only, if backend rules present
-- [ ] 🔧 Compilation fixup (TypeScript errors from new bindings only — no UI work) — Tauri profile only, if backend rules present
+- [ ] 🔗 Type Synchronization (`just generate-types`) — if backend rules present
+- [ ] 🔧 Compilation fixup (TypeScript errors from new bindings only — no UI work) — if backend rules present
 - [ ] ✅ `just check` — TypeScript clean
 - [ ] 💾 Commit: backend layer (suggested title from plan)
 - [ ] ✍️ Frontend test stubs (`test-writer-frontend` — all stubs written, red confirmed; pass `modified_functions` list if any `[unit-test-needed]` rules were identified in Step 4) — if frontend rules present
@@ -92,8 +92,8 @@ A synthetic checklist for mandatory quality and process steps:
 - [ ] 📸 Visual proof (`/visual-proof` — capture final state; stage screenshots before commit) — if frontend rules present
 - [ ] 🔍 Frontend Review (`reviewer-frontend` → fix issues) — if .ts/.tsx modified
 - [ ] 💾 Commit: frontend layer (suggested title from plan)
-- [ ] ✍️ E2E tests (`test-writer-e2e` — run `/setup-e2e` first if not done; green confirmed) — Tauri profile only, if frontend rules present
-- [ ] 🔍 Frontend Review (`reviewer-frontend` → fix issues in E2E test files) — Tauri profile only, if frontend rules present
+- [ ] ✍️ E2E tests (`test-writer-e2e` — run `/setup-e2e` first if not done; green confirmed) — if frontend rules present
+- [ ] 🔍 Frontend Review (`reviewer-frontend` → fix issues in E2E test files) — if frontend rules present
 - [ ] 💾 Commit: E2E tests (suggested title from plan)
 - [ ] 🔍 Cross-cutting Review (`reviewer-arch` always + `reviewer-sql` if migrations + `reviewer-infra` if any config, script, hook, or workflow file changed)
 - [ ] 📚 Documentation Update (`ARCHITECTURE.md` + `docs/todo.md` — entries in English)
@@ -131,7 +131,7 @@ Captures the answer from Step 4.5. Format:
 2. **Language**: All entries in `docs/todo.md` MUST be written in English.
 3. **Path Verification**: Every file path must be verified with `Glob` before being included—never invent paths.
 4. **Convention Adherence**: Use Rust `snake_case` and TypeScript `camelCase`.
-5. **Synchronization**: On Tauri projects, include `just generate-types` as a mandatory step between Backend and Frontend tasks. Skip on other profiles (no TypeScript bindings generated from Rust).
+5. **Synchronization**: Include `just generate-types` as a mandatory step between Backend and Frontend tasks — Specta regenerates `src/bindings.ts` from the Tauri command surface.
 6. **No Code Implementation**: Your output is a plan describing _what_ to do and _where_, not the actual code.
 7. **Task Tracking**: Ensure the main agent can progressively update the checkboxes in this file during the implementation phase.
 8. **Cross-Context**: If a use case spans multiple bounded contexts, use the cross-context module as defined in `ARCHITECTURE.md` — never cross-import between context modules directly.

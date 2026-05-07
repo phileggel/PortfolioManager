@@ -35,7 +35,7 @@ If no path is given, list files in `docs/plan/` and ask which to review.
    Step 2 mandates it when backend rules are present
 5. Read `docs/adr/` if present — ADRs are constraints the plan must surface in tasks
 6. Read `ARCHITECTURE.md` (or `docs/ARCHITECTURE.md`) to verify layer naming and bounded contexts
-7. Read `CLAUDE.md` to confirm the canonical Workflow TaskList for this profile
+7. Read `CLAUDE.md` to confirm the canonical Workflow TaskList
 
 ### Step 2 — Extract reference data
 
@@ -92,14 +92,13 @@ Skip this section if no contract exists.
   has no Migrations section or no migration file for it
 - 🔴 A migration is listed without a filename pattern (`{timestamp}_create_{table}.sql` or
   `{timestamp}_add_{column}_to_{table}.sql`) or without inferred columns
-- 🔴 The Workflow TaskList omits `just prepare-sqlx` after migrations on a Tauri profile with
+- 🔴 The Workflow TaskList omits `just prepare-sqlx` after migrations when the plan includes
   schema changes
 - 🟡 A migration task does not state the bounded context it belongs to
 
 #### F — Workflow TaskList integrity
 
-Compare the plan's Workflow TaskList against the canonical list in `CLAUDE.md` / the profile's
-expected gates:
+Compare the plan's Workflow TaskList against the canonical list in `CLAUDE.md`:
 
 - 🔴 A mandatory gate is missing (`test-writer-backend` before backend impl, `just generate-types`
   between BE and FE on Tauri, `reviewer-backend` after `.rs` changes, `reviewer-frontend` after

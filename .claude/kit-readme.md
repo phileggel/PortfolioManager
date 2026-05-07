@@ -1,47 +1,26 @@
 # Claude-Assisted Factory — Reference Guide
 
-Onboarding guide for claude-kit: an opinionated Claude-assisted factory for Tauri 2 + Axum/React 19 projects. Ships the full SDD stack — convention docs, agents, skills, scripts, hooks, and justfile recipes — driving the **spec → contract → plan → test-first → verify** workflow. For the full inventory, see `.claude/kit-tools.md`.
+Onboarding guide for claude-kit: an opinionated Claude-assisted factory for Tauri 2 + React 19 + Rust projects. Ships the full SDD stack — convention docs, agents, skills, scripts, hooks, and justfile recipes — driving the **spec → contract → plan → test-first → verify** workflow. For the full inventory, see `.claude/kit-tools.md`.
 
 **Location**: `.claude/kit-readme.md` (read-only reference)
 
 ---
 
-## Profiles
-
-This kit ships a **generic layer** (process agents, skills, hooks) that works for any project, plus **profile overlays** that add stack-specific quality agents and scripts.
-
-Declare your stack in `.claude/kit-profile` (plain text, one line):
-
-```
-tauri
-```
-
-| Profile | Stack                        | What you get                                                                        |
-| ------- | ---------------------------- | ----------------------------------------------------------------------------------- |
-| `tauri` | Tauri 2 + React 19 + Rust    | Generic layer + 7 quality agents + `check.py` / `release.py` + `tauri.just` recipes |
-| `web`   | Axum + React 19 + PostgreSQL | Generic layer + 7 quality agents + `check.py` / `release.py` + `web.just` recipes   |
-| (none)  | any                          | Generic layer only — process agents, skills, hooks. Manage quality agents locally.  |
-
-**No profile is not an error.** Lua mods, Python CLIs, and any stack the kit doesn't cover yet use the generic layer and add their own local quality agents in `.claude/agents/`.
-
-**To sync with your profile:**
+## Sync
 
 ```bash
-# First time — add profile declaration
-echo "tauri" > .claude/kit-profile
-
-# Sync (auto-detects .claude/kit-profile)
-./scripts/sync-config.sh
-
-# Or override once without changing the file
-./scripts/sync-config.sh --profile tauri
+./scripts/sync-config.sh            # latest release tag
+./scripts/sync-config.sh v4.0.0     # specific tag
+./scripts/sync-config.sh -f         # overwrite drifted docs without prompting
 ```
+
+The script self-updates before syncing: if `sync-config.sh` itself changed in the kit, it re-executes the new version automatically. Review `git diff` after syncing.
 
 ---
 
 ## Convention Docs
 
-The `tauri` profile syncs 7 convention docs into `docs/` on first sync (copy-once — never overwrites project customizations). They are the authoritative reference for the stack's coding standards and are read directly by review and test agents:
+The kit syncs 7 convention docs into `docs/` on first sync (copy-once — never overwrites project customizations). They are the authoritative reference for the stack's coding standards and are read directly by review and test agents:
 
 | Doc                        | What it governs                          |
 | -------------------------- | ---------------------------------------- |
@@ -93,7 +72,7 @@ git checkout -b feat/{feature-name}
 4. Implement backend — minimal: make failing tests pass, confirm green.
 5. Run `just format` (rustfmt + clippy --fix).
 6. Run **`reviewer-backend`** agent → fix issues.
-7. _(Tauri only)_ Run `just generate-types` → updates `src/bindings.ts`. Fix TypeScript compilation errors from new bindings only (no UI work). Run `just check` → TypeScript clean.
+7. Run `just generate-types` → updates `src/bindings.ts`. Fix TypeScript compilation errors from new bindings only (no UI work). Run `just check` → TypeScript clean.
 8. **`/smart-commit`**: backend layer. [HARD GATE]
 
 **Phase 3: Frontend layer**
@@ -106,10 +85,10 @@ git checkout -b feat/{feature-name}
 
 **Phase 4: Review & Closure**
 
-1. _(Tauri only)_ Run **`test-writer-e2e`** agent → E2E tests from contract, confirms green. Run `/setup-e2e` first if not done.
-2. _(Tauri only)_ Run **`reviewer-frontend`** agent on E2E test files → fix issues.
-3. _(Tauri only)_ **`/smart-commit`**: E2E layer. [HARD GATE]
-4. Run **`reviewer-arch`** agent (always) + **`reviewer-sql`** (if migrations) + **`reviewer-infra`** (if scripts, hooks, workflow, or config files were modified) + **`reviewer-security`** _(Tauri only — if Tauri command, capability, or security-sensitive file modified)_.
+1. Run **`test-writer-e2e`** agent → E2E tests from contract, confirms green. Run `/setup-e2e` first if not done.
+2. Run **`reviewer-frontend`** agent on E2E test files → fix issues.
+3. **`/smart-commit`**: E2E layer. [HARD GATE]
+4. Run **`reviewer-arch`** agent (always) + **`reviewer-sql`** (if migrations) + **`reviewer-infra`** (if scripts, hooks, workflow, or config files were modified) + **`reviewer-security`** (if Tauri command, capability, or security-sensitive file modified).
 5. Update documentation (`ARCHITECTURE.md`, `docs/todo.md`).
 6. Run **`spec-checker`** agent → confirm all spec rules and contract commands are covered.
 7. **`/smart-commit`**: tests & docs. [HARD GATE]
@@ -127,7 +106,7 @@ _Use for: Bug fixes, dependency updates, minor maintenance (no new business rule
 2. **Direct Plan**: Propose a concise TODO plan with exact file paths in the chat. Ask user to validate.
 3. **Tracking**: Use `TaskCreate` / `TaskUpdate` tools to track workflow steps (`in_progress` when starting, `completed` when done).
 4. **Implementation**: Execute the code changes.
-5. **Review & Quality**: Run `just check` (or `just check-full`), write missing tests, then run reviewers: `reviewer-backend` (if `.rs` modified) · `reviewer-frontend` (if `.ts`/`.tsx` modified) · `reviewer-arch` (always) · `reviewer-sql` (if migrations) · `reviewer-infra` (if scripts, hooks, config, or workflow files changed) · `reviewer-security` _(Tauri only — if Tauri command, capability, or security-sensitive file modified)_.
+5. **Review & Quality**: Run `just check` (or `just check-full`), write missing tests, then run reviewers: `reviewer-backend` (if `.rs` modified) · `reviewer-frontend` (if `.ts`/`.tsx` modified) · `reviewer-arch` (always) · `reviewer-sql` (if migrations) · `reviewer-infra` (if scripts, hooks, config, or workflow files changed) · `reviewer-security` (if Tauri command, capability, or security-sensitive file modified).
 6. **Closure**: Ask user if another task is needed before commit, otherwise use **`/smart-commit`** skill.
 7. **`/create-pr`** → push branch and open PR (or merge directly: `git checkout main && git merge --no-ff fix/{name}`).
 
@@ -193,8 +172,7 @@ If you need to extend a kit agent's behaviour:
 **Agent not found?**
 
 - Check if the agent file exists: `ls -la .claude/agents/`
-- Re-sync the kit (with your profile): `./scripts/sync-config.sh`
-- Tauri-profile agents (reviewer-arch, reviewer-infra, test-writer-\*) require `.claude/kit-profile` to contain `tauri`
+- Re-sync the kit: `./scripts/sync-config.sh`
 
 **Agent gives wrong output?**
 
