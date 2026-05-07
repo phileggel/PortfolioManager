@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { logger } from "@/lib/logger";
 import { useOpenBalance } from "./useOpenBalance";
 
 // ── Gateway mock ──────────────────────────────────────────────────────────────
@@ -300,11 +301,13 @@ describe("useOpenBalance", () => {
     expect(onSubmitSuccess).not.toHaveBeenCalled();
   });
 
-  // Generic backend error: sets error from error code, modal stays open
+  // Generic backend error: sets error from error code, modal stays open.
+  // Also asserts the diagnostic `hint` flows through to logger.error so support
+  // reports retain the developer-only triage info that `error.Unknown` hides.
   it("sets error and does not call onSubmitSuccess on generic backend error", async () => {
     mockOpenHolding.mockResolvedValue({
       status: "error",
-      error: { code: "Unknown" },
+      error: { code: "Unknown", hint: "test diagnostic" },
     });
     const onSubmitSuccess = vi.fn();
     const { result } = renderHook(() => useOpenBalance({ ...BASE_PROPS, onSubmitSuccess }));
@@ -321,6 +324,9 @@ describe("useOpenBalance", () => {
 
     expect(result.current.error).toBeTruthy();
     expect(onSubmitSuccess).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith("[useOpenBalance] openHolding failed", {
+      error: { code: "Unknown", hint: "test diagnostic" },
+    });
   });
 
   // TRX-058 — on success: snackbar fires with success_created key + onSubmitSuccess is called

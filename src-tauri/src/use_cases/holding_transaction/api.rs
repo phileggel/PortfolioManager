@@ -61,9 +61,16 @@ pub enum OpenHoldingCommandError {
     /// Transaction date is before 1900-01-01.
     #[error("Transaction date cannot be before 1900-01-01")]
     DateTooOld,
-    /// An unexpected server-side error occurred.
-    #[error("An unexpected error occurred")]
-    Unknown,
+    /// An unexpected server-side error occurred. `hint` carries a developer-only
+    /// diagnostic string mirroring the `tracing::error!` log so support reports
+    /// can be triaged without correlating timestamps.
+    #[error("An unexpected error occurred ({hint})")]
+    Unknown {
+        /// Developer-only diagnostic string. Not user-facing; the FE displays
+        /// the i18n key `error.Unknown` and forwards `hint` to the JS console
+        /// log via `logger.error`.
+        hint: String,
+    },
 }
 
 fn to_open_holding_error(e: anyhow::Error) -> OpenHoldingCommandError {
@@ -95,7 +102,11 @@ fn to_open_holding_error(e: anyhow::Error) -> OpenHoldingCommandError {
             | TransactionDomainError::ExchangeRateNotPositive
             | TransactionDomainError::TotalAmountNotPositive => {
                 tracing::error!(target: BACKEND, err = ?err, "BUG: impossible TransactionDomainError in open_holding");
-                OpenHoldingCommandError::Unknown
+                OpenHoldingCommandError::Unknown {
+                    hint: format!(
+                        "BUG: impossible TransactionDomainError::{err:?} in open_holding"
+                    ),
+                }
             }
         };
     }
@@ -105,12 +116,18 @@ fn to_open_holding_error(e: anyhow::Error) -> OpenHoldingCommandError {
             // NameEmpty / NameAlreadyExists / InvalidCurrency cannot fire from open_holding.
             _ => {
                 tracing::error!(target: BACKEND, err = ?err, "BUG: unexpected AccountDomainError in open_holding command");
-                OpenHoldingCommandError::Unknown
+                OpenHoldingCommandError::Unknown {
+                    hint: format!("BUG: unexpected AccountDomainError::{err:?} in open_holding"),
+                }
             }
         };
     }
     tracing::error!(target: BACKEND, err = ?e, "unexpected error in open_holding command");
-    OpenHoldingCommandError::Unknown
+    // {e:#} pretty-prints the full anyhow context chain on one line —
+    // {e} (Display) would drop any upstream `.context(...)` wrappers.
+    OpenHoldingCommandError::Unknown {
+        hint: format!("unexpected error in open_holding: {e:#}"),
+    }
 }
 
 // =============================================================================

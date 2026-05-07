@@ -34,10 +34,6 @@ Work order: do (1) first; (2) is optional and lower value. (1) becomes notably m
 
 Extract a trait per service (e.g. `AccountServiceContract`, `AssetServiceContract`) listing the methods orchestrators call, annotate with `#[cfg_attr(test, mockall::automock)]`, and have orchestrators inject `Arc<dyn AccountServiceContract>` / `Arc<dyn AssetServiceContract>`. Then rewrite the orchestrator inline tests to use the generated `MockAccountService` / `MockAssetService` instead of `setup_pool` + real repositories — true unit isolation, faster, no DB dependency. Surfaced during PR #4 review (2026-05-06).
 
-## (backend) — Carry diagnostic hint in OpenHoldingCommandError::Unknown
-
-`use_cases/holding_transaction/api.rs:90-96, 102-107` map "impossible" `TransactionDomainError` / `AccountDomainError` variants to `Unknown` after a `tracing::error!`. The user sees an opaque message with no correlation. Consider `Unknown { hint: String }` or returning a debug-only correlation id so support reports can be triaged. Pre-existing behaviour, not introduced by the refactor — surfaced during the inline review of `120e5ba`.
-
 ## (backend) — Introduce dependency injection container for service wiring
 
 `lib.rs` manually constructs and wires all repositories, services, and use cases in a single `block_on` closure. As the number of bounded contexts grows this becomes hard to maintain. Introduce a lightweight DI approach (e.g. a dedicated `AppContainer` struct or a builder pattern) to decouple service construction from app bootstrap, make the dependency graph explicit, and simplify testing of the wiring itself.

@@ -1182,9 +1182,11 @@ export type OpenHoldingCommandError =
  */
 { code: "DateTooOld" } | 
 /**
- * An unexpected server-side error occurred.
+ * An unexpected server-side error occurred. `hint` carries a developer-only
+ * diagnostic string mirroring the `tracing::error!` log so support reports
+ * can be triaged without correlating timestamps.
  */
-{ code: "Unknown" }
+{ code: "Unknown"; hint: string }
 /**
  * Parameters for recording an opening balance for an asset in an account (TRX-042).
  */
