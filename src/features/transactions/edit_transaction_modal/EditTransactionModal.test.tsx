@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Transaction } from "@/bindings";
+import type { Account, Asset, Transaction } from "@/bindings";
+import { useAppStore } from "@/lib/store";
 import { EditTransactionModal } from "./EditTransactionModal";
 
 // CSH-018 — Cash Assets must be filtered out of the asset combobox so the user
@@ -9,30 +10,6 @@ import { EditTransactionModal } from "./EditTransactionModal";
 vi.mock("@/ui/components/field/ComboboxField", () => ({
   ComboboxField: ({ id, items }: { id: string; items: { id: string; name: string }[] }) => (
     <div data-testid={`combobox-${id}`} data-item-ids={items.map((i) => i.id).join(",")} />
-  ),
-}));
-
-vi.mock("@/lib/store", () => ({
-  useAppStore: vi.fn((selector) =>
-    selector({
-      assets: [
-        {
-          id: "asset-stock-1",
-          name: "Apple",
-          class: "Stocks",
-          is_archived: false,
-          currency: "USD",
-        },
-        {
-          id: "system-cash-eur",
-          name: "Cash EUR",
-          class: "Cash",
-          is_archived: false,
-          currency: "EUR",
-        },
-      ],
-      accounts: [{ id: "account-1", name: "My Account", currency: "EUR" }],
-    }),
   ),
 }));
 
@@ -92,6 +69,25 @@ const FAKE_TX: Transaction = {
 describe("EditTransactionModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useAppStore.setState({
+      assets: [
+        {
+          id: "asset-stock-1",
+          name: "Apple",
+          class: "Stocks",
+          is_archived: false,
+          currency: "USD",
+        },
+        {
+          id: "system-cash-eur",
+          name: "Cash EUR",
+          class: "Cash",
+          is_archived: false,
+          currency: "EUR",
+        },
+      ] as Asset[],
+      accounts: [{ id: "account-1", name: "My Account", currency: "EUR" }] as Account[],
+    });
   });
 
   // CSH-018 — Cash Assets are filtered out of the asset combobox.

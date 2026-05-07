@@ -7,6 +7,7 @@ import type {
   CreateAccountDTO,
   UpdateAccountDTO,
 } from "@/bindings";
+import { useAppStore } from "@/lib/store";
 
 const { mockAddAccount, mockUpdateAccount, mockDeleteAccount, mockGetSummary } = vi.hoisted(() => ({
   mockAddAccount: vi.fn(),
@@ -23,17 +24,6 @@ vi.mock("./gateway", () => ({
     getAccountDeletionSummary: mockGetSummary,
     getAccounts: vi.fn(),
   },
-}));
-
-vi.mock("@/lib/store", () => ({
-  useAppStore: vi.fn((selector) =>
-    selector({
-      accounts: [],
-      isLoadingAccounts: false,
-      accountsError: null,
-      fetchAccounts: vi.fn(),
-    }),
-  ),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -55,6 +45,13 @@ describe("useAccounts", () => {
     mockUpdateAccount.mockReset();
     mockDeleteAccount.mockReset();
     mockGetSummary.mockReset();
+    // Override store fetchAccounts so mutations don't hit the gateway.
+    useAppStore.setState({
+      accounts: [] as Account[],
+      isLoadingAccounts: false,
+      accountsError: null,
+      fetchAccounts: vi.fn(),
+    });
   });
 
   // ── addAccount ────────────────────────────────────────────────────────────────

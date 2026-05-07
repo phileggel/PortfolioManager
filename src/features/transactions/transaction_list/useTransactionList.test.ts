@@ -1,5 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Account, Asset } from "@/bindings";
+import { useAppStore } from "@/lib/store";
 import { useTransactionList } from "./useTransactionList";
 
 const mockNavigate = vi.fn();
@@ -17,21 +19,6 @@ vi.mock("../gateway", () => ({
     getAssetIdsForAccount: (...args: unknown[]) => mockGetAssetIdsForAccount(...args),
     getTransactions: (...args: unknown[]) => mockGetTransactions(...args),
   },
-}));
-
-vi.mock("@/lib/store", () => ({
-  useAppStore: vi.fn((selector: (s: object) => unknown) =>
-    selector({
-      assets: [
-        { id: "asset-1", name: "Apple" },
-        { id: "asset-2", name: "Google" },
-      ],
-      accounts: [
-        { id: "account-1", name: "My Account" },
-        { id: "account-2", name: "Other Account" },
-      ],
-    }),
-  ),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -57,6 +44,16 @@ const makeTx = (id: string, date: string) => ({
 describe("useTransactionList", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useAppStore.setState({
+      assets: [
+        { id: "asset-1", name: "Apple" },
+        { id: "asset-2", name: "Google" },
+      ] as Asset[],
+      accounts: [
+        { id: "account-1", name: "My Account" },
+        { id: "account-2", name: "Other Account" },
+      ] as Account[],
+    });
     mockGetAssetIdsForAccount.mockResolvedValue({
       status: "ok",
       data: ["asset-1", "asset-2"],

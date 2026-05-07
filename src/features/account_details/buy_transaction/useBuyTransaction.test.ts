@@ -1,5 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Account, Asset } from "@/bindings";
+import { useAppStore } from "@/lib/store";
 import { useBuyTransaction } from "./useBuyTransaction";
 
 const AUTO_RECORD_PRICE_KEY = "auto_record_price";
@@ -25,15 +27,6 @@ vi.mock("../gateway", () => ({
   },
 }));
 
-vi.mock("@/lib/store", () => ({
-  useAppStore: vi.fn((selector) =>
-    selector({
-      assets: [{ id: "asset-1", name: "Apple", is_archived: false, currency: "USD" }],
-      accounts: [{ id: "account-1", name: "My Account" }],
-    }),
-  ),
-}));
-
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => key,
@@ -53,6 +46,10 @@ describe("useBuyTransaction", () => {
     localStorage.clear();
     mockBuyHolding.mockReset();
     mockRecordAssetPrice.mockReset();
+    useAppStore.setState({
+      assets: [{ id: "asset-1", name: "Apple", is_archived: false, currency: "USD" }] as Asset[],
+      accounts: [{ id: "account-1", name: "My Account" }] as Account[],
+    });
   });
 
   // MKT-052 — recordPrice defaults to the global toggle value at hook mount (create mode)

@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Transaction } from "@/bindings";
+import type { Account, Asset, Transaction } from "@/bindings";
+import { useAppStore } from "@/lib/store";
 import { useEditTransactionModal } from "./useEditTransactionModal";
 
 const { mockCorrectTransaction, mockRecordAssetPrice } = vi.hoisted(() => ({
@@ -22,23 +23,6 @@ vi.mock("../gateway", () => ({
   transactionGateway: {
     recordAssetPrice: mockRecordAssetPrice,
   },
-}));
-
-vi.mock("@/lib/store", () => ({
-  useAppStore: vi.fn((selector) =>
-    selector({
-      assets: [
-        { id: "asset-1", name: "Apple", is_archived: false, currency: "USD" },
-        {
-          id: "asset-archived",
-          name: "OldCo",
-          is_archived: true,
-          currency: "USD",
-        },
-      ],
-      accounts: [{ id: "account-1", name: "My Account" }],
-    }),
-  ),
 }));
 
 vi.mock("react-i18next", () => ({
@@ -92,6 +76,13 @@ describe("useEditTransactionModal", () => {
     localStorage.clear();
     mockCorrectTransaction.mockReset();
     mockRecordAssetPrice.mockReset();
+    useAppStore.setState({
+      assets: [
+        { id: "asset-1", name: "Apple", is_archived: false, currency: "USD" },
+        { id: "asset-archived", name: "OldCo", is_archived: true, currency: "USD" },
+      ] as Asset[],
+      accounts: [{ id: "account-1", name: "My Account" }] as Account[],
+    });
   });
 
   // Pre-fill: micro-unit values are converted to decimal strings; totalAmount is derived

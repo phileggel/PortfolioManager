@@ -1,19 +1,13 @@
 import { renderHook } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Account } from "@/bindings";
+import { useAppStore } from "@/lib/store";
 
 const { mockNavigate } = vi.hoisted(() => ({ mockNavigate: vi.fn() }));
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => mockNavigate,
   useRouterState: vi.fn(),
-}));
-
-vi.mock("@/lib/store", () => ({
-  useAppStore: vi.fn((selector) =>
-    selector({
-      accounts: [{ id: "acc-1", name: "Savings" }],
-    }),
-  ),
 }));
 
 vi.mock("react-i18next", () => ({
@@ -34,6 +28,12 @@ function makeLocation(pathname: string, searchStr = "") {
 }
 
 describe("useHeaderConfig", () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      accounts: [{ id: "acc-1", name: "Savings" }] as Account[],
+    });
+  });
+
   // /accounts/$accountId/transactions/$assetId
   it("returns transaction list title with back to account details for tx list route", () => {
     makeLocation("/accounts/acc-1/transactions/asset-1");

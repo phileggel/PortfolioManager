@@ -1,5 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Account, Asset } from "@/bindings";
+import { useAppStore } from "@/lib/store";
 import { useAddTransaction } from "./useAddTransaction";
 
 const { mockBuyHolding, mockRecordAssetPrice } = vi.hoisted(() => ({
@@ -23,23 +25,6 @@ vi.mock("../gateway", () => ({
   },
 }));
 
-vi.mock("@/lib/store", () => ({
-  useAppStore: vi.fn((selector) =>
-    selector({
-      assets: [
-        { id: "asset-1", name: "Apple", is_archived: false, currency: "USD" },
-        {
-          id: "asset-archived",
-          name: "OldCo",
-          is_archived: true,
-          currency: "USD",
-        },
-      ],
-      accounts: [{ id: "account-1", name: "My Account" }],
-    }),
-  ),
-}));
-
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string) => key,
@@ -54,6 +39,13 @@ describe("useAddTransaction", () => {
     localStorage.clear();
     mockBuyHolding.mockReset();
     mockRecordAssetPrice.mockReset();
+    useAppStore.setState({
+      assets: [
+        { id: "asset-1", name: "Apple", is_archived: false, currency: "USD" },
+        { id: "asset-archived", name: "OldCo", is_archived: true, currency: "USD" },
+      ] as Asset[],
+      accounts: [{ id: "account-1", name: "My Account" }] as Account[],
+    });
   });
 
   // TRX-011 — pre-fill assetId from props

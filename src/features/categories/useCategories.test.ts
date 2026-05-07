@@ -1,6 +1,8 @@
 import { renderHook } from "@testing-library/react";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AssetCategory } from "@/bindings";
+import { useAppStore } from "@/lib/store";
 
 const { mockAddCategory, mockUpdateCategory, mockDeleteCategory } = vi.hoisted(() => ({
   mockAddCategory: vi.fn(),
@@ -17,17 +19,6 @@ vi.mock("./gateway", () => ({
   },
 }));
 
-vi.mock("@/lib/store", () => ({
-  useAppStore: vi.fn((selector) =>
-    selector({
-      categories: [],
-      isLoadingCategories: false,
-      categoriesError: null,
-      fetchCategories: vi.fn(),
-    }),
-  ),
-}));
-
 const { useCategories } = await import("./useCategories");
 
 describe("useCategories", () => {
@@ -35,6 +26,13 @@ describe("useCategories", () => {
     mockAddCategory.mockReset();
     mockUpdateCategory.mockReset();
     mockDeleteCategory.mockReset();
+    // Override store fetchCategories so mutations don't hit the gateway.
+    useAppStore.setState({
+      categories: [] as AssetCategory[],
+      isLoadingCategories: false,
+      categoriesError: null,
+      fetchCategories: vi.fn(),
+    });
   });
 
   // ── addCategory ───────────────────────────────────────────────────────────────

@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Account, Asset } from "@/bindings";
+import { useAppStore } from "@/lib/store";
 import { OpenBalanceModal } from "./OpenBalanceModal";
 
 // ── Mock the hook that drives the component ───────────────────────────────────
@@ -17,30 +19,6 @@ vi.mock("./useOpenBalance", () => ({
 vi.mock("@/ui/components/field/ComboboxField", () => ({
   ComboboxField: ({ id, items }: { id: string; items: { id: string; name: string }[] }) => (
     <div data-testid={`combobox-${id}`} data-item-ids={items.map((i) => i.id).join(",")} />
-  ),
-}));
-
-vi.mock("@/lib/store", () => ({
-  useAppStore: vi.fn((selector) =>
-    selector({
-      assets: [
-        {
-          id: "asset-stock-1",
-          name: "Apple",
-          class: "Stocks",
-          is_archived: false,
-          currency: "USD",
-        },
-        {
-          id: "system-cash-eur",
-          name: "Cash EUR",
-          class: "Cash",
-          is_archived: false,
-          currency: "EUR",
-        },
-      ],
-      accounts: [{ id: "account-1", name: "My Account", currency: "EUR" }],
-    }),
   ),
 }));
 
@@ -88,6 +66,25 @@ const BASE_PROPS = {
 describe("OpenBalanceModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useAppStore.setState({
+      assets: [
+        {
+          id: "asset-stock-1",
+          name: "Apple",
+          class: "Stocks",
+          is_archived: false,
+          currency: "USD",
+        },
+        {
+          id: "system-cash-eur",
+          name: "Cash EUR",
+          class: "Cash",
+          is_archived: false,
+          currency: "EUR",
+        },
+      ] as Asset[],
+      accounts: [{ id: "account-1", name: "My Account", currency: "EUR" }] as Account[],
+    });
     mockUseOpenBalance.mockReturnValue(makeHookReturn());
   });
 

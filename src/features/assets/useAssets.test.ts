@@ -2,6 +2,7 @@ import { renderHook } from "@testing-library/react";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Asset, CreateAssetDTO, UpdateAssetDTO } from "@/bindings";
+import { useAppStore } from "@/lib/store";
 
 const {
   mockCreateAsset,
@@ -29,20 +30,6 @@ vi.mock("./gateway", () => ({
     unarchiveAsset: mockUnarchiveAsset,
     deleteAsset: mockDeleteAsset,
   },
-}));
-
-vi.mock("@/lib/store", () => ({
-  useAppStore: vi.fn((selector) =>
-    selector({
-      assets: [
-        { id: "a1", name: "Apple", is_archived: false },
-        { id: "a2", name: "OldCo", is_archived: true },
-      ],
-      isLoadingAssets: false,
-      assetsError: null,
-      fetchAssets: mockFetchAssets,
-    }),
-  ),
 }));
 
 vi.mock("@/lib/snackbarStore", () => ({
@@ -80,6 +67,17 @@ describe("useAssets", () => {
     mockDeleteAsset.mockReset();
     mockFetchAssets.mockReset();
     mockShowSnackbar.mockReset();
+    // Override the store's fetchAssets with the mock so we can spy on calls
+    // without exercising the real gateway path.
+    useAppStore.setState({
+      assets: [
+        { id: "a1", name: "Apple", is_archived: false },
+        { id: "a2", name: "OldCo", is_archived: true },
+      ] as Asset[],
+      isLoadingAssets: false,
+      assetsError: null,
+      fetchAssets: mockFetchAssets,
+    });
   });
 
   // ── activeCount ───────────────────────────────────────────────────────────────

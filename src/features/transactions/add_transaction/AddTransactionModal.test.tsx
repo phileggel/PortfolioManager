@@ -1,5 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Account, Asset } from "@/bindings";
+import { useAppStore } from "@/lib/store";
 import { AddTransactionModal } from "./AddTransactionModal";
 
 // CSH-018 — Cash Assets must be filtered out of the asset combobox so the user
@@ -9,32 +11,6 @@ import { AddTransactionModal } from "./AddTransactionModal";
 vi.mock("@/ui/components/field/ComboboxField", () => ({
   ComboboxField: ({ id, items }: { id: string; items: { id: string; name: string }[] }) => (
     <div data-testid={`combobox-${id}`} data-item-ids={items.map((i) => i.id).join(",")} />
-  ),
-}));
-
-vi.mock("@/lib/store", () => ({
-  useAppStore: vi.fn((selector) =>
-    selector({
-      assets: [
-        {
-          id: "asset-stock-1",
-          name: "Apple",
-          class: "Stocks",
-          is_archived: false,
-          currency: "USD",
-        },
-        { id: "asset-bond-1", name: "Bond", class: "Bonds", is_archived: false, currency: "EUR" },
-        // The Cash asset that MUST NOT appear in the combobox.
-        {
-          id: "system-cash-eur",
-          name: "Cash EUR",
-          class: "Cash",
-          is_archived: false,
-          currency: "EUR",
-        },
-      ],
-      accounts: [{ id: "account-1", name: "My Account", currency: "EUR" }],
-    }),
   ),
 }));
 
@@ -78,6 +54,26 @@ vi.mock("@/lib/logger", () => ({
 describe("AddTransactionModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useAppStore.setState({
+      assets: [
+        {
+          id: "asset-stock-1",
+          name: "Apple",
+          class: "Stocks",
+          is_archived: false,
+          currency: "USD",
+        },
+        { id: "asset-bond-1", name: "Bond", class: "Bonds", is_archived: false, currency: "EUR" },
+        {
+          id: "system-cash-eur",
+          name: "Cash EUR",
+          class: "Cash",
+          is_archived: false,
+          currency: "EUR",
+        },
+      ] as Asset[],
+      accounts: [{ id: "account-1", name: "My Account", currency: "EUR" }] as Account[],
+    });
   });
 
   // CSH-018 — Cash Assets are filtered out of the asset combobox.
