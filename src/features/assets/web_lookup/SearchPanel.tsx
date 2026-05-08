@@ -56,7 +56,7 @@ export function SearchPanel({
         </Button>
       </form>
 
-      <div className="min-h-[80px]">
+      <div className="min-h-[80px] max-h-[60vh] overflow-y-auto">
         {state.status === "idle" && (
           <p className="text-sm text-m3-on-surface-variant">{t("asset.web_lookup.idle_hint")}</p>
         )}
@@ -87,13 +87,13 @@ export function SearchPanel({
 
         {state.status === "results" && (
           <ul className="flex flex-col gap-1">
-            {state.results.map((result, index) => {
+            {state.results.map((result) => {
               const typeLabel = result.asset_class
                 ? formatAssetClass(result.asset_class, t)
                 : t("asset.web_lookup.type_unknown");
               const secondLine = result.exchange ? `${typeLabel} · ${result.exchange}` : typeLabel;
               return (
-                <li key={`${result.name}-${result.reference ?? result.exchange ?? index}`}>
+                <li key={`${result.name}|${result.reference ?? ""}|${result.exchange ?? ""}`}>
                   <button
                     type="button"
                     aria-label={t("asset.web_lookup.select_result", {

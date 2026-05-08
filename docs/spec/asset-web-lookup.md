@@ -82,7 +82,18 @@ A transient value object returned by the OpenFIGI API. Not persisted; used only 
 
 **WEB-048 — Result ordering (backend)**: Results are sorted by instrument type priority before the 10-item truncation (WEB-022). Priority is determined by the resolved `asset_class` value (WEB-023): Priority 1 (top) — `asset_class` ∈ {`Stocks`, `ETF`, `MutualFunds`, `Bonds`, `DigitalAsset`, `RealEstate`, `Cash`}; Priority 2 — `asset_class` = `Derivatives`; Priority 3 — `asset_class` absent (unrecognised `securityType`, including structured products and certificates). Within each priority group, the original OpenFIGI response order is preserved.
 
-**WEB-049 — Exchange field (backend)**: The OpenFIGI `exchCode` field is resolved to a human-readable market name via a static, hardcoded in-code lookup table (e.g. `"PA"` → `"Euronext Paris"`, `"UN"` → `"NYSE"`, `"UW"` → `"NASDAQ"`). Unknown codes fall back to the raw `exchCode` string. The resolved name is forwarded as `exchange` in `AssetLookupResult`. If OpenFIGI returns no `exchCode`, `exchange` is absent.
+**WEB-049 — Exchange field (backend)**: The OpenFIGI `exchCode` field is resolved to a human-readable market name via a static, hardcoded in-code lookup table (e.g. `"FP"` → `"Euronext Paris Stock Exchange"`, `"UN"` → `"New York Stock Exchange"`, `"UW"` → `"Nasdaq Global Select Market"`). The table mirrors OpenFIGI's official exchange-codes dictionary (published as a CSV at `openfigi.com`). Unknown codes fall back to the raw `exchCode` string. The resolved name is forwarded as `exchange` in `AssetLookupResult`. If OpenFIGI returns no `exchCode`, `exchange` is absent.
+
+**WEB-050 — Primary listing surfacing (backend)**: The keyword search path applies a deduplication-and-enrichment pipeline so that the user is shown the asset's primary listing(s), not the dozens of secondary OTC/MTF listings OpenFIGI returns by default. The pipeline:
+
+1. **Common Stock filter on the initial keyword search**: the `/v3/search` request includes `securityType: "Common Stock"` so bonds, futures, structured products and warrants are excluded at source.
+2. **Drop noise**: results whose `shareClassFIGI` is `null` are discarded (these are pure trade-reporting venue rows such as `X1` "TradEcho APA EU"; they carry no canonical share class).
+3. **Dedup by share class**: remaining results are grouped by `shareClassFIGI`. Multiple keyword-search hits for the same share class collapse into one group.
+4. **Share-class enrichment**: for the unique `shareClassFIGI` values from step 3, a single batched call is made to `/v3/mapping` with `idType: "ID_BB_GLOBAL_SHARE_CLASS_LEVEL"`. The response — all known listings for that share class globally — replaces the original keyword-search hits for the group. This is the step that uncovers primary listings (e.g. `FP AI`) that the keyword search alone never returns.
+5. **Primary pick per group**: the entries of each group are filtered against `GLOBAL_VENUE_PRIORITY` — a hardcoded ordered list of primary venue `exchCode` values (e.g. `UN`, `UW`, `LO`, `JT`, `FP`, `GY`, `HK`, `SE`, `AT`, `CT`, `IM`, `NA`, …). All entries whose `exchCode` is on the list are kept, in priority order. Up to 3 entries per share class are kept (cap chosen so dual-listed names like TotalEnergies surface both their NYSE and Euronext rows). If no entry on the list matches, the first entry from OpenFIGI's order is kept as a fallback so the share class is not lost.
+6. **Final cap (WEB-022)**: the combined result list across all share classes is truncated to 10.
+
+The ISIN search path (WEB-014) calls `/v3/mapping` directly and skips steps 1–4; only steps 5–6 apply, ensuring consistent primary-pick behaviour regardless of entry path. The opinionated tables and pipeline live in a single `primary_listing_processor` module so they can be audited and tested in isolation.
 
 ---
 
@@ -154,5 +165,5 @@ A dialog or modal with two sequential states:
 ## Open Questions
 
 - [x] **OQ-1** — After the form is pre-filled (WEB-040), can the user navigate back to the search step to change their selection? **Decision: yes.** A back action returns to the search step; query and results are retained (WEB-047).
-- [x] **OQ-2** — How is the exchange code lookup table maintained? **Decision:** hardcoded in-code constant in `use_cases/asset_web_lookup/orchestrator.rs`, updated manually by a developer when new exchange codes are encountered. Unknown codes fall back to the raw string (WEB-049). No external config or database entry is needed.
+- [x] **OQ-2** — How is the exchange code lookup table maintained? **Decision:** hardcoded in-code constant in `use_cases/asset_web_lookup/primary_listing_processor.rs` (the table moved out of `orchestrator.rs` when WEB-050 was added), updated manually by a developer when new exchange codes are encountered. Unknown codes fall back to the raw string (WEB-049). No external config or database entry is needed.
 - [x] **OQ-3** — What is shown on the second result row line when `exchange` is absent, or when both `asset_class` and `exchange` are absent? **Decision:** (a) class present, exchange absent → show class label only, no separator; (b) both absent → show the localised "unknown type" fallback label only. (WEB-031).

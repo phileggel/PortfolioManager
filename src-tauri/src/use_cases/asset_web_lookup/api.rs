@@ -5,7 +5,8 @@
 use serde::Serialize;
 use specta::Type;
 
-use super::orchestrator::{AssetLookupResult, AssetWebLookupUseCase};
+use super::orchestrator::AssetWebLookupUseCase;
+use super::primary_listing_processor::AssetLookupResult;
 use crate::core::logger::BACKEND;
 
 /// Typed error for `lookup_asset` (WEB-025).

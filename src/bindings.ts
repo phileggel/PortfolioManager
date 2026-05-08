@@ -718,28 +718,29 @@ export type AssetCommandError =
  */
 { code: "Unknown" }
 /**
- * Transient value object returned by `lookup_asset`.  Never persisted
- * (WEB-020). Fields may be absent per WEB-023, WEB-024, WEB-046, WEB-049.
+ * Transient value object returned by the orchestrator's `search` method.
+ * Mirrors the shape exposed at the Tauri boundary.
  */
 export type AssetLookupResult = { 
 /**
- * Full name of the financial instrument.
+ * Full instrument name (e.g. `"AIR LIQUIDE SA"`).
  */
 name: string; 
 /**
- * ISIN (on the ISIN path) or ticker (on the keyword path), if available (WEB-046).
+ * ISIN (ISIN path) or ticker (keyword path); `None` when no value is
+ * available (WEB-046).
  */
 reference: string | null; 
 /**
- * ISO 4217 trading currency, if returned by OpenFIGI (WEB-024).
+ * ISO 4217 currency forwarded from OpenFIGI (WEB-024).
  */
 currency: string | null; 
 /**
- * Mapped asset class, if the `securityType` is recognised (WEB-023).
+ * Asset class derived from `securityType` (WEB-023).
  */
 asset_class: AssetClass | null; 
 /**
- * Human-readable exchange name resolved from `exchCode` (WEB-049). Absent if OpenFIGI returns no exchange code.
+ * Human-readable exchange name resolved from `exchCode` (WEB-049).
  */
 exchange: string | null }
 /**
