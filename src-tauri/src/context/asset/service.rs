@@ -131,7 +131,9 @@ impl AssetService {
         Ok(asset)
     }
 
-    /// Updates an existing asset. Rejects if the asset is archived (R6) or a system Cash Asset (CSH-016).
+    /// Updates an existing asset. Rejects if the asset is the system Cash Asset
+    /// (CSH-016) or archived (R6) — both invariants are enforced inside
+    /// `Asset::update_from` on the loaded aggregate (single source of truth).
     pub async fn update_asset(&self, dto: UpdateAssetDTO) -> Result<Asset> {
         let existing = self
             .asset_repo
@@ -139,28 +141,18 @@ impl AssetService {
             .await?
             .ok_or_else(|| AssetDomainError::NotFound(dto.asset_id.clone()))?;
 
-        if existing.class == AssetClass::Cash {
-            return Err(AssetDomainError::CashAssetNotEditable.into());
-        }
-
-        if existing.is_archived {
-            return Err(AssetDomainError::Archived.into());
-        }
-
         let category = self
             .get_category_by_id(&dto.category_id)
             .await?
             .ok_or_else(|| CategoryDomainError::NotFound(dto.category_id.clone()))?;
 
-        let asset = Asset::with_id(
-            dto.asset_id,
+        let asset = existing.update_from(
             dto.name,
             dto.class,
             category,
             dto.currency,
             dto.risk_level,
             dto.reference,
-            false,
         )?;
 
         let asset = self.asset_repo.update(asset).await?;
@@ -173,9 +165,19 @@ impl AssetService {
         Ok(asset)
     }
 
-    /// Archives an asset (reversible — R6). Rejects system Cash Assets (CSH-016).
+    /// Archives an asset (reversible — R6). The system-asset invariant
+    /// (CSH-016) is enforced inside `Asset::archive`.
     pub async fn archive_asset(&self, asset_id: &str) -> Result<()> {
-        self.guard_not_cash(asset_id).await?;
+        let existing = self
+            .asset_repo
+            .get_by_id(asset_id)
+            .await?
+            .ok_or_else(|| AssetDomainError::NotFound(asset_id.to_string()))?;
+        // Aggregate enforces the invariant; the returned mutated Asset is
+        // intentionally discarded — the column-update fast path
+        // `repo.archive(id)` handles persistence. PR 2 / a follow-up may
+        // collapse to `repo.update(asset)` once typed-Result migration lands.
+        existing.archive()?;
         self.asset_repo.archive(asset_id).await?;
         tracing::info!(target: BACKEND, asset_id = %asset_id, "Asset archived");
         if let Some(bus) = &self.event_bus {
@@ -184,9 +186,16 @@ impl AssetService {
         Ok(())
     }
 
-    /// Unarchives an asset (R18). Rejects system Cash Assets (CSH-016).
+    /// Unarchives an asset (R18). The system-asset invariant (CSH-016) is
+    /// enforced inside `Asset::unarchive`.
     pub async fn unarchive_asset(&self, asset_id: &str) -> Result<()> {
-        self.guard_not_cash(asset_id).await?;
+        let existing = self
+            .asset_repo
+            .get_by_id(asset_id)
+            .await?
+            .ok_or_else(|| AssetDomainError::NotFound(asset_id.to_string()))?;
+        // See `archive_asset` for the rationale on discarding the returned aggregate.
+        existing.unarchive()?;
         self.asset_repo.unarchive(asset_id).await?;
         tracing::info!(target: BACKEND, asset_id = %asset_id, "Asset unarchived");
         if let Some(bus) = &self.event_bus {
@@ -195,27 +204,20 @@ impl AssetService {
         Ok(())
     }
 
-    /// Soft-deletes an asset and publishes an AssetUpdated event. Rejects system Cash Assets (CSH-016).
+    /// Soft-deletes an asset and publishes an AssetUpdated event. The
+    /// system-asset invariant (CSH-016) is enforced inside
+    /// `Asset::ensure_user_managed` on the loaded aggregate.
     pub async fn delete_asset(&self, asset_id: &str) -> Result<()> {
-        self.guard_not_cash(asset_id).await?;
-        self.asset_repo.delete(asset_id).await?;
-        tracing::info!(target: BACKEND, asset_id = %asset_id, "Asset deleted");
-        if let Some(bus) = &self.event_bus {
-            bus.publish(Event::AssetUpdated);
-        }
-        Ok(())
-    }
-
-    /// Loads the asset and rejects with `CashAssetNotEditable` if it is a system Cash Asset (CSH-016).
-    /// `NotFound` propagates so the boundary can map it for callers that did not pre-load the asset.
-    async fn guard_not_cash(&self, asset_id: &str) -> Result<()> {
         let existing = self
             .asset_repo
             .get_by_id(asset_id)
             .await?
             .ok_or_else(|| AssetDomainError::NotFound(asset_id.to_string()))?;
-        if existing.class == AssetClass::Cash {
-            return Err(AssetDomainError::CashAssetNotEditable.into());
+        existing.ensure_user_managed()?;
+        self.asset_repo.delete(asset_id).await?;
+        tracing::info!(target: BACKEND, asset_id = %asset_id, "Asset deleted");
+        if let Some(bus) = &self.event_bus {
+            bus.publish(Event::AssetUpdated);
         }
         Ok(())
     }
@@ -245,29 +247,40 @@ impl AssetService {
         Ok(category)
     }
 
-    /// Updates a category and publishes a CategoryUpdated event.
+    /// Updates a category and publishes a CategoryUpdated event. The
+    /// system-category invariant (`SystemReadonly`) is enforced inside
+    /// `AssetCategory::update_from` on the loaded aggregate (single source of
+    /// truth). `update_from` runs before the uniqueness query so SystemReadonly
+    /// takes precedence over DuplicateName when both would apply.
     pub async fn update_category(&self, id: &str, label: &str) -> Result<AssetCategory> {
-        if id == SYSTEM_CATEGORY_ID {
-            return Err(CategoryDomainError::SystemReadonly.into());
-        }
-        if let Some(existing) = self.category_repo.find_by_name(label).await? {
-            if existing.id != id {
+        let existing = self
+            .category_repo
+            .get_by_id(id)
+            .await?
+            .ok_or_else(|| CategoryDomainError::NotFound(id.to_string()))?;
+        let candidate = existing.update_from(label.to_string())?;
+        if let Some(other) = self.category_repo.find_by_name(&candidate.name).await? {
+            if other.id != id {
                 return Err(CategoryDomainError::DuplicateName.into());
             }
         }
-        let category = AssetCategory::update_from(id.to_string(), label.to_string())?;
-        let category = self.category_repo.update(category).await?;
+        let category = self.category_repo.update(candidate).await?;
         if let Some(bus) = &self.event_bus {
             bus.publish(Event::CategoryUpdated);
         }
         Ok(category)
     }
 
-    /// Reassigns assets to default category, then deletes the category.
+    /// Reassigns assets to default category, then deletes the category. The
+    /// system-category invariant (`SystemProtected`) is enforced inside
+    /// `AssetCategory::ensure_deletable` on the loaded aggregate.
     pub async fn delete_category(&self, category_id: &str) -> Result<()> {
-        if category_id == SYSTEM_CATEGORY_ID {
-            return Err(CategoryDomainError::SystemProtected.into());
-        }
+        let existing = self
+            .category_repo
+            .get_by_id(category_id)
+            .await?
+            .ok_or_else(|| CategoryDomainError::NotFound(category_id.to_string()))?;
+        existing.ensure_deletable()?;
         self.category_repo
             .reassign_assets_and_delete(category_id, SYSTEM_CATEGORY_ID)
             .await?;
@@ -633,11 +646,10 @@ mod tests {
         ar.expect_get_by_id()
             .times(1)
             .return_once(|_| Ok(Some(make_asset("asset-id", true))));
-        let svc = make_svc(
-            ar,
-            MockAssetCategoryRepository::new(),
-            MockAssetPriceRepository::new(),
-        );
+        let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_get_by_id()
+            .return_once(|_| Ok(Some(make_category())));
+        let svc = make_svc(ar, cr, MockAssetPriceRepository::new());
         let err = svc
             .update_asset(UpdateAssetDTO {
                 asset_id: "asset-id".to_string(),
@@ -783,12 +795,19 @@ mod tests {
         );
     }
 
-    // R2 — system category cannot be renamed (pure id check, no repo call)
+    // R2 — system category cannot be renamed (check moved into AssetCategory::update_from)
     #[tokio::test]
     async fn test_update_category_rejects_system_category() {
+        let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_get_by_id().times(1).return_once(|_| {
+            Ok(Some(AssetCategory::from_storage(
+                SYSTEM_CATEGORY_ID.to_string(),
+                "uncategorized".to_string(),
+            )))
+        });
         let svc = make_svc(
             MockAssetRepository::new(),
-            MockAssetCategoryRepository::new(),
+            cr,
             MockAssetPriceRepository::new(),
         );
         let err = svc
@@ -808,6 +827,12 @@ mod tests {
     #[tokio::test]
     async fn test_update_category_rejects_duplicate_name() {
         let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_get_by_id().times(1).return_once(|_| {
+            Ok(Some(AssetCategory::from_storage(
+                "cat2-id".to_string(),
+                "Bonds".to_string(),
+            )))
+        });
         cr.expect_find_by_name().times(1).return_once(|_| {
             Ok(Some(AssetCategory::from_storage(
                 "other-id".to_string(),
@@ -829,12 +854,19 @@ mod tests {
         );
     }
 
-    // R2 — system category cannot be deleted (pure id check, no repo call)
+    // R2 — system category cannot be deleted (check moved into AssetCategory::ensure_deletable)
     #[tokio::test]
     async fn test_delete_category_rejects_system_category() {
+        let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_get_by_id().times(1).return_once(|_| {
+            Ok(Some(AssetCategory::from_storage(
+                SYSTEM_CATEGORY_ID.to_string(),
+                "uncategorized".to_string(),
+            )))
+        });
         let svc = make_svc(
             MockAssetRepository::new(),
-            MockAssetCategoryRepository::new(),
+            cr,
             MockAssetPriceRepository::new(),
         );
         let err = svc.delete_category(SYSTEM_CATEGORY_ID).await.unwrap_err();
@@ -851,6 +883,12 @@ mod tests {
     #[tokio::test]
     async fn test_delete_category_reassigns_assets_to_default() {
         let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_get_by_id().times(1).return_once(|_| {
+            Ok(Some(AssetCategory::from_storage(
+                "bonds-id".to_string(),
+                "Bonds".to_string(),
+            )))
+        });
         cr.expect_reassign_assets_and_delete()
             .withf(|cat_id, fallback_id| cat_id == "bonds-id" && fallback_id == SYSTEM_CATEGORY_ID)
             .times(1)
@@ -1376,11 +1414,10 @@ mod tests {
         let mut ar = MockAssetRepository::new();
         ar.expect_get_by_id()
             .return_once(move |_| Ok(Some(archived_asset)));
-        let svc = make_svc(
-            ar,
-            MockAssetCategoryRepository::new(),
-            MockAssetPriceRepository::new(),
-        );
+        let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_get_by_id()
+            .return_once(|_| Ok(Some(make_category())));
+        let svc = make_svc(ar, cr, MockAssetPriceRepository::new());
 
         let err = svc
             .update_asset(UpdateAssetDTO {
@@ -1511,11 +1548,10 @@ mod tests {
         let mut ar = MockAssetRepository::new();
         ar.expect_get_by_id()
             .return_once(|_| Ok(Some(make_cash_asset("system-cash-USD"))));
-        let svc = make_svc(
-            ar,
-            MockAssetCategoryRepository::new(),
-            MockAssetPriceRepository::new(),
-        );
+        let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_get_by_id()
+            .return_once(|_| Ok(Some(make_category())));
+        let svc = make_svc(ar, cr, MockAssetPriceRepository::new());
 
         let err = svc
             .update_asset(UpdateAssetDTO {
@@ -1650,6 +1686,12 @@ mod tests {
     #[tokio::test]
     async fn test_update_category_emits_event_when_bus_present() {
         let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_get_by_id().times(1).return_once(|_| {
+            Ok(Some(AssetCategory::from_storage(
+                "some-id".to_string(),
+                "Old".to_string(),
+            )))
+        });
         cr.expect_find_by_name().times(1).return_once(|_| Ok(None));
         cr.expect_update().times(1).return_once(Ok);
         let bus = Arc::new(SideEffectEventBus::new());
@@ -1672,6 +1714,12 @@ mod tests {
     #[tokio::test]
     async fn test_delete_category_emits_event_when_bus_present() {
         let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_get_by_id().times(1).return_once(|_| {
+            Ok(Some(AssetCategory::from_storage(
+                "cat-id".to_string(),
+                "Bonds".to_string(),
+            )))
+        });
         cr.expect_reassign_assets_and_delete()
             .times(1)
             .return_once(|_, _| Ok(()));

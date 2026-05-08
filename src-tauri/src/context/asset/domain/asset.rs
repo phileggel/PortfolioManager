@@ -172,6 +172,322 @@ impl Asset {
             is_archived,
         }
     }
+
+    /// Returns true if this is the system Cash Asset (CSH-016 / CSH-017).
+    fn is_cash(&self) -> bool {
+        self.class == AssetClass::Cash
+    }
+
+    /// Aggregate-level invariant: the system Cash Asset cannot be edited, archived,
+    /// unarchived, or deleted by the user (CSH-016).
+    pub fn ensure_user_managed(&self) -> Result<(), AssetDomainError> {
+        if self.is_cash() {
+            return Err(AssetDomainError::CashAssetNotEditable);
+        }
+        Ok(())
+    }
+
+    /// Aggregate-level invariant: an archived asset cannot be edited (R6). Archive
+    /// must be reverted (`unarchive`) first.
+    pub fn ensure_not_archived(&self) -> Result<(), AssetDomainError> {
+        if self.is_archived {
+            return Err(AssetDomainError::Archived);
+        }
+        Ok(())
+    }
+
+    /// Aggregate root method: applies an edit to this asset. Enforces the
+    /// system-asset (CSH-016) and not-archived (R6) invariants on the loaded
+    /// state, then validates the proposed input. Returns the updated `Asset`
+    /// for the caller to persist.
+    // The argument count mirrors the field set of Asset and matches the
+    // existing `with_id` factory (B32 precedent above). It cannot be split
+    // without introducing an intermediate value object.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_from(
+        self,
+        name: String,
+        class: AssetClass,
+        category: AssetCategory,
+        currency: String,
+        risk_level: u8,
+        reference: String,
+    ) -> Result<Self, AssetDomainError> {
+        self.ensure_user_managed()?;
+        self.ensure_not_archived()?;
+        Self::validate_typed(&name, risk_level, &currency, &reference)?;
+        let reference = reference.trim().to_uppercase();
+        Ok(Self {
+            id: self.id,
+            name,
+            class,
+            category,
+            currency,
+            risk_level,
+            reference,
+            is_archived: self.is_archived,
+        })
+    }
+
+    /// Aggregate root method: archives this asset (R6 — reversible).
+    /// Enforces the system-asset invariant (CSH-016).
+    pub fn archive(self) -> Result<Self, AssetDomainError> {
+        self.ensure_user_managed()?;
+        Ok(Self {
+            is_archived: true,
+            ..self
+        })
+    }
+
+    /// Aggregate root method: unarchives this asset (R18). Enforces the
+    /// system-asset invariant (CSH-016).
+    pub fn unarchive(self) -> Result<Self, AssetDomainError> {
+        self.ensure_user_managed()?;
+        Ok(Self {
+            is_archived: false,
+            ..self
+        })
+    }
+
+    /// Typed-error variant of [`Asset::validate`] used by the new aggregate
+    /// root methods. Returns the leaf [`AssetDomainError`] directly so callers
+    /// can compose with `?`. The legacy `validate` (anyhow-wrapped) is kept
+    /// in place for the existing `new`/`with_id` factories pending the
+    /// service-layer typed-Result migration.
+    fn validate_typed(
+        name: &str,
+        risk_level: u8,
+        currency: &str,
+        reference: &str,
+    ) -> Result<(), AssetDomainError> {
+        if name.trim().is_empty() {
+            return Err(AssetDomainError::NameEmpty);
+        }
+        if reference.trim().is_empty() {
+            return Err(AssetDomainError::ReferenceEmpty);
+        }
+        if !(1..=5).contains(&risk_level) {
+            return Err(AssetDomainError::InvalidRiskLevel(risk_level));
+        }
+        if Currency::from_str(currency).is_err() {
+            return Err(AssetDomainError::InvalidCurrency(currency.to_string()));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod aggregate_tests {
+    use super::*;
+
+    fn equity(id: &str, archived: bool) -> Asset {
+        Asset::restore(
+            id.to_string(),
+            "Apple".to_string(),
+            AssetClass::Stocks,
+            AssetCategory::default(),
+            "USD".to_string(),
+            3,
+            "AAPL".to_string(),
+            archived,
+        )
+    }
+
+    fn cash() -> Asset {
+        Asset::restore(
+            "cash-usd".to_string(),
+            "USD Cash".to_string(),
+            AssetClass::Cash,
+            AssetCategory::default(),
+            "USD".to_string(),
+            1,
+            "USD".to_string(),
+            false,
+        )
+    }
+
+    // CSH-016 — system Cash Asset cannot be edited via update_from.
+    #[test]
+    fn update_from_rejects_system_cash_asset() {
+        let err = cash()
+            .update_from(
+                "Renamed".into(),
+                AssetClass::Stocks,
+                AssetCategory::default(),
+                "USD".into(),
+                3,
+                "AAPL".into(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, AssetDomainError::CashAssetNotEditable));
+    }
+
+    // R6 — archived asset cannot be edited via update_from.
+    #[test]
+    fn update_from_rejects_archived_asset() {
+        let err = equity("a1", true)
+            .update_from(
+                "Renamed".into(),
+                AssetClass::Stocks,
+                AssetCategory::default(),
+                "USD".into(),
+                3,
+                "AAPL".into(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, AssetDomainError::Archived));
+    }
+
+    // update_from validates input after the state checks pass.
+    #[test]
+    fn update_from_rejects_empty_name() {
+        let err = equity("a1", false)
+            .update_from(
+                "".into(),
+                AssetClass::Stocks,
+                AssetCategory::default(),
+                "USD".into(),
+                3,
+                "AAPL".into(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, AssetDomainError::NameEmpty));
+    }
+
+    // CSH-016 — system Cash Asset cannot be archived.
+    #[test]
+    fn archive_rejects_system_cash_asset() {
+        assert!(matches!(
+            cash().archive().unwrap_err(),
+            AssetDomainError::CashAssetNotEditable
+        ));
+    }
+
+    // CSH-016 — system Cash Asset cannot be unarchived.
+    #[test]
+    fn unarchive_rejects_system_cash_asset() {
+        assert!(matches!(
+            cash().unarchive().unwrap_err(),
+            AssetDomainError::CashAssetNotEditable
+        ));
+    }
+
+    // archive sets is_archived = true on a regular asset.
+    #[test]
+    fn archive_sets_archived_flag_on_user_asset() {
+        let archived = equity("a1", false).archive().unwrap();
+        assert!(archived.is_archived);
+    }
+
+    // unarchive clears is_archived on a regular asset.
+    #[test]
+    fn unarchive_clears_archived_flag_on_user_asset() {
+        let unarchived = equity("a1", true).unarchive().unwrap();
+        assert!(!unarchived.is_archived);
+    }
+
+    // ensure_user_managed rejects the system Cash Asset (used by delete service path).
+    #[test]
+    fn ensure_user_managed_rejects_system_cash_asset() {
+        assert!(matches!(
+            cash().ensure_user_managed().unwrap_err(),
+            AssetDomainError::CashAssetNotEditable
+        ));
+    }
+
+    // update_from rewrites every mutable field while preserving id and is_archived.
+    #[test]
+    fn update_from_applies_all_field_changes() {
+        let updated = equity("a1", false)
+            .update_from(
+                "Microsoft".into(),
+                AssetClass::ETF,
+                AssetCategory::from_storage("cat-tech".into(), "Tech".into()),
+                "EUR".into(),
+                2,
+                "MSFT".into(),
+            )
+            .unwrap();
+        assert_eq!(updated.id, "a1");
+        assert!(!updated.is_archived);
+        assert_eq!(updated.name, "Microsoft");
+        assert_eq!(updated.class, AssetClass::ETF);
+        assert_eq!(updated.category.id, "cat-tech");
+        assert_eq!(updated.currency, "EUR");
+        assert_eq!(updated.risk_level, 2);
+        assert_eq!(updated.reference, "MSFT");
+    }
+
+    // update_from normalizes reference: trims whitespace and uppercases.
+    #[test]
+    fn update_from_normalizes_reference() {
+        let updated = equity("a1", false)
+            .update_from(
+                "Apple".into(),
+                AssetClass::Stocks,
+                AssetCategory::default(),
+                "USD".into(),
+                3,
+                "  msft  ".into(),
+            )
+            .unwrap();
+        assert_eq!(updated.reference, "MSFT");
+    }
+
+    // CSH-016 takes precedence over R6: a system Cash Asset that is also archived
+    // must surface CashAssetNotEditable, not Archived (cash check runs first).
+    #[test]
+    fn update_from_check_order_cash_before_archived() {
+        let archived_cash = Asset::restore(
+            "cash-usd".into(),
+            "USD Cash".into(),
+            AssetClass::Cash,
+            AssetCategory::default(),
+            "USD".into(),
+            1,
+            "USD".into(),
+            true,
+        );
+        let err = archived_cash
+            .update_from(
+                "x".into(),
+                AssetClass::Stocks,
+                AssetCategory::default(),
+                "USD".into(),
+                3,
+                "AAPL".into(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, AssetDomainError::CashAssetNotEditable));
+    }
+
+    // archive preserves all other fields (only is_archived flips).
+    #[test]
+    fn archive_preserves_other_fields() {
+        let before = equity("a1", false);
+        let after = before.clone().archive().unwrap();
+        assert_eq!(after.id, before.id);
+        assert_eq!(after.name, before.name);
+        assert_eq!(after.class, before.class);
+        assert_eq!(after.category.id, before.category.id);
+        assert_eq!(after.currency, before.currency);
+        assert_eq!(after.risk_level, before.risk_level);
+        assert_eq!(after.reference, before.reference);
+    }
+
+    // unarchive preserves all other fields (only is_archived flips).
+    #[test]
+    fn unarchive_preserves_other_fields() {
+        let before = equity("a1", true);
+        let after = before.clone().unarchive().unwrap();
+        assert_eq!(after.id, before.id);
+        assert_eq!(after.name, before.name);
+        assert_eq!(after.class, before.class);
+        assert_eq!(after.category.id, before.category.id);
+        assert_eq!(after.currency, before.currency);
+        assert_eq!(after.risk_level, before.risk_level);
+        assert_eq!(after.reference, before.reference);
+    }
 }
 
 /// Interface for asset persistence.

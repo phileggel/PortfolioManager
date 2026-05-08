@@ -47,12 +47,42 @@ impl AssetCategory {
         Ok(Self { id, name: label })
     }
 
-    /// Updates an existing AssetCategory.
-    pub fn update_from(id: String, label: String) -> Result<Self> {
+    /// Aggregate root method: applies a rename to this category. Enforces the
+    /// system-category invariant (raises `SystemReadonly` for the seeded
+    /// system category, via `ensure_renameable`) and validates the new label.
+    /// Returns the updated `AssetCategory` for the caller to persist.
+    pub fn update_from(self, label: String) -> Result<Self, CategoryDomainError> {
+        self.ensure_renameable()?;
         if label.trim().is_empty() {
-            return Err(CategoryDomainError::LabelEmpty.into());
+            return Err(CategoryDomainError::LabelEmpty);
         }
-        Ok(Self { id, name: label })
+        Ok(Self {
+            id: self.id,
+            name: label,
+        })
+    }
+
+    /// Returns true if this is the seeded system default category.
+    fn is_system(&self) -> bool {
+        self.id == SYSTEM_CATEGORY_ID
+    }
+
+    /// Aggregate-level invariant: the system category is read-only — its
+    /// label cannot be changed by the user.
+    pub fn ensure_renameable(&self) -> Result<(), CategoryDomainError> {
+        if self.is_system() {
+            return Err(CategoryDomainError::SystemReadonly);
+        }
+        Ok(())
+    }
+
+    /// Aggregate-level invariant: the system category is protected — it
+    /// cannot be deleted.
+    pub fn ensure_deletable(&self) -> Result<(), CategoryDomainError> {
+        if self.is_system() {
+            return Err(CategoryDomainError::SystemProtected);
+        }
+        Ok(())
     }
 
     /// Creates a new AssetCategory from storage.
@@ -61,6 +91,67 @@ impl AssetCategory {
             id: category_id,
             name: label,
         }
+    }
+}
+
+#[cfg(test)]
+mod aggregate_tests {
+    use super::*;
+
+    fn user_category() -> AssetCategory {
+        AssetCategory::from_storage("cat-bonds".to_string(), "Bonds".to_string())
+    }
+
+    fn system_category() -> AssetCategory {
+        AssetCategory::from_storage(SYSTEM_CATEGORY_ID.to_string(), "uncategorized".to_string())
+    }
+
+    // R2 — system category cannot be renamed via update_from.
+    #[test]
+    fn update_from_rejects_system_category() {
+        let err = system_category().update_from("Renamed".into()).unwrap_err();
+        assert!(matches!(err, CategoryDomainError::SystemReadonly));
+    }
+
+    // update_from validates label after the state check passes.
+    #[test]
+    fn update_from_rejects_empty_label() {
+        let err = user_category().update_from("   ".into()).unwrap_err();
+        assert!(matches!(err, CategoryDomainError::LabelEmpty));
+    }
+
+    // update_from on a user category renames in place, preserving id.
+    #[test]
+    fn update_from_renames_user_category() {
+        let updated = user_category().update_from("Stocks".into()).unwrap();
+        assert_eq!(updated.id, "cat-bonds");
+        assert_eq!(updated.name, "Stocks");
+    }
+
+    // R2 — system category is not deletable.
+    #[test]
+    fn ensure_deletable_rejects_system_category() {
+        assert!(matches!(
+            system_category().ensure_deletable().unwrap_err(),
+            CategoryDomainError::SystemProtected
+        ));
+    }
+
+    // ensure_renameable mirrors update_from's first guard for fail-fast use in services.
+    #[test]
+    fn ensure_renameable_rejects_system_category() {
+        assert!(matches!(
+            system_category().ensure_renameable().unwrap_err(),
+            CategoryDomainError::SystemReadonly
+        ));
+    }
+
+    // R2 takes precedence over input validation: an empty label on the system category
+    // must surface SystemReadonly (state check runs first), not LabelEmpty.
+    #[test]
+    fn update_from_check_order_system_before_label() {
+        let err = system_category().update_from("   ".into()).unwrap_err();
+        assert!(matches!(err, CategoryDomainError::SystemReadonly));
     }
 }
 

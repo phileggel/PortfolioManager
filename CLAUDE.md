@@ -126,14 +126,37 @@ All Tauri invocations in services MUST match `bindings.ts` signatures EXACTLY:
 - **Rule**: Match parameter COUNT, ORDER, and NAMES from bindings.ts
 - When binding has 5 params: call with 5 args in correct order, never wrapped
 
-### Domain Entities - Factory Methods
+### Domain Entities - Factory & Aggregate-Root Methods
 
-All domain objects use factory methods (NEVER direct struct literals):
+Domain objects expose two distinct families of methods. NEVER construct them via direct
+struct literals outside these conventions.
 
-- `new()` - Create new entity: generates ID + validates
-- `update_from()` - Update existing entity: uses provided ID + validates
-- `from_storage()` - Reconstruct from database: no validation (already validated at storage)
-- Repository ONLY uses these factory methods, never direct literals
+**Factories** — produce a fresh aggregate. Static, do not take `self`:
+
+- `new()` — generates a new ID + validates input
+- `with_id()` — uses a caller-supplied ID + validates input (services / use cases / api)
+- `from_storage()` (or `restore()`) — reconstructs from the database, no validation
+  (already validated at write time)
+
+**Mutating aggregate-root methods** — apply a state-dependent change to a loaded
+aggregate. Instance methods, take `self` (or `&mut self`):
+
+- `update_from(self, …fields) -> Result<Self, DomainError>` — applies an edit; enforces
+  state invariants then validates input; returns the updated aggregate to persist
+- `archive(self) / unarchive(self) -> Result<Self, DomainError>` — flips the archive flag;
+  enforces invariants
+- `ensure_<predicate>(&self) -> Result<(), DomainError>` — fail-fast guard used when the
+  rejection must precede an action that doesn't construct a new aggregate (e.g. delete)
+
+Rules for this family:
+
+- Use **domain/business vocabulary** (per `docs/backend-rules.md` B11) — name the
+  business action (`archive`, `cancel`), not the mechanism (`set_archived(true)`)
+- Return typed **domain errors** directly (per `docs/ddd-reference.md` § Errors) — never
+  `anyhow`
+- All **state-dependent rejections** (`Archived`, `CashAssetNotEditable`,
+  `SystemReadonly`, `SystemProtected`, etc.) MUST live here — not in the service
+- The repository ONLY uses factories, never direct struct literals
 
 ---
 
