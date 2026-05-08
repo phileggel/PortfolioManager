@@ -129,9 +129,10 @@ Implements the application auto-update lifecycle (spec: `docs/update.md`).
 
 Searches OpenFIGI to pre-fill the Add Asset form (spec: `docs/spec/asset-web-lookup.md`).
 
-- `orchestrator.rs` — `AssetWebLookupUseCase` + `OpenFigiClient` trait + `ReqwestOpenFigiClient`; `AssetLookupResult` value object (transient, never persisted)
+- `orchestrator.rs` — `AssetWebLookupUseCase` + `OpenFigiClient` trait + `ReqwestOpenFigiClient`. Issues HTTP calls and delegates ranking decisions to the processor.
+- `primary_listing_processor.rs` — pure-function module owning the public types `RawFigiHit`, `AssetLookupResult`, `QueryContext`. Hosts the three opinionated tables (`EXCHANGE_CODE_TO_NAME`, `ISIN_COUNTRY_TO_PRIMARY_VENUES`, `GLOBAL_VENUE_PRIORITY`) and the dedup + primary-listing pick pipeline (WEB-049, WEB-050). Isolated from I/O so the algorithm is auditable and unit-testable.
 - `api.rs` — one Tauri command: `lookup_asset(query: String) -> Vec<AssetLookupResult>`
-- Routing: 12-char alphanumeric queries → ISIN mapping endpoint; all others → keyword search endpoint
+- Routing: 12-char alphanumeric queries → ISIN mapping endpoint; all others → keyword search endpoint, followed by a batched share-class enrichment call so primary venues missing from `/v3/search` (notably Euronext Paris for European stocks) are surfaced (WEB-050)
 - No DB dependency; no events emitted
 
 ---

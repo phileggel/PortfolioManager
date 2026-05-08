@@ -7,8 +7,8 @@
 
 pub mod api;
 pub mod orchestrator;
+pub mod primary_listing_processor;
 
 pub use api::*;
-pub use orchestrator::{
-    AssetLookupResult, AssetWebLookupUseCase, OpenFigiClient, ReqwestOpenFigiClient,
-};
+pub use orchestrator::{AssetWebLookupUseCase, OpenFigiClient, ReqwestOpenFigiClient};
+pub use primary_listing_processor::AssetLookupResult;
