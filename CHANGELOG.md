@@ -5,6 +5,79 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-05-08
+
+### Added
+
+- cash + priced
+  same-currency holdings, no FX.
+- `OpeningBalance` rejected on the Cash Asset (CSH-061).
+- Migration `202605060001` is documentation-only —
+  `transaction_type` is TEXT.
+
+Frontend
+
+- New Deposit / Withdrawal modals + hooks mirroring Buy/Sell, with a
+  shared `validateCashForm` helper (CSH-021/031). Withdraw + Buy/Edit
+  surface `InsufficientCash` inline with localised balance + currency
+  (CSH-081); `useTransactions` formats the payload-bearing variant
+  centrally.
+- Account Details: Deposit (always) and Withdraw (gated on cash > 0)
+  buttons in the header, Global Value tile, and a no-cash banner.
+- Cash row variant in the active holdings table — sorted to the top
+  (CSH-092), no cost-basis / avg-price / realized-pnl cells, with
+  inline Deposit / Withdraw actions (CSH-091).
+- Suppress system Cash Assets in the Asset Manager and the Add / Edit
+  / Open-Balance asset selectors (CSH-015/018/061), and the Cash
+  Category from category lookups (CSH-017).
+- Transaction list renders Deposit / Withdrawal type labels (CSH-101).
+- New `useAccountDetailsView(accountId)` hook absorbs modal state +
+  handlers + derived flags so `AccountDetailsView.tsx` is pure JSX +
+  one hook call.
+- New cash, validation, and `error.*` i18n keys in EN + FR.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+### Fixed
+
+- stop shipping generate_bindings dev tool in installer
+  The dev-only generate_bindings bin was packaged into Windows NSIS
+  installers since at least v0.8.x. Gate it behind a Cargo feature so
+  cargo build skips it; recipes and scripts opt in via
+  --features generate-bindings. Release workflows also strip any stale
+  binary restored from rust-cache before tauri-action runs.
+- reject mutations on system Cash Asset (CSH-016)
+  update_asset / archive_asset / unarchive_asset / delete_asset now reject
+  inputs whose target asset has class == Cash with CashAssetNotEditable.
+  archive_asset and delete_asset additionally surface NotFound for unknown
+  ids (the new guard loads the asset). FE filtering (CSH-015/018) already
+  prevents these calls in practice; this closes the direct-IPC gap.
+- the scrim covers the whole viewport at 50%
+  black + blur, and in a standalone preview there is no real content
+  behind it, so dark-mode shots looked near-black and misrepresented
+  the component. The panel-only pattern lets dark mode show the proper
+  m3-surface-container tone behind the dialog.
+- Documented the panel-only pattern in CLAUDE.md (project-specific
+  visual-proof note).
+- Kit-level update tracked separately on phileggel/claude-kit.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+
+- wire afterTest screenshot hook in wdio.conf.ts
+  Captures a PNG to screenshots/e2e-failures/ on every failed test for
+  post-mortem diagnosis. Filename: {suite}-{test}-{ISO-timestamp}.png.
+  Also fixes pre-existing bug where SIGINT handler set undeclared `exit`
+  instead of `cleanShutdown`, causing spurious "exited unexpectedly" logs.
+- make E2E suite green for WebKit/HeadlessUI
+  Replace flaky `*=` selectors with XPath, redesign tests around the
+  HeadlessUI ComboboxField boundary (no automation in WebKit), and add
+  data-testid + aria-label to modal close buttons. New ADR-007 documents
+  the combobox limitation. All 18 E2E tests pass.
+- remove spin buttons from numeric transaction inputs
+- replace hardcoded placeholders in remaining modals
+- replace hardcoded placeholders in buy and sell modals
+- replace string-sentinel with typed AccountNotFound error
+
 ## [0.10.0] - 2026-05-03
 
 ### Added
