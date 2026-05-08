@@ -42,10 +42,6 @@ merge:
 migrate:
     cd src-tauri && sqlx migrate run
 
-# NOTE: kit v4.0.0 introduced a `generate-types` recipe here that conflicted
-# with our local `justfile` override (custom `[[bin]]` target). Removed pending
-# upstream fix — re-delete if it reappears after a future `just sync-kit`.
-
 # Regenerate SQLx offline query cache (run after schema or query changes)
 prepare-sqlx:
     cd src-tauri && DATABASE_URL="sqlite:.local/dev_check.sqlite" cargo sqlx prepare -- --tests

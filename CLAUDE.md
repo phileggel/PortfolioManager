@@ -40,7 +40,7 @@ On top of the standard kit workflow, this project requires:
 
 1. **Before implementing**: read `docs/backend-rules.md` (backend changes), `docs/frontend-rules.md` (frontend changes), and/or `docs/e2e-rules.md` (E2E test changes). For frontend changes also read `docs/frontend-visual-proof.md`, then run `/visual-proof` after implementation to capture all states in both light and dark mode.
 2. **Plan step**: after proposing the TODO plan, immediately create a TaskList (`TaskCreate`) with one task per remaining step. Ask user to validate before implementing.
-3. **Docs update**: at the end, update `ARCHITECTURE.md` if new files/modules added; `docs/todo.md` if new tech debt or resolved items; for new business rules use `/spec-writer` to author/extend the spec in `docs/spec/` and `/contract` to derive the matching `docs/contracts/{domain}-contract.md`. Use `/adr-manager` to record architectural decisions in `docs/adr/`.
+3. **Docs update**: at the end, update `ARCHITECTURE.md` if new files/modules added; `docs/todo.md` if new project backlog items or resolved items; for non-actionable code smells or reviewer-surfaced observations use `/techdebt` (output goes to `docs/techdebt.md`); for new business rules use `/spec-writer` to author/extend the spec in `docs/spec/` and `/contract` to derive the matching `docs/contracts/{domain}-contract.md`. Use `/adr-writer` to author architectural decisions in `docs/adr/`, then run the `adr-reviewer` agent to validate before locking the decision.
 4. **E2E tests** (after frontend impl, before release): run `test-writer-e2e` agent with the domain contract to write passing WebDriver E2E tests against the live app (verifies green before finishing). Run `/setup-e2e` once first if not yet initialized.
 5. **Visual proof** (frontend changes only): run `/visual-proof` to capture and commit screenshots for all component states in both light and dark mode. **Modals: render the panel directly without `ModalContainer`** in `src/__preview__/main.tsx` — copy the `FormModal` chrome (rounded-[28px], `bg-m3-surface-container-lowest/85 backdrop-blur-[12px] shadow-elevation-4`, header / scrollable content / footer) and skip `ModalContainer`'s 50% scrim. The scrim is a generic shell concern with no real content behind it in a standalone preview, so it would render near-black and misrepresent the modal in dark mode. Visual proof is for the component, not the shell.
 6. **Commit**: ask user if a commit is needed → use `/smart-commit` skill.
@@ -70,19 +70,13 @@ Why: a 60-file mixed-layer PR overwhelms reviewers; comment threads sprawl acros
 
 ## 🛠 Commands
 
+> Kit-shipped recipes (`just check`, `check-full`, `format`, `generate-types`, `prepare-sqlx`, `migrate`, `clean-db`, `release`, `merge`, `clean-branches`, `stat`) and skills (`/dep-audit`, `/prune`, `/visual-proof`, `/create-pr`, `/setup-e2e`, `/kit-discover`) are inventoried in `.claude/kit-tools.md`. The project-specific commands below add to that surface.
+
 - Dev: `./scripts/start-app.sh`
-- Quality: `just check-full` (full check) | `just check` (fast lint+format only) | `just format` (auto-fix formatting)
 - Tests: `just test` (frontend) | `just test-rust` (backend) | `just test-unit` (both)
-- Types: `just generate-types` (Sync Rust to TS via Specta) | `just prepare-sqlx` (after schema/query changes)
-- Database: `just migrate` (run migrations) | `just clean-db` (⚠️ destructive reset)
-- E2E setup (once): `/setup-e2e` (installs WebDriver deps + generates `wdio.conf.ts`)
 - E2E tests: `just test-e2e` (local) | `just test-e2e-headless` (Linux headless)
-- Pre-release audit: `/dep-audit` (npm + Cargo CVEs and outdated versions) | `/security-review` (IPC, capabilities, SQL injection, hardcoded secrets)
-- Code audit: `/prune` (dead code, verbose patterns, KISS review) | `/visual-proof` (capture + commit visual proof screenshots for all component states)
-- Release: `just release [--dry-run] [--version X.Y.Z] [-y]` (run `/dep-audit` first)
-- PR: `/create-pr` (push branch + open GitHub PR; drafts title + body from commits and plan doc; requires `gh` CLI)
-- Merge branch: `just merge` (fast-forward current branch into main, then delete it)
-- Housekeeping: `just clean-branches` (⚠️ remove stale remote-tracking branches) | `just stat` (line count via cloc)
+- Security audit: `/security-review` (IPC, capabilities, SQL injection, hardcoded secrets) — Claude Code built-in, run before release alongside the kit's `/dep-audit`
+- Release sequence: `/dep-audit` → `just release [--dry-run] [--version X.Y.Z] [-y]`
 - After `just sync-kit` with a non-trivial delta: run `/kit-discover` to reconcile this file with the kit.
 
 ## 📖 Ubiquitous Language

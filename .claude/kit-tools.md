@@ -21,28 +21,29 @@ Read on demand to orient — none are auto-loaded by Claude Code.
 
 Synced to `docs/` in downstream projects on first sync (copy-once — never overwrites project customizations). Agents reference these directly; no "if exists" hedging needed.
 
-| File                       | Purpose                                                                                                                      |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `backend-rules.md`         | Rust DDD structure: bounded context layout, aggregate roots, repositories, services, error handling, logging (B0–B36)        |
-| `frontend-rules.md`        | React feature layout: gateway pattern, smart/dumb components, hook colocation, i18n, logging, cross-feature routing (F1–F23) |
-| `e2e-rules.md`             | WebdriverIO testability: form/field `id` conventions, aria labels, `setReactInputValue`, deterministic dates (E1–E10)        |
-| `test_convention.md`       | Testing strategy across all tiers: frontend Vitest, BE unit/repo/integration, mocking rules, async patterns                  |
-| `ddd-reference.md`         | DDD concept glossary: Entity, Aggregate, Repository, Domain Event, Bounded Context, Unit of Work                             |
-| `i18n-rules.md`            | Translation structure, key naming (`domain.component.element`), locale consistency rules                                     |
-| `frontend-visual-proof.md` | Visual proof requirements: screenshot/video workflow for any `.tsx`/`.css` change, Playwright capture process                |
+| File                       | Purpose                                                                                                                                                                                                           |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `backend-rules.md`         | Rust DDD structure: bounded context layout, aggregate roots, repositories, services, error handling, logging (B0–B36)                                                                                             |
+| `frontend-rules.md`        | React feature layout: gateway pattern, smart/dumb components, hook colocation, i18n, logging, cross-feature routing (F1–F23)                                                                                      |
+| `e2e-rules.md`             | WebdriverIO testability: form/field `id` conventions, aria labels, `setReactInputValue`, deterministic dates (E1–E10)                                                                                             |
+| `test_convention.md`       | Testing strategy across all tiers: frontend Vitest, BE unit/repo/integration, mocking rules, async patterns                                                                                                       |
+| `ddd-reference.md`         | DDD concept glossary + error-handling guidance: Entity, Aggregate, Repository, Domain Event, Bounded Context, Unit of Work, error categories (domain/application/infrastructure), travel rule, flow toward the UI |
+| `i18n-rules.md`            | Translation structure, key naming (`domain.component.element`), locale consistency rules                                                                                                                          |
+| `frontend-visual-proof.md` | Visual proof requirements: screenshot/video workflow for any `.tsx`/`.css` change, Playwright capture process                                                                                                     |
 
 ---
 
 ## Spec & Planning Agents
 
-| Agent               | Trigger                                           | Description                                                                                                                                                                   |
-| ------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `spec-reviewer`     | After spec-writer, before /contract               | Quality gate on a spec doc: rule atomicity, scope, DDD alignment, UX completeness, contractability, conflicts                                                                 |
-| `contract-reviewer` | After /contract, before feature-planner           | Quality gate on a domain contract: coverage vs spec, traceability, error exhaustiveness, type correctness                                                                     |
-| `retro-spec`        | Onboarding an existing feature to the kit         | Infers TRIGRAM-NNN rules from existing code and writes a first-pass `docs/spec/{domain}.md` with `retro-inferred` annotations for human review                                |
-| `feature-planner`   | After spec-reviewer and contract-reviewer approve | Translates spec into `docs/plan/{feature}-plan.md` with DDD layer breakdown, rule-to-task mapping, Workflow TaskList                                                          |
-| `plan-reviewer`     | After feature-planner, before any test-writer     | Quality gate on the plan: rule coverage, contract coverage, layer routing, ADR adherence, schema completeness, TaskList integrity, PR Plan, minimal-implementation discipline |
-| `spec-checker`      | After implementation, before final commit         | Verifies every TRIGRAM-NNN rule is implemented and tested; checks all contract commands are covered in backend, frontend, and tests                                           |
+| Agent               | Trigger                                                                | Description                                                                                                                                                                   |
+| ------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `spec-reviewer`     | After spec-writer, before /contract                                    | Quality gate on a spec doc: rule atomicity, scope, DDD alignment, UX completeness, contractability, conflicts                                                                 |
+| `contract-reviewer` | After /contract, before feature-planner                                | Quality gate on a domain contract: coverage vs spec, traceability, error exhaustiveness, type correctness                                                                     |
+| `retro-spec`        | Onboarding an existing feature to the kit                              | Infers TRIGRAM-NNN rules from existing code and writes a first-pass `docs/spec/{domain}.md` with `retro-inferred` annotations for human review                                |
+| `feature-planner`   | After spec-reviewer and contract-reviewer approve                      | Translates spec into `docs/plan/{feature}-plan.md` with DDD layer breakdown, rule-to-task mapping, Workflow TaskList                                                          |
+| `plan-reviewer`     | After feature-planner, before any test-writer                          | Quality gate on the plan: rule coverage, contract coverage, layer routing, ADR adherence, schema completeness, TaskList integrity, PR Plan, minimal-implementation discipline |
+| `adr-reviewer`      | After /adr-writer creates or supersedes an ADR; before a release sweep | Quality gate on ADRs: structure, 3-criteria appropriateness, status & supersedes integrity, index integrity, content quality, cross-spec consistency                          |
+| `spec-checker`      | After implementation, before final commit                              | Verifies every TRIGRAM-NNN rule is implemented and tested; checks all contract commands are covered in backend, frontend, and tests                                           |
 
 > **Resuming after interruption or compaction:** The plan is always saved to `docs/plan/{feature}-plan.md`.
 > After any interruption, ground the agent explicitly:
@@ -82,7 +83,7 @@ Skills that directly drive or support the spec → contract → plan → test-fi
 | `start`        | `/start [scope]` | Select workflow A (full) or B (simple) for the current task; outputs actionable checklist. Optional scope: `fix`, `chore`, `test`, `feature`, `refactor`       |
 | `spec-writer`  | `/spec-writer`   | Interactive spec writer: interviews user, reads domain, produces `docs/spec/{feature}.md` with TRIGRAM-NNN rules                                               |
 | `contract`     | `/contract`      | Derives or updates `docs/contracts/{domain}-contract.md` from a validated spec; upsert-aware, human-approved                                                   |
-| `adr-manager`  | `/adr-manager`   | Create, update (supersede), or index Architecture Decision Records in `docs/adr/`                                                                              |
+| `adr-writer`   | `/adr-writer`    | Author Architecture Decision Records in `docs/adr/`: create, supersede, or index. Run `adr-reviewer` after to validate                                         |
 | `whats-next`   | `/whats-next`    | Triage pending work across TODOs, plans, specs, and in-flight git; returns value/effort table and one suggested next action                                    |
 | `smart-commit` | `/smart-commit`  | Conventional commit with sensitive-file check, linter run, suggested title with char count, and user confirmation                                              |
 | `create-pr`    | `/create-pr`     | Push the current feature branch and open a GitHub PR; drafts title + body from commits and plan doc; requires `gh` CLI                                         |
@@ -97,6 +98,7 @@ Generic lifecycle tools. No direct SDD connection — included because they must
 | `dep-audit`    | `/dep-audit`    | Audit npm + Cargo dependencies for outdated versions and CVEs; run before every release                                                                                                           |
 | `prune`        | `/prune [path]` | Audit the project for dead code, pass-through methods, verbose patterns, and duplicate definitions; coverage report mandatory, read-only output                                                   |
 | `visual-proof` | `/visual-proof` | Capture and commit visual proof screenshots for any `.tsx`/`.css` change. Auto-discovers config on first run. Generates a complete preview for all component states and captures with Playwright. |
+| `techdebt`     | `/techdebt`     | Produces a normalized tech-debt entry (date + git context + observation) for the main agent to persist; convention is `docs/techdebt.md`; output-only, no writes                                  |
 
 ### Kit sync
 
@@ -127,11 +129,12 @@ Synced to downstream `scripts/` on every sync.
 
 ### Shared helpers
 
-| Script             | Command                              | Description                                                                                                                |
-| ------------------ | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `changed-files.sh` | `bash scripts/changed-files.sh`      | Print sort-unique union of changed-vs-HEAD, staged, and untracked files. Use for pre-commit / uncommitted-work context     |
-| `branch-files.sh`  | `bash scripts/branch-files.sh`       | Print sort-unique union of all files changed on the current branch vs main, plus uncommitted changes. Use in review agents |
-| `report-path.sh`   | `bash scripts/report-path.sh <slug>` | Compute and print the next available `tmp/<slug>-YYYY-MM-DD-NN.md` report path; creates `tmp/` if needed                   |
+| Script             | Command                              | Description                                                                                                                 |
+| ------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `changed-files.sh` | `bash scripts/changed-files.sh`      | Print sort-unique union of changed-vs-HEAD, staged, and untracked files. Use for pre-commit / uncommitted-work context      |
+| `branch-files.sh`  | `bash scripts/branch-files.sh`       | Print sort-unique union of all files changed on the current branch vs main, plus uncommitted changes. Use in review agents  |
+| `report-path.sh`   | `bash scripts/report-path.sh <slug>` | Compute and print the next available `tmp/<slug>-YYYY-MM-DD-NN.md` report path; creates `tmp/` if needed                    |
+| `whats-next.py`    | `python3 scripts/whats-next.py`      | Deterministic data collector for the `/whats-next` skill; emits JSON describing TODOs, plans, specs, git, roadmap, techdebt |
 
 ### Quality & release
 

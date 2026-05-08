@@ -56,7 +56,7 @@ git checkout -b feat/{feature-name}
 **Phase 1: Pre-implementation (Spec & Contract & Plan)**
 
 1. Run **`/spec-writer`** skill → produces `docs/spec/{feature}.md`. [soft gate]
-2. _(Optional)_ Run **`/adr-manager`** skill → produces `docs/adr/{ref}.md`.
+2. _(Optional)_ Run **`/adr-writer`** skill → produces `docs/adr/{ref}.md`. Then run **`adr-reviewer`** agent → quality gate before the decision is locked in.
 3. Run **`spec-reviewer`** agent → validate spec quality + contractability. [soft gate — hard if 🔴]
 4. Run **`/contract`** skill → produces or updates `docs/contracts/{domain}-contract.md`. [soft gate: human approves shape]
 5. Run **`contract-reviewer`** agent → validate contract vs spec. [soft gate — hard if 🔴]
