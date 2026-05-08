@@ -2,6 +2,24 @@
 
 <!-- Add new tech debt and backlog items here. Format: ## (domain) — Short title -->
 
+## (asset) — Promote ISIN to canonical identifier alongside ticker
+
+`Asset.reference` is currently a single field that ends up holding either an ISIN or a ticker depending on how the asset was created (ISIN search → ISIN; keyword search → ticker; manual → whatever the user typed). This makes the AST uniqueness check semantic noise — the same instrument can be created twice as `AI` and `FR0000120073` and the two records won't dedup.
+
+Industry convention: ISIN is the canonical identity (stable across rebrands, globally unique by ISO 6166), ticker is a venue-specific display label that can change (e.g. `TOT → TTE` for Total → TotalEnergies in 2021).
+
+**Proposed shape (additive, no breaking migration):**
+- New nullable column `isin: Option<String>` on `Asset`
+- Existing `reference` field becomes the human-friendly ticker (rename to `ticker` if breaking is acceptable; otherwise leave as-is and treat the field as ticker)
+- Uniqueness check switches to ISIN-when-present, ticker-when-not
+- Add Asset form: ticker required, ISIN optional
+- Web lookup ISIN-path → both filled; keyword-path → ticker only (OpenFIGI's free `/v3/mapping` response doesn't expose ISIN, so we cannot recover it for keyword-discovered assets)
+- Manual creation: ticker required, ISIN optional with a "lookup ISIN" affordance for the user
+
+**Why it's not done now:** the just-shipped WEB-050 fix already surfaces the right primary listing for free-text searches; the user pain that motivated this discussion is resolved. Adding a second identifier field is a 1–2 day Workflow-A feature (migration, domain entity, validation, AST spec edit, gateway, presenter, form, tests) and only pays off once a downstream feature actually consumes ISIN.
+
+**Spawning point:** wire it in as part of the first downstream ISIN consumer (dividend tracking, broker import/export, corporate-action handling). At that point the cost is amortized into the feature that needs it. Surfaced during the WEB-050 review (2026-05-08).
+
 ## (spec) — PFD (Portfolio Dashboard) unblocked, no spec written
 
 `docs/spec-index.md` lists PFD as `planning — paused — blocked on cash-tracking spec`. Cash-tracking shipped on 2026-05-06, so the blocker is lifted, but no `docs/spec/portfolio-dashboard.md` has been written yet. Next step when picked up: run `/spec-writer portfolio-dashboard` to author the cross-account aggregate-view spec (KPIs + per-account list, per the registry description), then the standard `/contract` → `feature-planner` flow. Update `docs/spec-index.md` to drop the "paused — blocked on cash-tracking spec" suffix at the same time.
