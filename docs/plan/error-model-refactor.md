@@ -30,6 +30,7 @@ The DDD doc now codifies the canonical shape (domain wrapped, application born, 
 > Anything raised by the service or use case layer — NotFound, uniqueness checks, cross-BC preconditions, infrastructure failures — is **application** (or **infrastructure** for opaque catch-alls).
 
 Concretely:
+
 - Aggregate method rejection → domain
 - Service-level pre-check → application (move into aggregate if the rule is intrinsic to the entity)
 - Use-case orchestrator rejection (cross-BC) → application
@@ -59,12 +60,14 @@ If an aggregate method needs to emit multiple kinds of errors, split the method 
 **Scope**: behavior-preserving move of 4 state-checks from `service.rs` into the corresponding aggregate methods. No new error types; no boundary changes; no FE wire-shape changes.
 
 **Variants moved (each stays in its existing enum, classification stays domain):**
+
 - `AssetDomainError::Archived` → `Asset::update_from`
 - `AssetDomainError::CashAssetNotEditable` → `Asset::update_from`, `archive`, `unarchive`, `delete` (every mutating method)
 - `CategoryDomainError::SystemReadonly` → `Category::update_from`
 - `CategoryDomainError::SystemProtected` → `Category::delete`
 
 **Acceptance**:
+
 - Existing service tests still assert the same errors
 - New aggregate-level tests assert the checks happen inside the aggregate
 - `just check-full` green
@@ -75,6 +78,7 @@ If an aggregate method needs to emit multiple kinds of errors, split the method 
 **Scope**: introduce the typed-Result pattern on the cash slice of `AccountService`. Delete `CashOperationError` composite. Split `Account::record_deposit` / `record_withdrawal` into value-object construction (`Transaction::new_deposit`/`new_withdrawal`) + aggregate application (`Account::apply_deposit`/`apply_withdrawal`).
 
 **Changes**:
+
 - New file `context/account/application/error.rs` with `AccountApplicationError { AccountNotFound, NameAlreadyExists }`
 - Move `AccountNotFound` and `NameAlreadyExists` out of `AccountDomainError`
 - New `Transaction::new_deposit` / `new_withdrawal` constructors returning `TransactionDomainError`
@@ -86,28 +90,46 @@ If an aggregate method needs to emit multiple kinds of errors, split the method 
 - Test updates
 
 **Acceptance**:
+
 - Same Tauri wire shape (FE bindings unchanged in shape)
 - `just check-full` green
 - No `anyhow::Error` returned from refactored AccountService methods
 - ~400–600 LOC
 
-### PR 3+ — One service per session, same pattern
+### Failure-surface-family map (target end-state for PR 3+)
 
-Each follow-up PR refactors one service's methods to typed Results, applying the same conformance pattern. Order TBD based on user pain / coupling. Rough list:
+A **failure-surface-family** = methods sharing the same set of leaf errors. ONE composite per family, owned by the layer that holds the FE contract (orchestrator or service). All composites compose the **shared `core::InfrastructureError`** (no per-BC catch-all redefinition). Composites live under `application/error.rs` (service-owned) or `use_cases/{flow}/error.rs` (orchestrator-owned).
 
-- `AccountService` non-cash methods: `create_account`, `update_account`, `delete_account`, `archive`/`unarchive`, `buy`, `sell`, `correct_transaction`, `cancel_transaction`, plus cross-BC guard queries
-- `AssetService` methods: `create_asset`, `update_asset`, `archive`, `unarchive`, `delete`, `add_price`, `update_price`, `delete_price`, `create_category`, `update_category`, `delete_category`
-- Use-case orchestrators: `OpenHoldingUseCase`, `ArchiveAssetUseCase`, `DeleteAssetUseCase`, `AccountDeletionUseCase`, `AccountDetailsUseCase`, `AssetWebLookupUseCase`
+| Family               | Methods                                        | Leaves                                                                 | Composite (target)                                                   | Owner                                    | Status           |
+| -------------------- | ---------------------------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------- | ---------------- |
+| Cash recording       | record_deposit, record_withdrawal              | AccountAppErr, AccountOpErr, TxDomainErr, InfraErr                     | `CashRecordingError`                                                 | service (delegated through orchestrator) | ✅ done in PR 2b |
+| Holding transaction  | buy, sell, correct, cancel                     | AccountAppErr, AccountOpErr, TxDomainErr, InfraErr                     | `HoldingTransactionError` (rename `TransactionCommandError`)         | service                                  | PR 3+            |
+| Open holding         | open_holding                                   | AccountAppErr, OpeningBalanceDomainErr, TxDomainErr (subset), InfraErr | `OpenHoldingError`                                                   | use case (cross-BC archived check)       | PR 3+            |
+| Account CRUD         | create/update/delete/archive/unarchive account | AccountAppErr, AccountDomainErr, InfraErr                              | `AccountCrudError` (rename `AccountCommandError`)                    | service                                  | PR 3+            |
+| Asset CRUD           | create/update/archive/unarchive/delete asset   | AssetAppErr (new), CategoryAppErr (new), AssetDomainErr, InfraErr      | `AssetCrudError` (rename `AssetCommandError`)                        | service                                  | PR 3+            |
+| Category CRUD        | create/update/delete category                  | CategoryAppErr, CategoryDomainErr, InfraErr                            | `CategoryCrudError`                                                  | service                                  | PR 3+            |
+| Asset price          | record/update/delete asset_price               | AssetAppErr, AssetPriceDomainErr, InfraErr                             | `AssetPriceError` (collapse 3 over-split composites into 1)          | service                                  | PR 3+            |
+| Archive/Delete asset | archive_asset, delete_asset use cases          | AssetAppErr, AssetDomainErr, AccountAppErr, InfraErr                   | `ArchiveAssetError` / `DeleteAssetError` (separate; surfaces differ) | use case                                 | PR 3+            |
+| Account details      | get_account_details                            | AccountAppErr, InfraErr                                                | `AccountDetailsError`                                                | use case                                 | PR 3+            |
+| Account deletion     | delete_account_with_assets                     | AccountAppErr, AssetAppErr, InfraErr                                   | `AccountDeletionError`                                               | use case                                 | PR 3+            |
+| Web lookup           | lookup_asset_via_openfigi                      | mostly InfraErr, maybe WebLookupAppErr                                 | `WebLookupError`                                                     | use case                                 | PR 3+            |
 
-Each follow-up PR also:
-- Introduces or extends the relevant `*ApplicationError` enum
-- Updates the corresponding boundary `*CommandError` to compose untagged
+**Composite count**: ~30 commands → ~10 families → ~10 composites (today's count is roughly aligned, except `AssetPrice*` is over-split into 3).
+
+### PR 3+ — One family per PR
+
+Each follow-up PR migrates ONE family from anyhow-mapped boundary types to a typed composite per the table above. Each family also:
+
+- Introduces (or extends) the relevant `*ApplicationError` enum
+- Composes via `#[from]` on each leaf and `#[serde(untagged)]` on the composite
+- Reuses the shared `core::InfrastructureError` (no new per-BC `Unknown { hint }`)
 - Splits aggregate methods if needed (per the "no domain composite" rule)
+- DELETES any boundary type / mapper that no longer adds work (the composite IS the FE contract)
 - Stays under ~600 LOC
 
 ### PR final — `refactor: remove anyhow from service signatures` (cleanup)
 
-When all services are migrated, a small final PR removes the last `use anyhow` lines from `service.rs`/`orchestrator.rs` and tightens the `reviewer-backend` agent / `backend-rules.md` to enforce the new shape going forward.
+When all services are migrated, a small final PR removes the last `use anyhow` lines from `service.rs`/`orchestrator.rs`, removes the redundant `*::Unknown` variants on per-command boundary types (replaced by shared `InfrastructureError`), and tightens the `reviewer-backend` agent / `backend-rules.md` to enforce the new shape going forward.
 
 ## Out of scope (deferred)
 

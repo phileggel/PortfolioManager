@@ -54,7 +54,10 @@ describe("transactionGateway", () => {
   });
 
   it("buyHolding returns error on failure", async () => {
-    const err: TransactionCommandError = { code: "AccountNotFound" };
+    const err: TransactionCommandError = {
+      code: "AccountNotFound",
+      account_id: "acc-1",
+    };
     mockInvoke.mockRejectedValue(err);
     const result = await transactionGateway.buyHolding(buyDto);
     expect(result).toEqual({ status: "error", error: err });

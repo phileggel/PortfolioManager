@@ -1,8 +1,9 @@
+use super::application::{AccountApplicationError, CashRecordingError};
 use super::domain::{
     Account, AccountDomainError, AccountRepository, Holding, HoldingRepository, Transaction,
     TransactionRepository, UpdateFrequency,
 };
-use crate::core::{logger::BACKEND, Event, SideEffectEventBus};
+use crate::core::{logger::BACKEND, Event, InfrastructureError, SideEffectEventBus};
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::info;
@@ -170,6 +171,7 @@ impl AccountService {
             .account_repo
             .get_with_holdings_and_transactions(account_id)
             .await?
+            // TODO(error-model-refactor PR 3+): migrate to AccountApplicationError::AccountNotFound (Rule B' — service-layer not-found is application-class).
             .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
         info!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, "buy_holding");
         let tx = account
@@ -207,6 +209,7 @@ impl AccountService {
             .account_repo
             .get_with_holdings_and_transactions(account_id)
             .await?
+            // TODO(error-model-refactor PR 3+): migrate to AccountApplicationError::AccountNotFound (Rule B' — service-layer not-found is application-class).
             .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
         info!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, "sell_holding");
         let tx = account
@@ -244,6 +247,7 @@ impl AccountService {
             .account_repo
             .get_with_holdings_and_transactions(account_id)
             .await?
+            // TODO(error-model-refactor PR 3+): migrate to AccountApplicationError::AccountNotFound (Rule B' — service-layer not-found is application-class).
             .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
         info!(target: BACKEND, account_id = %account_id, tx_id = %tx_id, "correct_transaction");
         let tx = account
@@ -262,6 +266,7 @@ impl AccountService {
             .account_repo
             .get_with_holdings_and_transactions(account_id)
             .await?
+            // TODO(error-model-refactor PR 3+): migrate to AccountApplicationError::AccountNotFound (Rule B' — service-layer not-found is application-class).
             .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
         info!(target: BACKEND, account_id = %account_id, tx_id = %tx_id, "cancel_transaction");
         account.cancel_transaction(tx_id)?;
@@ -286,6 +291,7 @@ impl AccountService {
             .account_repo
             .get_with_holdings_and_transactions(account_id)
             .await?
+            // TODO(error-model-refactor PR 3+): migrate to AccountApplicationError::AccountNotFound (Rule B' — service-layer not-found is application-class).
             .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
         info!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, "open_holding");
         let tx = account
@@ -297,44 +303,58 @@ impl AccountService {
     }
 
     /// Records a Deposit (CSH-022) — cash inflow into the account.
-    /// Loads the Account aggregate, delegates to `Account::record_deposit`, saves atomically.
+    ///
+    /// Application-layer composition: loads the Account, builds the Transaction
+    /// via `Transaction::new_deposit` (TRX-020 enforced by the factory), applies
+    /// it via `Account::apply_deposit` (CSH-080 enforced by the aggregate),
+    /// then saves atomically. Returns a typed `CashRecordingError` — no
+    /// `anyhow` at this boundary; the caller (orchestrator / api) propagates
+    /// the typed enum directly.
     pub async fn record_deposit(
         &self,
         account_id: &str,
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> Result<Transaction> {
-        let mut account = self
-            .account_repo
-            .get_with_holdings_and_transactions(account_id)
-            .await?
-            .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
+    ) -> std::result::Result<Transaction, CashRecordingError> {
         info!(target: BACKEND, account_id = %account_id, amount = amount, "record_deposit");
-        let tx = account.record_deposit(date, amount, note)?;
-        self.account_repo.save(&mut account).await?;
+        let mut account = load_account(&*self.account_repo, account_id).await?;
+        let tx = Transaction::new_deposit(
+            account.id.clone(),
+            account.cash_asset_id(),
+            date,
+            amount,
+            note,
+        )?;
+        let tx = account.apply_deposit(tx)?;
+        save_account(&*self.account_repo, &mut account).await?;
         self.emit_transaction_updated();
         Ok(tx)
     }
 
     /// Records a Withdrawal (CSH-032) — cash outflow from the account.
-    /// Loads the Account aggregate, delegates to `Account::record_withdrawal`, saves atomically.
-    /// Raises `InsufficientCash` (CSH-080) when no Cash Holding exists or balance < amount.
+    ///
+    /// Application-layer composition mirroring `record_deposit`. Raises
+    /// `InsufficientCash` (CSH-080) when no Cash Holding exists or its balance
+    /// is below `amount` — the check lives inside `Account::apply_withdrawal`.
     pub async fn record_withdrawal(
         &self,
         account_id: &str,
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> Result<Transaction> {
-        let mut account = self
-            .account_repo
-            .get_with_holdings_and_transactions(account_id)
-            .await?
-            .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
+    ) -> std::result::Result<Transaction, CashRecordingError> {
         info!(target: BACKEND, account_id = %account_id, amount = amount, "record_withdrawal");
-        let tx = account.record_withdrawal(date, amount, note)?;
-        self.account_repo.save(&mut account).await?;
+        let mut account = load_account(&*self.account_repo, account_id).await?;
+        let tx = Transaction::new_withdrawal(
+            account.id.clone(),
+            account.cash_asset_id(),
+            date,
+            amount,
+            note,
+        )?;
+        let tx = account.apply_withdrawal(tx)?;
+        save_account(&*self.account_repo, &mut account).await?;
         self.emit_transaction_updated();
         Ok(tx)
     }
@@ -385,6 +405,48 @@ impl AccountService {
     }
 }
 
+/// Loads an Account aggregate (with holdings + transactions) for a typed
+/// cash-recording flow. Translates repository failures into typed
+/// `CashRecordingError` variants — `AccountNotFound` for `Ok(None)`,
+/// `Infrastructure` for any anyhow error (the underlying error is logged
+/// before being opaqued).
+async fn load_account(
+    repo: &dyn AccountRepository,
+    account_id: &str,
+) -> std::result::Result<Account, CashRecordingError> {
+    match repo.get_with_holdings_and_transactions(account_id).await {
+        Ok(Some(acc)) => Ok(acc),
+        Ok(None) => Err(AccountApplicationError::AccountNotFound {
+            account_id: account_id.to_string(),
+        }
+        .into()),
+        Err(e) => {
+            tracing::error!(target: BACKEND, account_id = %account_id, err = ?e, "load_account: repository failure");
+            Err(InfrastructureError::Unknown {
+                hint: format!("load_account: {e:#}"),
+            }
+            .into())
+        }
+    }
+}
+
+/// Persists an Account aggregate's pending changes for a typed cash-recording
+/// flow. Translates repository failures into the shared
+/// `InfrastructureError::Unknown { hint }` (composed into `CashRecordingError`
+/// via `#[from]`) after logging the underlying error.
+async fn save_account(
+    repo: &dyn AccountRepository,
+    account: &mut Account,
+) -> std::result::Result<(), CashRecordingError> {
+    repo.save(account).await.map_err(|e| {
+        tracing::error!(target: BACKEND, account_id = %account.id, err = ?e, "save_account: repository failure");
+        InfrastructureError::Unknown {
+            hint: format!("save_account: {e:#}"),
+        }
+        .into()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,9 +454,10 @@ mod tests {
     // catch constraint violations) and mock-based unit tests (fast delegation checks).
     // SQLite tests are grouped first; mock-based unit tests follow after the section header.
     use crate::context::account::{
-        AccountOperationError, MockAccountRepository, MockHoldingRepository,
-        MockTransactionRepository, SqliteAccountRepository, SqliteHoldingRepository,
-        SqliteTransactionRepository,
+        AccountApplicationError, AccountOperationError, CashRecordingError, Holding,
+        MockAccountRepository, MockHoldingRepository, MockTransactionRepository,
+        SqliteAccountRepository, SqliteHoldingRepository, SqliteTransactionRepository,
+        TransactionDomainError,
     };
     use sqlx::sqlite::SqlitePoolOptions;
 
@@ -1221,5 +1284,264 @@ mod tests {
             .expect("TransactionUpdated event not received within 200ms")
             .expect("watch sender dropped before event fired");
         assert_eq!(*rx.borrow(), Event::TransactionUpdated);
+    }
+
+    // -------------------------------------------------------------------------
+    // Typed cash service error paths (B34) — mock-based unit tests for
+    // record_deposit / record_withdrawal covering all four typed-Result
+    // variants of CashRecordingError. Happy paths are covered by the SQLite
+    // csh_100_* tests above.
+    // -------------------------------------------------------------------------
+
+    fn mock_cash_svc(ar: MockAccountRepository) -> AccountService {
+        AccountService::new(
+            Box::new(ar),
+            Box::new(MockHoldingRepository::new()),
+            Box::new(MockTransactionRepository::new()),
+        )
+    }
+
+    // CSH-021 — non-positive deposit amount surfaces from `Transaction::new_deposit`
+    // (the cash factory's input validation, per Rule B').
+    #[tokio::test]
+    async fn record_deposit_returns_amount_not_positive_on_zero() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_get_with_holdings_and_transactions()
+            .once()
+            .returning(|_| {
+                Ok(Some(
+                    Account::new(
+                        "Test".to_string(),
+                        "EUR".to_string(),
+                        UpdateFrequency::ManualMonth,
+                    )
+                    .unwrap(),
+                ))
+            });
+        let svc = mock_cash_svc(mock_ar);
+        let err = svc
+            .record_deposit("acc", "2020-01-01".to_string(), 0, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                CashRecordingError::Validation(TransactionDomainError::AmountNotPositive)
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // load_account translates Ok(None) → AccountApplicationError::AccountNotFound.
+    #[tokio::test]
+    async fn record_deposit_returns_account_not_found_when_repo_returns_none() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_get_with_holdings_and_transactions()
+            .once()
+            .returning(|_| Ok(None));
+        let svc = mock_cash_svc(mock_ar);
+        let err = svc
+            .record_deposit("missing", "2020-01-01".to_string(), 100, None)
+            .await
+            .unwrap_err();
+        match err {
+            CashRecordingError::Application(AccountApplicationError::AccountNotFound {
+                account_id,
+            }) => {
+                assert_eq!(account_id, "missing");
+            }
+            other => panic!("expected AccountNotFound{{missing}}, got: {other:?}"),
+        }
+    }
+
+    // load_account translates a repo Err → CashRecordingError::Infrastructure(InfrastructureError).
+    #[tokio::test]
+    async fn record_deposit_returns_infrastructure_when_load_fails() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_get_with_holdings_and_transactions()
+            .once()
+            .returning(|_| Err(SimulatedSaveError.into()));
+        let svc = mock_cash_svc(mock_ar);
+        let err = svc
+            .record_deposit("acc", "2020-01-01".to_string(), 100, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, CashRecordingError::Infrastructure(_)),
+            "got: {err:?}"
+        );
+    }
+
+    // save_account translates a repo Err → CashRecordingError::Infrastructure(InfrastructureError).
+    #[tokio::test]
+    async fn record_deposit_returns_infrastructure_when_save_fails() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_get_with_holdings_and_transactions()
+            .once()
+            .returning(|_| {
+                let acc = Account::new(
+                    "Test".to_string(),
+                    "EUR".to_string(),
+                    UpdateFrequency::ManualMonth,
+                )
+                .unwrap();
+                Ok(Some(acc))
+            });
+        mock_ar
+            .expect_save()
+            .once()
+            .returning(|_| Err(SimulatedSaveError.into()));
+        let svc = mock_cash_svc(mock_ar);
+        let err = svc
+            .record_deposit("acc", "2020-01-01".to_string(), 100, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, CashRecordingError::Infrastructure(_)),
+            "got: {err:?}"
+        );
+    }
+
+    // CSH-031 — non-positive withdrawal amount surfaces from
+    // `Transaction::new_withdrawal` (the cash factory's input validation).
+    #[tokio::test]
+    async fn record_withdrawal_returns_amount_not_positive_on_zero() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_get_with_holdings_and_transactions()
+            .once()
+            .returning(|_| {
+                Ok(Some(
+                    Account::new(
+                        "Test".to_string(),
+                        "EUR".to_string(),
+                        UpdateFrequency::ManualMonth,
+                    )
+                    .unwrap(),
+                ))
+            });
+        let svc = mock_cash_svc(mock_ar);
+        let err = svc
+            .record_withdrawal("acc", "2020-01-01".to_string(), 0, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                CashRecordingError::Validation(TransactionDomainError::AmountNotPositive)
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // load_account translates Ok(None) → AccountApplicationError::AccountNotFound.
+    #[tokio::test]
+    async fn record_withdrawal_returns_account_not_found_when_repo_returns_none() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_get_with_holdings_and_transactions()
+            .once()
+            .returning(|_| Ok(None));
+        let svc = mock_cash_svc(mock_ar);
+        let err = svc
+            .record_withdrawal("missing", "2020-01-01".to_string(), 100, None)
+            .await
+            .unwrap_err();
+        match err {
+            CashRecordingError::Application(AccountApplicationError::AccountNotFound {
+                account_id,
+            }) => {
+                assert_eq!(account_id, "missing");
+            }
+            other => panic!("expected AccountNotFound{{missing}}, got: {other:?}"),
+        }
+    }
+
+    // load_account translates a repo Err → CashRecordingError::Infrastructure(InfrastructureError).
+    #[tokio::test]
+    async fn record_withdrawal_returns_infrastructure_when_load_fails() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_get_with_holdings_and_transactions()
+            .once()
+            .returning(|_| Err(SimulatedSaveError.into()));
+        let svc = mock_cash_svc(mock_ar);
+        let err = svc
+            .record_withdrawal("acc", "2020-01-01".to_string(), 100, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, CashRecordingError::Infrastructure(_)),
+            "got: {err:?}"
+        );
+    }
+
+    // save_account translates a repo Err → CashRecordingError::Infrastructure(InfrastructureError).
+    #[tokio::test]
+    async fn record_withdrawal_returns_infrastructure_when_save_fails() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_get_with_holdings_and_transactions()
+            .once()
+            .returning(|_| {
+                // Seed both a Cash Holding AND a matching Deposit Transaction
+                // via `Account::restore_with_positions`. Both are required:
+                // `apply_withdrawal` first checks `cash_holding_quantity()` (which
+                // reads from `holdings`), then runs `replay_cash_holding()` (which
+                // rebuilds the running balance from `transactions`). A holding
+                // without a corresponding deposit would pass the snapshot check
+                // but trip the chronological replay.
+                let acc = Account::new(
+                    "Test".to_string(),
+                    "EUR".to_string(),
+                    UpdateFrequency::ManualMonth,
+                )
+                .unwrap();
+                // CSH-080 only fails when current cash < requested amount. Seed
+                // micro(1_000) (≈ €1,000) — comfortably above the test's micro(100)
+                // withdrawal. Exact value isn't load-bearing; only the inequality.
+                let cash_holding = Holding::restore(
+                    "h-cash".to_string(),
+                    acc.id.clone(),
+                    acc.cash_asset_id(),
+                    micro(1_000),
+                    1_000_000,
+                    0,
+                    None,
+                );
+                let seed_deposit = Transaction::new_deposit(
+                    acc.id.clone(),
+                    acc.cash_asset_id(),
+                    "2020-01-01".to_string(),
+                    micro(1_000),
+                    None,
+                )
+                .expect("seed deposit must validate");
+                Ok(Some(Account::restore_with_positions(
+                    acc.id,
+                    acc.name,
+                    acc.currency,
+                    acc.update_frequency,
+                    vec![cash_holding],
+                    vec![seed_deposit],
+                )))
+            });
+        mock_ar
+            .expect_save()
+            .once()
+            .returning(|_| Err(SimulatedSaveError.into()));
+        let svc = mock_cash_svc(mock_ar);
+        let err = svc
+            .record_withdrawal("acc", "2020-02-01".to_string(), micro(100), None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, CashRecordingError::Infrastructure(_)),
+            "got: {err:?}"
+        );
     }
 }

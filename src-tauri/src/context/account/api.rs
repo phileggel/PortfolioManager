@@ -157,9 +157,15 @@ pub enum TransactionCommandError {
     /// No transaction exists with the requested ID.
     #[error("Transaction not found")]
     TransactionNotFound,
-    /// No account exists with the requested ID.
-    #[error("Account not found")]
-    AccountNotFound,
+    /// No account exists with the requested ID. Wire shape mirrors
+    /// `AccountApplicationError::AccountNotFound` and
+    /// `OpenHoldingCommandError::AccountNotFound` for FE consistency across
+    /// every cash and non-cash command (per PR 2b's tightening).
+    #[error("Account not found: {account_id}")]
+    AccountNotFound {
+        /// The ID the caller asked for.
+        account_id: String,
+    },
     /// Sell requested but holding has zero available units.
     #[error("No units available to sell")]
     ClosedPosition,
@@ -238,12 +244,6 @@ pub(crate) fn to_transaction_error(e: anyhow::Error) -> TransactionCommandError 
                 current_balance_micros: *current_balance_micros,
                 currency: currency.clone(),
             },
-            AccountOperationError::AmountNotPositive => {
-                // Should not fire from buy/sell/correct/cancel paths — log and surface
-                // as Unknown so the FE doesn't see a stale "amount" error code.
-                tracing::error!(target: BACKEND, "BUG: AmountNotPositive raised from non-cash command");
-                TransactionCommandError::Unknown
-            }
         };
     }
     if let Some(err) = e.downcast_ref::<TransactionDomainError>() {
@@ -262,11 +262,24 @@ pub(crate) fn to_transaction_error(e: anyhow::Error) -> TransactionCommandError 
             TransactionDomainError::TotalAmountNotPositive => {
                 TransactionCommandError::TotalAmountNotPositive
             }
+            TransactionDomainError::AmountNotPositive => {
+                // CSH-021/CSH-031 — AmountNotPositive is raised by the cash
+                // factories (`Transaction::new_deposit` / `new_withdrawal`),
+                // not by `Transaction::new` used by buy/sell/correct/cancel.
+                // Should never fire from non-cash command paths; log and
+                // surface as Unknown if it ever does.
+                tracing::error!(target: BACKEND, "BUG: AmountNotPositive raised from non-cash command");
+                TransactionCommandError::Unknown
+            }
         };
     }
     if let Some(err) = e.downcast_ref::<AccountDomainError>() {
         return match err {
-            AccountDomainError::AccountNotFound(_) => TransactionCommandError::AccountNotFound,
+            AccountDomainError::AccountNotFound(account_id) => {
+                TransactionCommandError::AccountNotFound {
+                    account_id: account_id.clone(),
+                }
+            }
             // NameEmpty / NameAlreadyExists / InvalidCurrency cannot fire from aggregate-write
             // operations — they belong to account create/update paths only.
             _ => {

@@ -1,8 +1,9 @@
 use super::shared::ensure_cash_asset;
 use crate::context::account::{
-    AccountDomainError, AccountService, OpeningBalanceDomainError, Transaction,
+    AccountDomainError, AccountService, CashRecordingError, OpeningBalanceDomainError, Transaction,
 };
 use crate::context::asset::{AssetClass, AssetService};
+use crate::core::{logger::BACKEND, InfrastructureError};
 use anyhow::Result;
 use std::sync::Arc;
 
@@ -156,14 +157,23 @@ impl HoldingTransactionUseCase {
     /// Records a Deposit into an account (CSH-022).
     /// Seeds the system Cash Asset (CSH-010) before delegating; the aggregate
     /// lazy-creates the Cash Holding (CSH-012) and persists the Transaction.
+    /// Returns a typed `CashRecordingError`; the cross-BC `ensure_cash_for`
+    /// step is wrapped into the `Infrastructure` opaque variant on failure
+    /// (asset-side errors are not part of the cash-recording contract).
     pub async fn record_deposit(
         &self,
         account_id: &str,
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> Result<Transaction> {
-        self.ensure_cash_for(account_id).await?;
+    ) -> std::result::Result<Transaction, CashRecordingError> {
+        if let Err(e) = self.ensure_cash_for(account_id).await {
+            tracing::error!(target: BACKEND, account_id = %account_id, err = ?e, "record_deposit: ensure_cash_for failed");
+            return Err(InfrastructureError::Unknown {
+                hint: format!("ensure_cash_for: {e:#}"),
+            }
+            .into());
+        }
         self.account_service
             .record_deposit(account_id, date, amount, note)
             .await
@@ -177,8 +187,14 @@ impl HoldingTransactionUseCase {
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> Result<Transaction> {
-        self.ensure_cash_for(account_id).await?;
+    ) -> std::result::Result<Transaction, CashRecordingError> {
+        if let Err(e) = self.ensure_cash_for(account_id).await {
+            tracing::error!(target: BACKEND, account_id = %account_id, err = ?e, "record_withdrawal: ensure_cash_for failed");
+            return Err(InfrastructureError::Unknown {
+                hint: format!("ensure_cash_for: {e:#}"),
+            }
+            .into());
+        }
         self.account_service
             .record_withdrawal(account_id, date, amount, note)
             .await
@@ -192,6 +208,7 @@ impl HoldingTransactionUseCase {
             .account_service
             .get_by_id(account_id)
             .await?
+            // TODO(error-model-refactor PR 3+): migrate to AccountApplicationError::AccountNotFound (Rule B' — service-layer not-found is application-class).
             .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
         ensure_cash_asset(&self.asset_service, &account.currency).await
     }

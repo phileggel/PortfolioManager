@@ -3,7 +3,7 @@
 
 use super::HoldingTransactionUseCase;
 use crate::context::account::{
-    to_transaction_error, AccountDomainError, CashOperationError, OpeningBalanceDomainError,
+    to_transaction_error, AccountDomainError, CashRecordingError, OpeningBalanceDomainError,
     Transaction, TransactionCommandError, TransactionDomainError,
 };
 use crate::core::logger::BACKEND;
@@ -34,9 +34,14 @@ pub struct OpenHoldingDTO {
 #[derive(Debug, Serialize, Type, thiserror::Error)]
 #[serde(tag = "code")]
 pub enum OpenHoldingCommandError {
-    /// No account exists with the requested ID.
-    #[error("Account not found")]
-    AccountNotFound,
+    /// No account exists with the requested ID. Wire shape mirrors
+    /// `AccountApplicationError::AccountNotFound` for FE consistency across
+    /// every cash and non-cash command (per PR 2b's tightening).
+    #[error("Account not found: {account_id}")]
+    AccountNotFound {
+        /// The ID the caller asked for.
+        account_id: String,
+    },
     /// No asset exists with the requested ID.
     #[error("Asset not found")]
     AssetNotFound,
@@ -94,13 +99,17 @@ fn to_open_holding_error(e: anyhow::Error) -> OpenHoldingCommandError {
             TransactionDomainError::QuantityNotPositive => {
                 OpenHoldingCommandError::QuantityNotPositive
             }
-            // These four variants require a user-supplied unit_price, fees, or exchange_rate.
-            // open_holding computes all three as constants, so they cannot fire in practice.
-            // Enumerated explicitly (not wildcarded) so a future regression triggers a compile error.
+            // These five variants require a user-supplied unit_price, fees,
+            // exchange_rate, or are cash-factory-only (`AmountNotPositive`).
+            // `open_holding` computes price/fees/rate as constants and uses
+            // `Transaction::new` (not the cash factories), so none can fire
+            // in practice. Enumerated explicitly (not wildcarded) so a future
+            // regression triggers a compile error.
             TransactionDomainError::UnitPriceNegative
             | TransactionDomainError::FeesNegative
             | TransactionDomainError::ExchangeRateNotPositive
-            | TransactionDomainError::TotalAmountNotPositive => {
+            | TransactionDomainError::TotalAmountNotPositive
+            | TransactionDomainError::AmountNotPositive => {
                 tracing::error!(target: BACKEND, err = ?err, "BUG: impossible TransactionDomainError in open_holding");
                 OpenHoldingCommandError::Unknown {
                     hint: format!(
@@ -112,7 +121,11 @@ fn to_open_holding_error(e: anyhow::Error) -> OpenHoldingCommandError {
     }
     if let Some(err) = e.downcast_ref::<AccountDomainError>() {
         return match err {
-            AccountDomainError::AccountNotFound(_) => OpenHoldingCommandError::AccountNotFound,
+            AccountDomainError::AccountNotFound(account_id) => {
+                OpenHoldingCommandError::AccountNotFound {
+                    account_id: account_id.clone(),
+                }
+            }
             // NameEmpty / NameAlreadyExists / InvalidCurrency cannot fire from open_holding.
             _ => {
                 tracing::error!(target: BACKEND, err = ?err, "BUG: unexpected AccountDomainError in open_holding command");
@@ -324,124 +337,22 @@ pub struct WithdrawalDTO {
     pub note: Option<String>,
 }
 
-/// Boundary-only variants for cash command errors — variants that don't exist in
-/// any domain error enum. Composed into the per-command boundary types via
-/// `#[serde(untagged)]` so the FE sees a flat `{ code: "..." }` union.
-#[derive(Debug, Serialize, Type, thiserror::Error, Clone)]
-#[serde(tag = "code")]
-pub enum CashCommandBoundaryError {
-    /// No account exists with the requested ID.
-    #[error("Account not found")]
-    AccountNotFound,
-    /// An unexpected server-side error occurred. `hint` carries a developer-only
-    /// diagnostic string mirroring the `tracing::error!` log so support reports
-    /// can be triaged without correlating timestamps.
-    #[error("An unexpected error occurred ({hint})")]
-    Unknown {
-        /// Developer-only diagnostic string. Not user-facing; the FE displays
-        /// the i18n key `error.Unknown` and forwards `hint` to the JS console
-        /// log via `logger.error`.
-        hint: String,
-    },
-}
-
-/// Typed error returned to the frontend for `record_deposit`.
-///
-/// Composes the domain-level `CashOperationError` (which itself unifies
-/// `AccountOperationError | TransactionDomainError`) with the boundary-only
-/// variants in `CashCommandBoundaryError`. Both inner enums are tagged with
-/// `#[serde(tag = "code")]`, so the TS shape is a flat `{ code: "...", ... }`
-/// union — no variant redefinition.
-#[derive(Debug, Serialize, Type, thiserror::Error)]
-#[serde(untagged)]
-pub enum RecordDepositCommandError {
-    /// Domain-level error raised by the aggregate (AmountNotPositive, InsufficientCash,
-    /// invalid date variants).
-    #[error(transparent)]
-    Domain(CashOperationError),
-    /// Boundary-only variants (`AccountNotFound`, `Unknown`).
-    #[error(transparent)]
-    Boundary(CashCommandBoundaryError),
-}
-
-/// Typed error returned to the frontend for `record_withdrawal`.
-///
-/// Same composition as `RecordDepositCommandError`. `InsufficientCash` (CSH-080)
-/// is carried by the inner `AccountOperationError` variant of `CashOperationError`.
-#[derive(Debug, Serialize, Type, thiserror::Error)]
-#[serde(untagged)]
-pub enum RecordWithdrawalCommandError {
-    /// Domain-level error raised by the aggregate (AmountNotPositive, InsufficientCash,
-    /// invalid date variants).
-    #[error(transparent)]
-    Domain(CashOperationError),
-    /// Boundary-only variants.
-    #[error(transparent)]
-    Boundary(CashCommandBoundaryError),
-}
-
-fn to_record_deposit_error(e: anyhow::Error) -> RecordDepositCommandError {
-    if let Some(err) = e.downcast_ref::<CashOperationError>() {
-        return RecordDepositCommandError::Domain(err.clone());
-    }
-    if let Some(err) = e.downcast_ref::<AccountDomainError>() {
-        return match err {
-            AccountDomainError::AccountNotFound(_) => {
-                RecordDepositCommandError::Boundary(CashCommandBoundaryError::AccountNotFound)
-            }
-            _ => {
-                tracing::error!(target: BACKEND, err = ?err, "BUG: unexpected AccountDomainError in record_deposit");
-                RecordDepositCommandError::Boundary(CashCommandBoundaryError::Unknown {
-                    hint: format!("BUG: unexpected AccountDomainError::{err:?} in record_deposit"),
-                })
-            }
-        };
-    }
-    tracing::error!(target: BACKEND, err = ?e, "unexpected error in record_deposit command");
-    // {e:#} pretty-prints the full anyhow context chain on one line —
-    // {e} (Display) would drop any upstream `.context(...)` wrappers.
-    RecordDepositCommandError::Boundary(CashCommandBoundaryError::Unknown {
-        hint: format!("unexpected error in record_deposit: {e:#}"),
-    })
-}
-
-fn to_record_withdrawal_error(e: anyhow::Error) -> RecordWithdrawalCommandError {
-    if let Some(err) = e.downcast_ref::<CashOperationError>() {
-        return RecordWithdrawalCommandError::Domain(err.clone());
-    }
-    if let Some(err) = e.downcast_ref::<AccountDomainError>() {
-        return match err {
-            AccountDomainError::AccountNotFound(_) => {
-                RecordWithdrawalCommandError::Boundary(CashCommandBoundaryError::AccountNotFound)
-            }
-            _ => {
-                tracing::error!(target: BACKEND, err = ?err, "BUG: unexpected AccountDomainError in record_withdrawal");
-                RecordWithdrawalCommandError::Boundary(CashCommandBoundaryError::Unknown {
-                    hint: format!(
-                        "BUG: unexpected AccountDomainError::{err:?} in record_withdrawal"
-                    ),
-                })
-            }
-        };
-    }
-    tracing::error!(target: BACKEND, err = ?e, "unexpected error in record_withdrawal command");
-    // {e:#} pretty-prints the full anyhow context chain on one line —
-    // {e} (Display) would drop any upstream `.context(...)` wrappers.
-    RecordWithdrawalCommandError::Boundary(CashCommandBoundaryError::Unknown {
-        hint: format!("unexpected error in record_withdrawal: {e:#}"),
-    })
-}
-
 /// Records a cash deposit into an account (CSH-022).
+///
+/// The Tauri command returns the typed `CashRecordingError` directly — no
+/// boundary type or mapper is needed because every leaf in the composite
+/// (`AccountApplicationError`, `AccountOperationError`, `TransactionDomainError`,
+/// shared `InfrastructureError`) already serializes with `#[serde(tag = "code")]`,
+/// and `CashRecordingError`'s `#[serde(untagged)]` flattens them into a
+/// single FE-visible union.
 #[tauri::command]
 #[specta::specta]
 pub async fn record_deposit(
     uc: State<'_, HoldingTransactionUseCase>,
     dto: DepositDTO,
-) -> Result<Transaction, RecordDepositCommandError> {
+) -> Result<Transaction, CashRecordingError> {
     uc.record_deposit(&dto.account_id, dto.date, dto.amount_micros, dto.note)
         .await
-        .map_err(to_record_deposit_error)
 }
 
 /// Records a cash withdrawal from an account (CSH-032).
@@ -450,8 +361,7 @@ pub async fn record_deposit(
 pub async fn record_withdrawal(
     uc: State<'_, HoldingTransactionUseCase>,
     dto: WithdrawalDTO,
-) -> Result<Transaction, RecordWithdrawalCommandError> {
+) -> Result<Transaction, CashRecordingError> {
     uc.record_withdrawal(&dto.account_id, dto.date, dto.amount_micros, dto.note)
         .await
-        .map_err(to_record_withdrawal_error)
 }

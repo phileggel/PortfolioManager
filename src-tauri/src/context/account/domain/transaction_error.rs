@@ -18,6 +18,13 @@ pub enum TransactionDomainError {
     /// Quantity is zero or negative.
     #[error("Quantity must be strictly positive")]
     QuantityNotPositive,
+    /// Cash deposit/withdrawal amount was zero or negative (CSH-021/CSH-031).
+    /// Cash-specific framing of the same TRX-020 constraint that surfaces as
+    /// `QuantityNotPositive` for non-cash transactions; raised by the cash
+    /// factories (`Transaction::new_deposit` / `new_withdrawal`) BEFORE the
+    /// generic check, so the FE sees the cash-specific error code.
+    #[error("Amount must be greater than 0")]
+    AmountNotPositive,
     /// Unit price is negative.
     #[error("Unit price cannot be negative")]
     UnitPriceNegative,

@@ -1,6 +1,4 @@
-use super::error::{
-    AccountDomainError, AccountOperationError, CashOperationError, OpeningBalanceDomainError,
-};
+use super::error::{AccountDomainError, AccountOperationError, OpeningBalanceDomainError};
 use super::holding::Holding;
 use super::transaction::{Transaction, TransactionType};
 use super::transaction_error::TransactionDomainError;
@@ -612,57 +610,14 @@ impl Account {
         Ok(tx)
     }
 
-    /// Records a cash inflow into this account from outside the tracked world (CSH-022).
-    ///
-    /// Convenience wrapper: builds the Deposit transaction via
-    /// `Transaction::new_deposit` and applies it via `apply_deposit`. Within a
-    /// single Unit of Work, persists the Transaction and the updated Cash
-    /// Holding atomically (ADR-006). Returns the persisted Transaction by value
-    /// — no post-push lookup, so no `expect`/BUG-anyhow path is necessary.
-    ///
-    /// CSH-021 — non-positive amount is rejected here as `AmountNotPositive`
-    /// (aggregate-level framing) before delegating, so callers see the
-    /// cash-specific error rather than the generic `QuantityNotPositive`.
-    ///
-    /// Typed return — `CashOperationError` unifies the two failure sources
-    /// (`AccountOperationError` aggregate-level + `TransactionDomainError`
-    /// validation) so the caller doesn't lose error type information through
-    /// anyhow.
-    pub fn record_deposit(
-        &mut self,
-        date: String,
-        amount: i64,
-        note: Option<String>,
-    ) -> Result<Transaction, CashOperationError> {
-        if amount <= 0 {
-            return Err(AccountOperationError::AmountNotPositive.into());
-        }
-        let tx =
-            Transaction::new_deposit(self.id.clone(), self.cash_asset_id(), date, amount, note)?;
-        Ok(self.apply_deposit(tx)?)
-    }
-
-    /// Records a cash outflow from this account to outside the tracked world (CSH-032).
-    ///
-    /// Convenience wrapper: builds the Withdrawal transaction via
-    /// `Transaction::new_withdrawal` and applies it via `apply_withdrawal`.
-    ///
-    /// CSH-031 — non-positive amount is rejected here as `AmountNotPositive`.
-    /// CSH-080 — insufficient cash is enforced inside `apply_withdrawal`
-    /// (single source of truth on the aggregate).
-    pub fn record_withdrawal(
-        &mut self,
-        date: String,
-        amount: i64,
-        note: Option<String>,
-    ) -> Result<Transaction, CashOperationError> {
-        if amount <= 0 {
-            return Err(AccountOperationError::AmountNotPositive.into());
-        }
-        let tx =
-            Transaction::new_withdrawal(self.id.clone(), self.cash_asset_id(), date, amount, note)?;
-        Ok(self.apply_withdrawal(tx)?)
-    }
+    // Cash deposit / withdrawal recording is composed at the application layer
+    // (see `AccountService::record_deposit` / `record_withdrawal`) by chaining
+    // `Transaction::new_deposit` / `new_withdrawal` (TRX-020) and `apply_deposit`
+    // / `apply_withdrawal` (CSH-080). The legacy `Account::record_*` wrappers —
+    // which used to live here and return the now-deleted `CashOperationError`
+    // composite — survive only as `#[cfg(test)]` test ergonomics helpers (see
+    // the `cfg(test)` impl block at the bottom of this file). Production code
+    // MUST go through the service.
 
     /// Replays the cash holding from scratch over all cash-affecting transactions
     /// (Deposit, Withdrawal, Purchase, Sell — OpeningBalance is excluded per CSH-060)
@@ -973,6 +928,47 @@ pub trait AccountRepository: Send + Sync {
     /// Atomically applies all pending changes accumulated by aggregate operations.
     /// Clears `pending_changes` on the aggregate after a successful commit.
     async fn save(&self, account: &mut Account) -> Result<()>;
+}
+
+/// Test-only convenience helpers for cash recording. Production code composes
+/// the same logic at the application layer (`AccountService::record_deposit` /
+/// `record_withdrawal`); these helpers exist purely so existing tests can
+/// continue to call `acc.record_deposit(...)` without spelling out the
+/// factory + apply two-step on every line. They return `AccountOperationError`
+/// directly (the only possible non-input failure source on valid test data);
+/// factory failures are `.expect()`-ed since test inputs are assumed valid.
+#[cfg(test)]
+impl Account {
+    /// Test-only helper mirroring the legacy production wrapper. `pub(crate)`
+    /// so non-test code in other crates can never accidentally call it.
+    /// Tests passing `amount <= 0` will panic via the factory's
+    /// `AmountNotPositive` (caught by `.expect()`); to assert that error type
+    /// directly, call `Transaction::new_deposit` instead of this helper.
+    pub(crate) fn record_deposit(
+        &mut self,
+        date: String,
+        amount: i64,
+        note: Option<String>,
+    ) -> std::result::Result<Transaction, AccountOperationError> {
+        let tx =
+            Transaction::new_deposit(self.id.clone(), self.cash_asset_id(), date, amount, note)
+                .expect("test transaction inputs must be valid");
+        self.apply_deposit(tx)
+    }
+
+    /// Test-only helper mirroring the legacy production wrapper. See
+    /// `record_deposit` for the panic-on-invalid-input contract.
+    pub(crate) fn record_withdrawal(
+        &mut self,
+        date: String,
+        amount: i64,
+        note: Option<String>,
+    ) -> std::result::Result<Transaction, AccountOperationError> {
+        let tx =
+            Transaction::new_withdrawal(self.id.clone(), self.cash_asset_id(), date, amount, note)
+                .expect("test transaction inputs must be valid");
+        self.apply_withdrawal(tx)
+    }
 }
 
 #[cfg(test)]
@@ -2001,10 +1997,10 @@ mod tests {
             .record_withdrawal("2020-02-01".to_string(), 500_000_000, None)
             .unwrap_err();
         match err {
-            CashOperationError::Operation(AccountOperationError::InsufficientCash {
+            AccountOperationError::InsufficientCash {
                 current_balance_micros,
                 currency,
-            }) => {
+            } => {
                 assert_eq!(current_balance_micros, 300_000_000);
                 assert_eq!(currency, "EUR");
             }
