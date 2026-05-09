@@ -69,7 +69,8 @@ pub struct Transaction {
 impl Transaction {
     /// Creates a new Transaction with a generated ID.
     /// Validates TRX-020 and TRX-026. Returns a typed `TransactionDomainError`
-    /// so callers can propagate it through typed unions like `CashOperationError`.
+    /// so callers can propagate it through typed unions (e.g. the application-
+    /// layer `CashRecordingError` composed by `AccountService::record_deposit`).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         account_id: String,
@@ -159,7 +160,12 @@ impl Transaction {
 
     /// Factory: builds a Deposit transaction with cash-specific defaults
     /// (`unit_price = 1.0` micros, `exchange_rate = 1.0` micros, `fees = 0`,
-    /// `total_amount = amount`). Validates TRX-020 via the underlying `new`.
+    /// `total_amount = amount`).
+    ///
+    /// CSH-021 — `amount <= 0` is rejected here as `AmountNotPositive` so the
+    /// FE sees the cash-specific error code. The check fires BEFORE the
+    /// generic `Transaction::new` validator (which would otherwise raise the
+    /// less-specific `QuantityNotPositive`).
     pub fn new_deposit(
         account_id: String,
         cash_asset_id: String,
@@ -167,6 +173,9 @@ impl Transaction {
         amount: i64,
         note: Option<String>,
     ) -> std::result::Result<Self, TransactionDomainError> {
+        if amount <= 0 {
+            return Err(TransactionDomainError::AmountNotPositive);
+        }
         Self::new(
             account_id,
             cash_asset_id,
@@ -184,8 +193,11 @@ impl Transaction {
 
     /// Factory: builds a Withdrawal transaction with cash-specific defaults.
     /// Same shape as `new_deposit` but with `TransactionType::Withdrawal`.
-    /// CSH-080 (insufficient cash) is enforced by `Account::apply_withdrawal`,
-    /// not here — this factory only validates the transaction itself (TRX-020).
+    ///
+    /// CSH-031 — `amount <= 0` is rejected here as `AmountNotPositive`
+    /// (mirrors `new_deposit`). CSH-080 (insufficient cash) is enforced by
+    /// `Account::apply_withdrawal`, not here — this factory only validates
+    /// the transaction itself.
     pub fn new_withdrawal(
         account_id: String,
         cash_asset_id: String,
@@ -193,6 +205,9 @@ impl Transaction {
         amount: i64,
         note: Option<String>,
     ) -> std::result::Result<Self, TransactionDomainError> {
+        if amount <= 0 {
+            return Err(TransactionDomainError::AmountNotPositive);
+        }
         Self::new(
             account_id,
             cash_asset_id,
@@ -471,10 +486,11 @@ mod tests {
         assert!(tx.realized_pnl.is_none());
     }
 
-    // TRX-020 propagates through new_deposit unchanged: zero amount surfaces
-    // QuantityNotPositive (the factory does not introduce a separate error code).
+    // CSH-021 — zero amount surfaces the cash-specific `AmountNotPositive`
+    // (raised by `new_deposit`'s own check) before the generic
+    // `QuantityNotPositive` from `Transaction::new` could fire.
     #[test]
-    fn new_deposit_propagates_quantity_validation() {
+    fn new_deposit_rejects_zero_amount_as_amount_not_positive() {
         let err = Transaction::new_deposit(
             "acc-1".to_string(),
             "asset-cash-USD".to_string(),
@@ -483,7 +499,7 @@ mod tests {
             None,
         )
         .unwrap_err();
-        assert!(matches!(err, TransactionDomainError::QuantityNotPositive));
+        assert!(matches!(err, TransactionDomainError::AmountNotPositive));
     }
 
     // CSH-032 — Transaction::new_withdrawal sets the cash-specific defaults

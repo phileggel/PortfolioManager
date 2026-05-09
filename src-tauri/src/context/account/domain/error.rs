@@ -1,5 +1,3 @@
-use super::transaction_error::TransactionDomainError;
-
 /// Typed errors for the account bounded context.
 ///
 /// All domain error enums in this module derive `serde::Serialize` + `specta::Type` +
@@ -83,26 +81,19 @@ pub enum AccountOperationError {
         /// ISO 4217 currency code of the offending account's cash holding.
         currency: String,
     },
-    /// Deposit / Withdrawal amount was zero or negative (CSH-021, CSH-031).
-    #[error("Amount must be greater than 0")]
-    AmountNotPositive,
 }
 
-/// Typed error returned by `Account::record_deposit` / `Account::record_withdrawal`.
-///
-/// Unifies the two domain error sources cash-recording methods can fail with —
-/// `AccountOperationError` (aggregate-level invariants like InsufficientCash,
-/// AmountNotPositive) and `TransactionDomainError` (invalid date variants raised
-/// by `Transaction::new`). `#[from]` lets `?` convert both source types
-/// automatically. The boundary layer downcasts this enum and surfaces its inner
-/// variants to the FE without redefinition.
-#[derive(Debug, thiserror::Error, serde::Serialize, specta::Type, Clone)]
-#[serde(untagged)]
-pub enum CashOperationError {
-    /// Aggregate-level operation error (AmountNotPositive, InsufficientCash).
-    #[error(transparent)]
-    Operation(#[from] AccountOperationError),
-    /// Transaction validation error (invalid date, date in future, etc.).
-    #[error(transparent)]
-    Validation(#[from] TransactionDomainError),
-}
+// `AccountOperationError::AmountNotPositive` (CSH-021/CSH-031) was migrated to
+// `TransactionDomainError::AmountNotPositive` in PR `refactor/cash-typed-result`.
+// Per Rule B', input validation on a value-object constructor (the cash
+// factories `Transaction::new_deposit` / `new_withdrawal`) is value-object-
+// level and must live in `TransactionDomainError`, not in the aggregate-level
+// `AccountOperationError`.
+
+// `CashOperationError` was deleted in PR `refactor/cash-typed-result`. Its
+// purpose — unifying the two failure sources of `Account::record_deposit` —
+// no longer exists at this layer: cash recording is now composed at the
+// application layer via `CashRecordingError` (in `application/error.rs`).
+// Each domain leaf (`AccountOperationError`, `TransactionDomainError`) is
+// raised by exactly one method and travels up unwrapped. See Rule B' in
+// `docs/plan/error-model-refactor.md`.

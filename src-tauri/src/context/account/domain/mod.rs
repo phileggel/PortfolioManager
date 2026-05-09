@@ -9,8 +9,7 @@ pub mod transaction_error;
 pub use account::AccountChange;
 pub use account::*;
 pub use error::{
-    AccountDomainError, AccountOperationError, CashOperationError, HoldingDomainError,
-    OpeningBalanceDomainError,
+    AccountDomainError, AccountOperationError, HoldingDomainError, OpeningBalanceDomainError,
 };
 pub use holding::*;
 pub use transaction::*;

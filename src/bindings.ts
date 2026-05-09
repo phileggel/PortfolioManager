@@ -297,8 +297,15 @@ async cancelTransaction(id: string, accountId: string) : Promise<Result<null, Tr
 },
 /**
  * Records a cash deposit into an account (CSH-022).
+ * 
+ * The Tauri command returns the typed `CashRecordingError` directly — no
+ * boundary type or mapper is needed because every leaf in the composite
+ * (`AccountApplicationError`, `AccountOperationError`, `TransactionDomainError`,
+ * shared `InfrastructureError`) already serializes with `#[serde(tag = "code")]`,
+ * and `CashRecordingError`'s `#[serde(untagged)]` flattens them into a
+ * single FE-visible union.
  */
-async recordDeposit(dto: DepositDTO) : Promise<Result<Transaction, RecordDepositCommandError>> {
+async recordDeposit(dto: DepositDTO) : Promise<Result<Transaction, CashRecordingError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("record_deposit", { dto }) };
 } catch (e) {
@@ -309,7 +316,7 @@ async recordDeposit(dto: DepositDTO) : Promise<Result<Transaction, RecordDeposit
 /**
  * Records a cash withdrawal from an account (CSH-032).
  */
-async recordWithdrawal(dto: WithdrawalDTO) : Promise<Result<Transaction, RecordWithdrawalCommandError>> {
+async recordWithdrawal(dto: WithdrawalDTO) : Promise<Result<Transaction, CashRecordingError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("record_withdrawal", { dto }) };
 } catch (e) {
@@ -455,6 +462,27 @@ currency: string;
  */
 update_frequency: UpdateFrequency }
 /**
+ * Application-layer errors raised by the Account bounded context — concerns
+ * that belong to use-case orchestration rather than aggregate invariants.
+ * 
+ * Per Rule B' (`docs/plan/error-model-refactor.md`): an error is **domain**
+ * only if raised by an aggregate method on its own loaded state. Anything
+ * raised at the service/use-case layer — `NotFound` lookups, cross-aggregate
+ * preconditions, infrastructure translations — is **application**.
+ * 
+ * Tagged with `#[serde(tag = "code")]` so it serializes verbatim across the
+ * Tauri boundary into a flat `{ code: "...", ... }` shape, identical to
+ * existing domain error enums.
+ */
+export type AccountApplicationError = 
+/**
+ * No account exists with the requested ID. Born at the service layer
+ * when a repository lookup returns `None`; never raised by an aggregate.
+ * `account_id` mirrors the (deprecated) `AccountDomainError::AccountNotFound`
+ * payload so the diagnostic chain doesn't lose the requested ID.
+ */
+{ code: "AccountNotFound"; account_id: string }
+/**
  * Typed error returned to the frontend for account commands.
  */
 export type AccountCommandError = 
@@ -500,6 +528,14 @@ transaction_count: number }
 export type AccountDetailsCommandError = 
 /**
  * No account exists with the requested ID.
+ * 
+ * Intentionally a unit variant — unlike the write-path counterparts
+ * (`AccountApplicationError::AccountNotFound`,
+ * `OpenHoldingCommandError::AccountNotFound`,
+ * `TransactionCommandError::AccountNotFound`) which carry
+ * `{ account_id: String }`, this is a read command: the caller already
+ * supplied `account_id` as the query parameter, so echoing it back adds
+ * no diagnostic value. Do not cargo-cult-add the field.
  */
 { code: "AccountNotFound" } | 
 /**
@@ -821,40 +857,46 @@ fees: number;
  */
 note: string | null }
 /**
- * Boundary-only variants for cash command errors — variants that don't exist in
- * any domain error enum. Composed into the per-command boundary types via
- * `#[serde(untagged)]` so the FE sees a flat `{ code: "..." }` union.
- */
-export type CashCommandBoundaryError = 
-/**
- * No account exists with the requested ID.
- */
-{ code: "AccountNotFound" } | 
-/**
- * An unexpected server-side error occurred. `hint` carries a developer-only
- * diagnostic string mirroring the `tracing::error!` log so support reports
- * can be triaged without correlating timestamps.
- */
-{ code: "Unknown"; hint: string }
-/**
- * Typed error returned by `Account::record_deposit` / `Account::record_withdrawal`.
+ * Service-layer composite for the cash-recording failure-surface-family
+ * (`AccountService::record_deposit` and `record_withdrawal`). Replaces the
+ * deleted domain-layer `CashOperationError` per Rule B' — composition belongs
+ * in the application layer; each leaf retains its single, typed failure
+ * source in its proper layer (no cash-prefixed leaf types).
  * 
- * Unifies the two domain error sources cash-recording methods can fail with —
- * `AccountOperationError` (aggregate-level invariants like InsufficientCash,
- * AmountNotPositive) and `TransactionDomainError` (invalid date variants raised
- * by `Transaction::new`). `#[from]` lets `?` convert both source types
- * automatically. The boundary layer downcasts this enum and surfaces its inner
- * variants to the FE without redefinition.
+ * **This IS the FE-facing contract** for cash-recording Tauri commands. No
+ * separate boundary type / mapper is needed: the four leaf enums below each
+ * derive `Serialize` + `specta::Type` with `#[serde(tag = "code")]`, and
+ * `#[serde(untagged)]` here flattens them into a single FE-visible union of
+ * `{ code: "...", ... }` discriminated variants.
+ * 
+ * Each leaf lives in its rightful layer:
+ * - `AccountApplicationError` — application layer (`account/application/`)
+ * - `AccountOperationError` — domain layer (`account/domain/`)
+ * - `TransactionDomainError` — domain layer (`account/domain/`)
+ * - `InfrastructureError` — shared catch-all (`core/`)
+ * 
+ * `CashRecordingError` itself owns no variants; it only enumerates which
+ * leaves cash recording can produce.
  */
-export type CashOperationError = 
+export type CashRecordingError = 
 /**
- * Aggregate-level operation error (AmountNotPositive, InsufficientCash).
+ * Application-layer rejection (`AccountNotFound`).
+ */
+AccountApplicationError | 
+/**
+ * Aggregate-level domain rejection (`AmountNotPositive`, `InsufficientCash`).
  */
 AccountOperationError | 
 /**
- * Transaction validation error (invalid date, date in future, etc.).
+ * Transaction-factory validation rejection (invalid date variants, etc.).
  */
-TransactionDomainError
+TransactionDomainError | 
+/**
+ * Opaque catch-all for repository / cross-BC infrastructure failures.
+ * Wire shape: `{ code: "Unknown", hint: "..." }`. The `hint` mirrors the
+ * corresponding `tracing::error!` log; FE shows `error.Unknown`.
+ */
+InfrastructureError
 /**
  * Typed error returned to the frontend for category commands.
  */
@@ -1145,13 +1187,42 @@ unrealized_pnl: number | null;
  */
 performance_pct: number | null }
 /**
+ * Shared application-wide infrastructure-error type.
+ * 
+ * Composed into every typed service composite (e.g. `CashRecordingError`)
+ * via `#[from]` so any layer can translate an opaque infrastructure failure
+ * (repository crash, file-system error, network failure, deserialization
+ * error, cross-BC infra step) into a typed leaf without re-defining the same
+ * `Unknown { hint }` shape per bounded context.
+ * 
+ * Per `docs/ddd-reference.md` § Errors travel rule: raw infrastructure
+ * failures must be translated at the application boundary into either a
+ * meaningful application error OR an opaque variant. This is the latter —
+ * the `hint` is developer-only diagnostic mirroring the corresponding
+ * `tracing::error!` log; the FE displays the i18n key `error.Unknown` and
+ * forwards `hint` to the JS console via `logger.error`.
+ * 
+ * Tagged with `#[serde(tag = "code")]` so the wire shape is
+ * `{ code: "Unknown", hint: "..." }` — identical across every command that
+ * surfaces it through any composite.
+ */
+export type InfrastructureError = 
+/**
+ * Opaque catch-all for any infrastructure failure with no domain meaning.
+ * Construct via `InfrastructureError::Unknown { hint: format!("...") }`
+ * or via `?` from any composite that has `#[from] InfrastructureError`.
+ */
+{ code: "Unknown"; hint: string }
+/**
  * Typed error returned to the frontend for the open_holding command.
  */
 export type OpenHoldingCommandError = 
 /**
- * No account exists with the requested ID.
+ * No account exists with the requested ID. Wire shape mirrors
+ * `AccountApplicationError::AccountNotFound` for FE consistency across
+ * every cash and non-cash command (per PR 2b's tightening).
  */
-{ code: "AccountNotFound" } | 
+{ code: "AccountNotFound"; account_id: string } | 
 /**
  * No asset exists with the requested ID.
  */
@@ -1214,41 +1285,6 @@ quantity: number;
  * Total cost paid in account currency (micro-units); strictly positive (TRX-045).
  */
 total_cost: number }
-/**
- * Typed error returned to the frontend for `record_deposit`.
- * 
- * Composes the domain-level `CashOperationError` (which itself unifies
- * `AccountOperationError | TransactionDomainError`) with the boundary-only
- * variants in `CashCommandBoundaryError`. Both inner enums are tagged with
- * `#[serde(tag = "code")]`, so the TS shape is a flat `{ code: "...", ... }`
- * union — no variant redefinition.
- */
-export type RecordDepositCommandError = 
-/**
- * Domain-level error raised by the aggregate (AmountNotPositive, InsufficientCash,
- * invalid date variants).
- */
-CashOperationError | 
-/**
- * Boundary-only variants (`AccountNotFound`, `Unknown`).
- */
-CashCommandBoundaryError
-/**
- * Typed error returned to the frontend for `record_withdrawal`.
- * 
- * Same composition as `RecordDepositCommandError`. `InsufficientCash` (CSH-080)
- * is carried by the inner `AccountOperationError` variant of `CashOperationError`.
- */
-export type RecordWithdrawalCommandError = 
-/**
- * Domain-level error raised by the aggregate (AmountNotPositive, InsufficientCash,
- * invalid date variants).
- */
-CashOperationError | 
-/**
- * Boundary-only variants.
- */
-CashCommandBoundaryError
 /**
  * Parameters for recording a sale of an asset from an account.
  */
@@ -1351,9 +1387,12 @@ export type TransactionCommandError =
  */
 { code: "TransactionNotFound" } | 
 /**
- * No account exists with the requested ID.
+ * No account exists with the requested ID. Wire shape mirrors
+ * `AccountApplicationError::AccountNotFound` and
+ * `OpenHoldingCommandError::AccountNotFound` for FE consistency across
+ * every cash and non-cash command (per PR 2b's tightening).
  */
-{ code: "AccountNotFound" } | 
+{ code: "AccountNotFound"; account_id: string } | 
 /**
  * Sell requested but holding has zero available units.
  */

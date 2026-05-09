@@ -1,11 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  CashRecordingError,
   DepositDTO,
   OpenHoldingCommandError,
   OpenHoldingDTO,
-  RecordDepositCommandError,
-  RecordWithdrawalCommandError,
   Transaction,
   WithdrawalDTO,
 } from "@/bindings";
@@ -64,7 +63,10 @@ describe("accountDetailsGateway — openHolding", () => {
       quantity: 1_000_000,
       total_cost: 100_000_000,
     };
-    const err: OpenHoldingCommandError = { code: "AccountNotFound" };
+    const err: OpenHoldingCommandError = {
+      code: "AccountNotFound",
+      account_id: "acc-1",
+    };
     // bindings.ts catches the rejection and returns { status: "error", error: e }
     mockInvoke.mockRejectedValue(err);
 
@@ -237,7 +239,10 @@ describe("accountDetailsGateway — recordDeposit (CSH-022)", () => {
       amount_micros: 250_000_000,
       note: null,
     };
-    const err: RecordDepositCommandError = { code: "AccountNotFound" };
+    const err: CashRecordingError = {
+      code: "AccountNotFound",
+      account_id: "no-such",
+    };
     mockInvoke.mockRejectedValue(err);
 
     const result = await accountDetailsGateway.recordDeposit(dto);
@@ -252,7 +257,7 @@ describe("accountDetailsGateway — recordDeposit (CSH-022)", () => {
       amount_micros: 0,
       note: null,
     };
-    const err: RecordDepositCommandError = { code: "AmountNotPositive" };
+    const err: CashRecordingError = { code: "AmountNotPositive" };
     mockInvoke.mockRejectedValue(err);
 
     const result = await accountDetailsGateway.recordDeposit(dto);
@@ -304,7 +309,7 @@ describe("accountDetailsGateway — recordWithdrawal (CSH-032)", () => {
       amount_micros: 999_000_000,
       note: null,
     };
-    const err: RecordWithdrawalCommandError = {
+    const err: CashRecordingError = {
       code: "InsufficientCash",
       current_balance_micros: 50_000_000,
       currency: "EUR",
