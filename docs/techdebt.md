@@ -10,7 +10,32 @@ Entries are observations, not commitments. Triaged by `/whats-next` alongside
 
 ---
 
-## 2026-05-08 — System-asset guard discriminates on AssetClass::Cash, not on a system marker
+## 2026-05-09 — Migrate to gold DDD layout (per kit proposals #17–#19)
+
+- Found by: manual (post-PR-#12 design discussion)
+- Where: src-tauri/src/ (top-level structure)
+- Context: branch `main` @ `eb4e180`
+- Severity: 🟡
+- Observation: Three layout deltas from the agreed gold target (kit issues phileggel/claude-kit#17, #18, #19; mirrored in ADR-008 once authored). The current shape works but documents the architecture imperfectly to newcomers.
+
+  1. **`service.rs` lives at the BC root, not in `application/`.** Inconsistent with `domain/` and `repository/` (which ARE folders). After PR 2b introduced `application/error.rs` per BC, the application layer has half its content in a folder, half at root. Migrate `service.rs` → `application/service.rs` per BC.
+
+  2. **`repository/` should be `infrastructure/`** (DDD layer name). `repository/` is one TYPE of infrastructure; renaming protects against the day a BC adds an external API client, cache adapter, or message-queue subscriber (avoids proliferating peer folders). Today the folder only contains repository impls — stay flat (`infrastructure/{aggregate}.rs`) until non-repo infra arrives, then add siblings without nesting.
+
+  3. **`core/` should be `shared/`**, restructured into the three DDD layer folders. `core/` overpromises ("central business logic" — but BCs ARE the business). Target shape:
+
+     ```
+     shared/
+     ├── application/error.rs        ← shared InfrastructureError
+     ├── domain/cash.rs              ← shared kernel (system_cash_asset_id)
+     └── infrastructure/{db, event_bus, logger, specta_*, uow}
+     ```
+
+     `InfrastructureError` reclassifies as application-layer (it's the typed application translation of opaque infra failures, per the DDD doc's travel rule — the NAME describes the source, the LAYER is application).
+
+  Migration is mechanical (folder moves + module-path updates, ~50–100 import sites total). Cleanest as a single dedicated chore PR after the kit proposals land (so the project mirrors the kit-ratified spec). Track in `docs/plan/error-model-refactor.md` § Out of scope (already lists "Folder reshape" as deferred — this entry expands the scope to all three deltas).
+
+
 - Found by: reviewer-arch
 - Where: src-tauri/src/context/asset/domain/asset.rs (Asset::is_cash + CSH-016 guards)
 - Context: branch `refactor/move-asset-category-state-checks` @ `5d5ae8f`
