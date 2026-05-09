@@ -157,6 +157,57 @@ impl Transaction {
         })
     }
 
+    /// Factory: builds a Deposit transaction with cash-specific defaults
+    /// (`unit_price = 1.0` micros, `exchange_rate = 1.0` micros, `fees = 0`,
+    /// `total_amount = amount`). Validates TRX-020 via the underlying `new`.
+    pub fn new_deposit(
+        account_id: String,
+        cash_asset_id: String,
+        date: String,
+        amount: i64,
+        note: Option<String>,
+    ) -> std::result::Result<Self, TransactionDomainError> {
+        Self::new(
+            account_id,
+            cash_asset_id,
+            TransactionType::Deposit,
+            date,
+            amount,
+            1_000_000,
+            1_000_000,
+            0,
+            amount,
+            note,
+            None,
+        )
+    }
+
+    /// Factory: builds a Withdrawal transaction with cash-specific defaults.
+    /// Same shape as `new_deposit` but with `TransactionType::Withdrawal`.
+    /// CSH-080 (insufficient cash) is enforced by `Account::apply_withdrawal`,
+    /// not here — this factory only validates the transaction itself (TRX-020).
+    pub fn new_withdrawal(
+        account_id: String,
+        cash_asset_id: String,
+        date: String,
+        amount: i64,
+        note: Option<String>,
+    ) -> std::result::Result<Self, TransactionDomainError> {
+        Self::new(
+            account_id,
+            cash_asset_id,
+            TransactionType::Withdrawal,
+            date,
+            amount,
+            1_000_000,
+            1_000_000,
+            0,
+            amount,
+            note,
+            None,
+        )
+    }
+
     /// Reconstructs a Transaction from storage without validation.
     #[allow(clippy::too_many_arguments)]
     pub fn restore(
@@ -395,5 +446,79 @@ mod tests {
         assert_ne!(TransactionType::Purchase, TransactionType::Sell);
         assert_ne!(TransactionType::Purchase, TransactionType::OpeningBalance);
         assert_ne!(TransactionType::Sell, TransactionType::OpeningBalance);
+    }
+
+    // CSH-022 — Transaction::new_deposit sets the cash-specific defaults
+    // (price=1.0 micros, rate=1.0 micros, fees=0, total=amount, type=Deposit).
+    #[test]
+    fn new_deposit_sets_cash_defaults() {
+        let tx = Transaction::new_deposit(
+            "acc-1".to_string(),
+            "asset-cash-USD".to_string(),
+            "2020-01-01".to_string(),
+            500_000_000,
+            None,
+        )
+        .unwrap();
+        assert_eq!(tx.transaction_type, TransactionType::Deposit);
+        assert_eq!(tx.account_id, "acc-1");
+        assert_eq!(tx.asset_id, "asset-cash-USD");
+        assert_eq!(tx.quantity, 500_000_000);
+        assert_eq!(tx.unit_price, 1_000_000);
+        assert_eq!(tx.exchange_rate, 1_000_000);
+        assert_eq!(tx.fees, 0);
+        assert_eq!(tx.total_amount, 500_000_000);
+        assert!(tx.realized_pnl.is_none());
+    }
+
+    // TRX-020 propagates through new_deposit unchanged: zero amount surfaces
+    // QuantityNotPositive (the factory does not introduce a separate error code).
+    #[test]
+    fn new_deposit_propagates_quantity_validation() {
+        let err = Transaction::new_deposit(
+            "acc-1".to_string(),
+            "asset-cash-USD".to_string(),
+            "2020-01-01".to_string(),
+            0,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, TransactionDomainError::QuantityNotPositive));
+    }
+
+    // CSH-032 — Transaction::new_withdrawal sets the cash-specific defaults
+    // with TransactionType::Withdrawal. CSH-080 is enforced by the aggregate
+    // (Account::apply_withdrawal), not by this factory.
+    #[test]
+    fn new_withdrawal_sets_cash_defaults() {
+        let tx = Transaction::new_withdrawal(
+            "acc-1".to_string(),
+            "asset-cash-USD".to_string(),
+            "2020-01-01".to_string(),
+            250_000_000,
+            Some("ATM".to_string()),
+        )
+        .unwrap();
+        assert_eq!(tx.transaction_type, TransactionType::Withdrawal);
+        assert_eq!(tx.quantity, 250_000_000);
+        assert_eq!(tx.unit_price, 1_000_000);
+        assert_eq!(tx.exchange_rate, 1_000_000);
+        assert_eq!(tx.fees, 0);
+        assert_eq!(tx.total_amount, 250_000_000);
+        assert_eq!(tx.note.as_deref(), Some("ATM"));
+    }
+
+    // TRX-020 propagates through new_withdrawal unchanged.
+    #[test]
+    fn new_withdrawal_propagates_date_validation() {
+        let err = Transaction::new_withdrawal(
+            "acc-1".to_string(),
+            "asset-cash-USD".to_string(),
+            "1899-12-31".to_string(),
+            100,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, TransactionDomainError::DateTooOld));
     }
 }
