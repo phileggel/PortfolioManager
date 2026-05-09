@@ -564,16 +564,70 @@ impl Account {
         self.holding_quantity(&self.cash_asset_id())
     }
 
+    /// Aggregate-root method: applies a pre-built Deposit transaction to this
+    /// account (CSH-022). The transaction must have been built via
+    /// `Transaction::new_deposit` so TRX-020 is already validated. Pushes to
+    /// history, queues the `TransactionInserted` change, and replays the cash
+    /// holding (CSH-012 lazy-creates the Cash Holding on first deposit).
+    ///
+    /// Returns `AccountOperationError` only if the chronological replay surfaces
+    /// `InsufficientCash` (e.g. an out-of-order back-dated deposit interleaved
+    /// with prior withdrawals would briefly drive the running balance negative).
+    pub fn apply_deposit(
+        &mut self,
+        tx: Transaction,
+    ) -> std::result::Result<Transaction, AccountOperationError> {
+        self.transactions.push(tx.clone());
+        self.pending_changes
+            .push(AccountChange::TransactionInserted(tx.clone()));
+        self.replay_cash_holding()?;
+        Ok(tx)
+    }
+
+    /// Aggregate-root method: applies a pre-built Withdrawal transaction to
+    /// this account (CSH-032). The transaction must have been built via
+    /// `Transaction::new_withdrawal`. Enforces CSH-080 (insufficient cash)
+    /// before any mutation so a rejected transaction is never left in
+    /// `self.transactions`. Withdrawals do not lazy-create the Cash Holding —
+    /// only Deposit and Sell do (CSH-012).
+    pub fn apply_withdrawal(
+        &mut self,
+        tx: Transaction,
+    ) -> std::result::Result<Transaction, AccountOperationError> {
+        let current = self.cash_holding_quantity();
+        // Compare against `total_amount` to match `replay_cash_holding`'s deduction
+        // field. For cash withdrawals built via `Transaction::new_withdrawal` the
+        // two are equal, but a future caller wiring through `Transaction::new`
+        // directly would still see a consistent guard.
+        if current < tx.total_amount {
+            return Err(AccountOperationError::InsufficientCash {
+                current_balance_micros: current,
+                currency: self.currency.clone(),
+            });
+        }
+        self.transactions.push(tx.clone());
+        self.pending_changes
+            .push(AccountChange::TransactionInserted(tx.clone()));
+        self.replay_cash_holding()?;
+        Ok(tx)
+    }
+
     /// Records a cash inflow into this account from outside the tracked world (CSH-022).
     ///
-    /// Lazy-creates the Cash Holding when this is the first cash-affecting transaction
-    /// (CSH-012). Within a single Unit of Work, persists the Transaction and the updated
-    /// Cash Holding atomically (ADR-006). Returns the persisted Transaction by value —
-    /// no post-push lookup, so no `expect`/BUG-anyhow path is necessary.
+    /// Convenience wrapper: builds the Deposit transaction via
+    /// `Transaction::new_deposit` and applies it via `apply_deposit`. Within a
+    /// single Unit of Work, persists the Transaction and the updated Cash
+    /// Holding atomically (ADR-006). Returns the persisted Transaction by value
+    /// — no post-push lookup, so no `expect`/BUG-anyhow path is necessary.
+    ///
+    /// CSH-021 — non-positive amount is rejected here as `AmountNotPositive`
+    /// (aggregate-level framing) before delegating, so callers see the
+    /// cash-specific error rather than the generic `QuantityNotPositive`.
     ///
     /// Typed return — `CashOperationError` unifies the two failure sources
-    /// (`AccountOperationError` aggregate-level + `TransactionDomainError` validation)
-    /// so the caller doesn't lose error type information through anyhow.
+    /// (`AccountOperationError` aggregate-level + `TransactionDomainError`
+    /// validation) so the caller doesn't lose error type information through
+    /// anyhow.
     pub fn record_deposit(
         &mut self,
         date: String,
@@ -583,31 +637,19 @@ impl Account {
         if amount <= 0 {
             return Err(AccountOperationError::AmountNotPositive.into());
         }
-        let tx = Transaction::new(
-            self.id.clone(),
-            self.cash_asset_id(),
-            TransactionType::Deposit,
-            date,
-            amount,
-            1_000_000,
-            1_000_000,
-            0,
-            amount,
-            note,
-            None,
-        )?;
-        self.transactions.push(tx.clone());
-        self.pending_changes
-            .push(AccountChange::TransactionInserted(tx.clone()));
-        self.replay_cash_holding()?;
-        Ok(tx)
+        let tx =
+            Transaction::new_deposit(self.id.clone(), self.cash_asset_id(), date, amount, note)?;
+        Ok(self.apply_deposit(tx)?)
     }
 
     /// Records a cash outflow from this account to outside the tracked world (CSH-032).
     ///
-    /// Eligibility (CSH-080): rejected with `InsufficientCash` when no Cash Holding exists
-    /// or its balance is below `amount`. Withdrawals do not lazy-create the Cash Holding —
-    /// only Deposit and Sell do (CSH-012).
+    /// Convenience wrapper: builds the Withdrawal transaction via
+    /// `Transaction::new_withdrawal` and applies it via `apply_withdrawal`.
+    ///
+    /// CSH-031 — non-positive amount is rejected here as `AmountNotPositive`.
+    /// CSH-080 — insufficient cash is enforced inside `apply_withdrawal`
+    /// (single source of truth on the aggregate).
     pub fn record_withdrawal(
         &mut self,
         date: String,
@@ -617,34 +659,9 @@ impl Account {
         if amount <= 0 {
             return Err(AccountOperationError::AmountNotPositive.into());
         }
-        // CSH-080 — eligibility pre-check before any mutation. Replay would also catch it,
-        // but failing early avoids leaving the rejected tx in self.transactions.
-        let current = self.cash_holding_quantity();
-        if current < amount {
-            return Err(AccountOperationError::InsufficientCash {
-                current_balance_micros: current,
-                currency: self.currency.clone(),
-            }
-            .into());
-        }
-        let tx = Transaction::new(
-            self.id.clone(),
-            self.cash_asset_id(),
-            TransactionType::Withdrawal,
-            date,
-            amount,
-            1_000_000,
-            1_000_000,
-            0,
-            amount,
-            note,
-            None,
-        )?;
-        self.transactions.push(tx.clone());
-        self.pending_changes
-            .push(AccountChange::TransactionInserted(tx.clone()));
-        self.replay_cash_holding()?;
-        Ok(tx)
+        let tx =
+            Transaction::new_withdrawal(self.id.clone(), self.cash_asset_id(), date, amount, note)?;
+        Ok(self.apply_withdrawal(tx)?)
     }
 
     /// Replays the cash holding from scratch over all cash-affecting transactions
@@ -2030,5 +2047,80 @@ mod tests {
             0,
             "deleting the only cash-affecting tx must reset cash to 0"
         );
+    }
+
+    // --- apply_deposit / apply_withdrawal aggregate-method tests ---
+    // These cover the new aggregate-level entry points directly. CSH-021/CSH-031
+    // (AmountNotPositive) cases stay in the record_* wrapper tests since that
+    // framing lives in the wrapper, not in apply_*.
+
+    // CSH-022 — apply_deposit pushes to history, queues TransactionInserted,
+    // and replays the cash holding (lazy-creates per CSH-012).
+    #[test]
+    fn apply_deposit_pushes_tx_and_replays_cash_holding() {
+        let mut acc = base_account();
+        let tx = Transaction::new_deposit(
+            acc.id.clone(),
+            acc.cash_asset_id(),
+            "2020-01-01".to_string(),
+            micro(500),
+            None,
+        )
+        .unwrap();
+        let returned = acc.apply_deposit(tx.clone()).unwrap();
+        assert_eq!(returned.id, tx.id);
+        assert_eq!(acc.transactions.len(), 1);
+        assert_eq!(acc.cash_holding_quantity(), micro(500));
+        assert!(acc
+            .pending_changes
+            .iter()
+            .any(|c| matches!(c, AccountChange::TransactionInserted(_))));
+    }
+
+    // CSH-080 — apply_withdrawal rejects when current cash balance is below the
+    // requested amount, and the rejected transaction is NOT left in
+    // self.transactions (eligibility runs before any mutation).
+    #[test]
+    fn apply_withdrawal_rejects_when_insufficient_cash() {
+        let mut acc = base_account();
+        // No deposit → cash balance is 0.
+        let tx = Transaction::new_withdrawal(
+            acc.id.clone(),
+            acc.cash_asset_id(),
+            "2020-01-01".to_string(),
+            micro(100),
+            None,
+        )
+        .unwrap();
+        let err = acc.apply_withdrawal(tx).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AccountOperationError::InsufficientCash {
+                    current_balance_micros: 0,
+                    ..
+                }
+            ),
+            "expected InsufficientCash{{0,…}}, got: {err:?}"
+        );
+        assert!(acc.transactions.is_empty(), "rejected tx must not be kept");
+    }
+
+    // CSH-080 — apply_withdrawal succeeds when balance >= requested amount and
+    // the new running balance is reflected by the cash holding.
+    #[test]
+    fn apply_withdrawal_succeeds_when_balance_sufficient() {
+        let mut acc = cash_seeded_account();
+        let before = acc.cash_holding_quantity();
+        let tx = Transaction::new_withdrawal(
+            acc.id.clone(),
+            acc.cash_asset_id(),
+            "2020-02-01".to_string(),
+            micro(200),
+            None,
+        )
+        .unwrap();
+        acc.apply_withdrawal(tx).unwrap();
+        assert_eq!(acc.cash_holding_quantity(), before - micro(200));
     }
 }
