@@ -2,8 +2,9 @@
 #![allow(clippy::unreachable)]
 
 use super::domain::{Account, UpdateFrequency};
-use crate::context::account::{AccountApplicationError, AccountDomainError, Transaction};
+use crate::context::account::{AccountCrudError, Transaction};
 use crate::core::logger::BACKEND;
+use crate::core::InfrastructureError;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -35,73 +36,35 @@ pub struct UpdateAccountDTO {
     pub update_frequency: UpdateFrequency,
 }
 
-// --- Boundary error ---
-
-/// Typed error returned to the frontend for account commands.
-#[derive(Debug, Serialize, Type, thiserror::Error)]
-#[serde(tag = "code")]
-pub enum AccountCommandError {
-    /// Account name is empty or whitespace-only.
-    #[error("Account name cannot be empty")]
-    NameEmpty,
-    /// An account with the same name already exists.
-    #[error("An account with this name already exists")]
-    NameAlreadyExists,
-    /// The currency string is not a valid ISO 4217 code.
-    #[error("Invalid currency code")]
-    InvalidCurrency,
-    /// An unexpected server-side error occurred.
-    #[error("An unexpected error occurred")]
-    Unknown,
-}
-
-fn to_account_error(e: anyhow::Error) -> AccountCommandError {
-    if let Some(err) = e.downcast_ref::<AccountApplicationError>() {
-        return match err {
-            AccountApplicationError::NameAlreadyExists => AccountCommandError::NameAlreadyExists,
-            // AccountNotFound cannot fire here: create/update never load an aggregate via
-            // get_with_holdings_and_transactions — the ID is only used for name-uniqueness checks.
-            AccountApplicationError::AccountNotFound { .. } => {
-                tracing::error!(target: BACKEND, err = ?err, "BUG: AccountNotFound in account command");
-                AccountCommandError::Unknown
-            }
-        };
-    }
-    if let Some(err) = e.downcast_ref::<AccountDomainError>() {
-        return match err {
-            AccountDomainError::NameEmpty => AccountCommandError::NameEmpty,
-            AccountDomainError::InvalidCurrency(_) => AccountCommandError::InvalidCurrency,
-        };
-    }
-    tracing::error!(target: BACKEND, err = ?e, "unexpected error in account command");
-    AccountCommandError::Unknown
-}
-
 // --- Commands ---
 
 /// Retrieves all accounts.
+///
+/// Read-only — only infrastructure failures (DB / repository) can fire here,
+/// so the surface is the narrow shared `InfrastructureError`.
 #[tauri::command]
 #[specta::specta]
-pub async fn get_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, AccountCommandError> {
-    state
-        .account_service
-        .get_all()
-        .await
-        .map_err(to_account_error)
+pub async fn get_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, InfrastructureError> {
+    state.account_service.get_all().await
 }
 
 /// Adds a new account.
+///
+/// Returns the typed `AccountCrudError` directly — no boundary type or mapper
+/// is needed because every leaf in the composite (`AccountApplicationError`,
+/// `AccountDomainError`, shared `InfrastructureError`) already serializes with
+/// `#[serde(tag = "code")]`, and `AccountCrudError`'s `#[serde(untagged)]`
+/// flattens them into a single FE-visible union.
 #[tauri::command]
 #[specta::specta]
 pub async fn add_account(
     state: State<'_, AppState>,
     dto: CreateAccountDTO,
-) -> Result<Account, AccountCommandError> {
+) -> Result<Account, AccountCrudError> {
     state
         .account_service
         .create(dto.name, dto.currency, dto.update_frequency)
         .await
-        .map_err(to_account_error)
 }
 
 /// Updates an existing account.
@@ -110,43 +73,38 @@ pub async fn add_account(
 pub async fn update_account(
     state: State<'_, AppState>,
     dto: UpdateAccountDTO,
-) -> Result<Account, AccountCommandError> {
+) -> Result<Account, AccountCrudError> {
     state
         .account_service
         .update(dto.id, dto.name, dto.currency, dto.update_frequency)
         .await
-        .map_err(to_account_error)
 }
 
 /// Deletes an account.
+///
+/// Pure infrastructure surface — no domain rejections (cascade is repo-level).
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_account(
     state: State<'_, AppState>,
     id: String,
-) -> Result<(), AccountCommandError> {
-    state
-        .account_service
-        .delete(&id)
-        .await
-        .map_err(to_account_error)
+) -> Result<(), InfrastructureError> {
+    state.account_service.delete(&id).await
 }
 
 /// Returns the distinct asset IDs that have transactions for the given account (TXL-013).
+///
+/// Read-only — only infrastructure failures can fire here.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_asset_ids_for_account(
     state: State<'_, AppState>,
     account_id: String,
-) -> Result<Vec<String>, AccountCommandError> {
+) -> Result<Vec<String>, InfrastructureError> {
     state
         .account_service
         .get_asset_ids_for_account(&account_id)
         .await
-        .map_err(|e| {
-            tracing::error!(target: BACKEND, err = ?e, "unexpected error in get_asset_ids_for_account");
-            AccountCommandError::Unknown
-        })
 }
 
 /// Retrieves all transactions for an account/asset pair (TRX-036).
@@ -171,52 +129,4 @@ pub async fn get_transactions(
                 hint: format!("get_transactions: {e:#}"),
             }
         })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::context::account::AccountApplicationError;
-    use anyhow::anyhow;
-
-    // PR 3 — to_account_error covers every classified branch in one test:
-    // application-class (NameAlreadyExists / AccountNotFound BUG-guard),
-    // domain-class (NameEmpty / InvalidCurrency), and unclassified fallback.
-    // Mapper IS the FE wire contract; one global assertion per branch keeps
-    // the test compact while still catching any regression in the mapping.
-    #[test]
-    fn to_account_error_maps_every_branch() {
-        // Application leaves
-        assert!(matches!(
-            to_account_error(AccountApplicationError::NameAlreadyExists.into()),
-            AccountCommandError::NameAlreadyExists
-        ));
-        assert!(matches!(
-            to_account_error(
-                AccountApplicationError::AccountNotFound {
-                    account_id: "x".into(),
-                }
-                .into(),
-            ),
-            // BUG-guard: NotFound from create/update is impossible by design;
-            // surfaced as Unknown so the FE doesn't show a misleading message.
-            AccountCommandError::Unknown
-        ));
-
-        // Domain leaves
-        assert!(matches!(
-            to_account_error(AccountDomainError::NameEmpty.into()),
-            AccountCommandError::NameEmpty
-        ));
-        assert!(matches!(
-            to_account_error(AccountDomainError::InvalidCurrency("XX".into()).into()),
-            AccountCommandError::InvalidCurrency
-        ));
-
-        // Unclassified fallback
-        assert!(matches!(
-            to_account_error(anyhow!("synthetic infra failure")),
-            AccountCommandError::Unknown
-        ));
-    }
 }

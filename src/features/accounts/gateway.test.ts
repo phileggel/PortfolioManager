@@ -2,10 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Account,
-  AccountCommandError,
+  AccountCrudError,
   AccountDeletionCommandError,
   AccountDeletionSummary,
+  AccountDomainError,
   CreateAccountDTO,
+  InfrastructureError,
   UpdateAccountDTO,
 } from "@/bindings";
 
@@ -33,6 +35,13 @@ describe("accountGateway", () => {
     expect(mockInvoke).toHaveBeenCalledWith("get_accounts");
   });
 
+  it("getAccounts surfaces Infrastructure(Unknown) on repo failure", async () => {
+    const err: InfrastructureError = { code: "Unknown", hint: "get_all: connection lost" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await accountGateway.getAccounts();
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
   // ── addAccount ───────────────────────────────────────────────────────────────
 
   it("addAccount returns Account on success", async () => {
@@ -54,7 +63,43 @@ describe("accountGateway", () => {
       currency: "EUR",
       update_frequency: "ManualMonth",
     };
-    const err: AccountCommandError = { code: "NameAlreadyExists" };
+    const err: AccountCrudError = { code: "NameAlreadyExists" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await accountGateway.addAccount(dto);
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("addAccount surfaces InvalidCurrency with currency payload", async () => {
+    const dto: CreateAccountDTO = {
+      name: "Test",
+      currency: "XYZ",
+      update_frequency: "ManualMonth",
+    };
+    const err: AccountDomainError = { code: "InvalidCurrency", currency: "XYZ" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await accountGateway.addAccount(dto);
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("addAccount surfaces NameEmpty domain error", async () => {
+    const dto: CreateAccountDTO = {
+      name: "  ",
+      currency: "EUR",
+      update_frequency: "ManualMonth",
+    };
+    const err: AccountDomainError = { code: "NameEmpty" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await accountGateway.addAccount(dto);
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("addAccount surfaces Infrastructure(Unknown) with hint payload", async () => {
+    const dto: CreateAccountDTO = {
+      name: "Test",
+      currency: "EUR",
+      update_frequency: "ManualMonth",
+    };
+    const err: InfrastructureError = { code: "Unknown", hint: "create: db timeout" };
     mockInvoke.mockRejectedValue(err);
     const result = await accountGateway.addAccount(dto);
     expect(result).toEqual({ status: "error", error: err });
@@ -83,7 +128,7 @@ describe("accountGateway", () => {
       currency: "EUR",
       update_frequency: "ManualMonth",
     };
-    const err: AccountCommandError = { code: "NameAlreadyExists" };
+    const err: AccountCrudError = { code: "NameAlreadyExists" };
     mockInvoke.mockRejectedValue(err);
     const result = await accountGateway.updateAccount(dto);
     expect(result).toEqual({ status: "error", error: err });
@@ -96,6 +141,13 @@ describe("accountGateway", () => {
     const result = await accountGateway.deleteAccount("acc-1");
     expect(result).toEqual({ status: "ok", data: null });
     expect(mockInvoke).toHaveBeenCalledWith("delete_account", { id: "acc-1" });
+  });
+
+  it("deleteAccount surfaces Infrastructure(Unknown) on repo failure", async () => {
+    const err: InfrastructureError = { code: "Unknown", hint: "delete: foreign key" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await accountGateway.deleteAccount("acc-1");
+    expect(result).toEqual({ status: "error", error: err });
   });
 
   // ── getAccountDeletionSummary ─────────────────────────────────────────────────

@@ -24,7 +24,7 @@ pub fn create_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .typ::<account::Account>()
         .typ::<account::UpdateFrequency>()
         .typ::<account::Holding>()
-        .typ::<account::AccountCommandError>()
+        .typ::<account::AccountCrudError>()
         .typ::<account::Transaction>()
         .typ::<account::TransactionType>()
         .typ::<account::HoldingTransactionError>()
