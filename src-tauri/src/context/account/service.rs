@@ -1087,6 +1087,100 @@ mod tests {
     // open_holding service tests (TRX-042 through TRX-056)
     // -------------------------------------------------------------------------
 
+    // PR 4 — open_holding propagates save failure as Infrastructure(Unknown)
+    // with the underlying error in the hint. Mirrors
+    // test_buy_holding_returns_error_when_save_fails for the open_holding
+    // typed-Result path (save_account_for_open_holding Err branch).
+    #[tokio::test]
+    async fn test_open_holding_returns_infrastructure_when_save_fails() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_get_with_holdings_and_transactions()
+            .once()
+            .returning(|_| {
+                let acc = Account::new(
+                    "Test".to_string(),
+                    "EUR".to_string(),
+                    UpdateFrequency::ManualMonth,
+                )
+                .unwrap();
+                Ok(Some(acc))
+            });
+        mock_ar
+            .expect_save()
+            .once()
+            .returning(|_| Err(SimulatedSaveError.into()));
+
+        let svc = AccountService::new(
+            Box::new(mock_ar),
+            Box::new(MockHoldingRepository::new()),
+            Box::new(MockTransactionRepository::new()),
+        );
+
+        let result = svc
+            .open_holding(
+                "any-account-id",
+                "asset-1".to_string(),
+                "2024-01-01".to_string(),
+                micro(1),
+                micro(100),
+            )
+            .await;
+
+        let err = result.unwrap_err();
+        use crate::use_cases::holding_transaction::OpenHoldingError;
+        assert!(
+            matches!(
+                &err,
+                OpenHoldingError::Infrastructure(InfrastructureError::Unknown { hint })
+                    if hint.contains("simulated DB failure")
+                        && hint.contains("save_account_for_open_holding")
+            ),
+            "open_holding must surface save failures as Infrastructure(Unknown), got: {err:?}"
+        );
+    }
+
+    // PR 4 — open_holding propagates repo load failure as Infrastructure(Unknown).
+    // Distinct from test_open_holding_returns_account_not_found (which exercises
+    // Ok(None) → Application(AccountNotFound)). This covers the Err branch of
+    // load_account_for_open_holding.
+    #[tokio::test]
+    async fn test_open_holding_returns_infrastructure_when_load_fails() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_get_with_holdings_and_transactions()
+            .once()
+            .returning(|_| Err(SimulatedSaveError.into()));
+
+        let svc = AccountService::new(
+            Box::new(mock_ar),
+            Box::new(MockHoldingRepository::new()),
+            Box::new(MockTransactionRepository::new()),
+        );
+
+        let result = svc
+            .open_holding(
+                "any-account-id",
+                "asset-1".to_string(),
+                "2024-01-01".to_string(),
+                micro(1),
+                micro(100),
+            )
+            .await;
+
+        let err = result.unwrap_err();
+        use crate::use_cases::holding_transaction::OpenHoldingError;
+        assert!(
+            matches!(
+                &err,
+                OpenHoldingError::Infrastructure(InfrastructureError::Unknown { hint })
+                    if hint.contains("simulated DB failure")
+                        && hint.contains("load_account_for_open_holding")
+            ),
+            "open_holding must surface load failures as Infrastructure(Unknown), got: {err:?}"
+        );
+    }
+
     // TRX-056 — open_holding returns AccountNotFound when account does not exist
     #[tokio::test]
     async fn test_open_holding_returns_account_not_found() {
