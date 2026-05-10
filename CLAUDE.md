@@ -38,9 +38,13 @@ See `.claude/kit-readme.md` for the full workflow guide and `.claude/kit-tools.m
 
 On top of the standard kit workflow, this project requires:
 
-1. **Before implementing**: read `docs/backend-rules.md` (backend changes), `docs/frontend-rules.md` (frontend changes), and/or `docs/e2e-rules.md` (E2E test changes). For frontend changes also read `docs/frontend-visual-proof.md`, then run `/visual-proof` after implementation to capture all states in both light and dark mode.
+1. **Before implementing**: read the relevant convention docs.
+   - **Backend changes**: `docs/backend-rules.md` + `docs/ddd-reference.md` (especially when touching the error model — see § Errors → rejection-layer rule).
+   - **Frontend changes**: `docs/frontend-rules.md` + `docs/i18n-rules.md`. Also read `docs/frontend-visual-proof.md`, then run `/visual-proof` after implementation to capture all states in both light and dark mode.
+   - **E2E changes**: `docs/e2e-rules.md`.
+   - **Any test work** (unit / integration / E2E, BE or FE): `docs/test_convention.md`.
 2. **Plan step**: after proposing the TODO plan, immediately create a TaskList (`TaskCreate`) with one task per remaining step. Ask user to validate before implementing.
-3. **Docs update**: at the end, update `ARCHITECTURE.md` if new files/modules added; `docs/todo.md` if new project backlog items or resolved items; for non-actionable code smells or reviewer-surfaced observations use `/techdebt` (output goes to `docs/techdebt.md`); for new business rules use `/spec-writer` to author/extend the spec in `docs/spec/` and `/contract` to derive the matching `docs/contracts/{domain}-contract.md`. Use `/adr-writer` to author architectural decisions in `docs/adr/`, then run the `adr-reviewer` agent to validate before locking the decision.
+3. **Docs update**: at the end, update `ARCHITECTURE.md` if new files/modules added; `docs/todo.md` if new project backlog items or resolved items; for non-actionable code smells or reviewer-surfaced observations use `/techdebt` (output goes to `docs/techdebt.md`); for new business rules use `/spec-writer` to author/extend the spec in `docs/spec/` (then run the `spec-reviewer` agent to validate) and `/contract` to derive the matching `docs/contracts/{domain}-contract.md` (then run the `contract-reviewer` agent to validate). Use `/adr-writer` to author architectural decisions in `docs/adr/`, then run the `adr-reviewer` agent to validate before locking the decision.
 4. **E2E tests** (after frontend impl, before release): run `test-writer-e2e` agent with the domain contract to write passing WebDriver E2E tests against the live app (verifies green before finishing). Run `/setup-e2e` once first if not yet initialized.
 5. **Visual proof** (frontend changes only): run `/visual-proof` to capture and commit screenshots for all component states in both light and dark mode. **Modals: render the panel directly without `ModalContainer`** in `src/__preview__/main.tsx` — copy the `FormModal` chrome (rounded-[28px], `bg-m3-surface-container-lowest/85 backdrop-blur-[12px] shadow-elevation-4`, header / scrollable content / footer) and skip `ModalContainer`'s 50% scrim. The scrim is a generic shell concern with no real content behind it in a standalone preview, so it would render near-black and misrepresent the modal in dark mode. Visual proof is for the component, not the shell.
 6. **Commit**: ask user if a commit is needed → use `/smart-commit` skill.
@@ -64,13 +68,13 @@ When splitting, the order is **BE → FE → E2E**:
 
 Why: a 60-file mixed-layer PR overwhelms reviewers; comment threads sprawl across concerns; review-fix cycles force backend re-runs for FE-only nits and vice versa. Per-layer PRs keep each diff tight (~20 files), let CI sign off independently, and let backend ship before FE has to react to the bindings.
 
-`feature-planner` should output a "PR plan" section listing which commits land in which PR. `/start` commits + opens a PR per layer, not one terminal PR.
+`feature-planner` should output a "PR plan" section listing which commits land in which PR; run the `plan-reviewer` agent after the plan lands to validate it before any test-writer runs. `/start` commits + opens a PR per layer, not one terminal PR.
 
 ---
 
 ## 🛠 Commands
 
-> Kit-shipped recipes (`just check`, `check-full`, `format`, `generate-types`, `prepare-sqlx`, `migrate`, `clean-db`, `release`, `merge`, `clean-branches`, `stat`) and skills (`/dep-audit`, `/prune`, `/visual-proof`, `/create-pr`, `/setup-e2e`, `/kit-discover`) are inventoried in `.claude/kit-tools.md`. The project-specific commands below add to that surface.
+> Kit-shipped recipes and skills are inventoried in `.claude/kit-tools.md`. The project-specific commands below add to that surface.
 
 - Dev: `./scripts/start-app.sh`
 - Tests: `just test` (frontend) | `just test-rust` (backend) | `just test-unit` (both)
