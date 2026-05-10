@@ -90,10 +90,14 @@ pub struct Account {
 
 impl Account {
     /// Creates a new Account. Trims the name before validation and storage (R1).
-    pub fn new(name: String, currency: String, update_frequency: UpdateFrequency) -> Result<Self> {
+    pub fn new(
+        name: String,
+        currency: String,
+        update_frequency: UpdateFrequency,
+    ) -> std::result::Result<Self, AccountDomainError> {
         let name = name.trim().to_string();
         if name.is_empty() {
-            return Err(AccountDomainError::NameEmpty.into());
+            return Err(AccountDomainError::NameEmpty);
         }
         Self::validate_currency(&currency)?;
         Ok(Self {
@@ -113,10 +117,10 @@ impl Account {
         name: String,
         currency: String,
         update_frequency: UpdateFrequency,
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, AccountDomainError> {
         let name = name.trim().to_string();
         if name.is_empty() {
-            return Err(AccountDomainError::NameEmpty.into());
+            return Err(AccountDomainError::NameEmpty);
         }
         Self::validate_currency(&currency)?;
         Ok(Self {
@@ -899,9 +903,11 @@ impl Account {
         total_sell_amount - cost_basis
     }
 
-    fn validate_currency(currency: &str) -> Result<()> {
+    fn validate_currency(currency: &str) -> std::result::Result<(), AccountDomainError> {
         if Currency::from_str(currency).is_err() {
-            return Err(AccountDomainError::InvalidCurrency(currency.to_string()).into());
+            return Err(AccountDomainError::InvalidCurrency {
+                currency: currency.to_string(),
+            });
         }
         Ok(())
     }

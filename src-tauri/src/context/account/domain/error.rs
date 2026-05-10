@@ -13,9 +13,15 @@ pub enum AccountDomainError {
     #[error("Account name cannot be empty")]
     NameEmpty,
     /// The currency string is not a valid ISO 4217 code. Raised by the
-    /// `Account` aggregate constructor on its own input.
-    #[error("Invalid currency code: {0}")]
-    InvalidCurrency(String),
+    /// `Account` aggregate constructor on its own input. Struct variant so the
+    /// internally-tagged serde representation (`#[serde(tag = "code")]`) can
+    /// flatten the offending currency alongside `code` at the FE boundary
+    /// (serde does not support internally-tagged tuple variants).
+    #[error("Invalid currency code: {currency}")]
+    InvalidCurrency {
+        /// The offending currency string the caller passed.
+        currency: String,
+    },
 }
 
 // `AccountDomainError::NameAlreadyExists` and `AccountNotFound` were migrated

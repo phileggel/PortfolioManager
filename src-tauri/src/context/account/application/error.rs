@@ -1,4 +1,6 @@
-use crate::context::account::domain::{AccountOperationError, TransactionDomainError};
+use crate::context::account::domain::{
+    AccountDomainError, AccountOperationError, TransactionDomainError,
+};
 use crate::core::InfrastructureError;
 
 /// Application-layer errors raised by the Account bounded context — concerns
@@ -78,6 +80,43 @@ pub enum HoldingTransactionError {
     /// Opaque catch-all for repository / cross-BC infrastructure failures.
     /// Wire shape: `{ code: "Unknown", hint: "..." }`. The `hint` mirrors the
     /// corresponding `tracing::error!` log; FE shows `error.Unknown`.
+    #[error(transparent)]
+    Infrastructure(#[from] InfrastructureError),
+}
+
+/// Service-layer composite for the **Account CRUD** failure surface — the
+/// write commands `add_account` and `update_account`. Replaces the anyhow-era
+/// `AccountCommandError` boundary type per the rejection-layer rule
+/// (`docs/ddd-reference.md` § Errors): each leaf retains its single, typed
+/// failure source in its proper layer; `#[serde(untagged)]` flattens them
+/// into a single FE-visible union of `{ code: "..." }` discriminated variants.
+///
+/// **This IS the FE-facing contract** for `add_account` / `update_account`.
+/// No separate boundary type / mapper is needed. `delete_account`,
+/// `get_accounts`, and `get_asset_ids_for_account` use the narrower shared
+/// `InfrastructureError` directly because they have no domain-rejection paths.
+///
+/// Each leaf lives in its rightful layer:
+/// - `AccountApplicationError` — application layer (this module) — raises
+///   `NameAlreadyExists` from the service-layer uniqueness pre-check.
+/// - `AccountDomainError` — domain layer (`account/domain/`) — raises
+///   `NameEmpty` / `InvalidCurrency` from the `Account::new` /
+///   `Account::with_id` constructors on their own input.
+/// - `InfrastructureError` — shared catch-all (`core/`) — opaques repository
+///   failures.
+///
+/// `AccountCrudError` itself owns no variants; it only enumerates which
+/// leaves the create/update commands can produce.
+#[derive(Debug, thiserror::Error, serde::Serialize, specta::Type)]
+#[serde(untagged)]
+pub enum AccountCrudError {
+    /// Service-layer rejection (`NameAlreadyExists`).
+    #[error(transparent)]
+    Application(#[from] AccountApplicationError),
+    /// Aggregate-constructor rejection (`NameEmpty`, `InvalidCurrency`).
+    #[error(transparent)]
+    Validation(#[from] AccountDomainError),
+    /// Opaque catch-all for repository failures.
     #[error(transparent)]
     Infrastructure(#[from] InfrastructureError),
 }

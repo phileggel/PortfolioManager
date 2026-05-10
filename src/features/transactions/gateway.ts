@@ -1,5 +1,4 @@
 import type {
-  AccountCommandError,
   AssetPriceCommandError,
   BuyHoldingDTO,
   CorrectTransactionDTO,
@@ -45,7 +44,7 @@ export const transactionGateway = {
     return await commands.getTransactions(accountId, assetId);
   },
 
-  async getAssetIdsForAccount(accountId: string): Promise<Result<string[], AccountCommandError>> {
+  async getAssetIdsForAccount(accountId: string): Promise<Result<string[], InfrastructureError>> {
     return await commands.getAssetIdsForAccount(accountId);
   },
 

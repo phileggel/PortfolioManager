@@ -1,4 +1,4 @@
-use super::application::{AccountApplicationError, HoldingTransactionError};
+use super::application::{AccountApplicationError, AccountCrudError, HoldingTransactionError};
 use super::domain::{
     Account, AccountOperationError, AccountRepository, Holding, HoldingRepository, Transaction,
     TransactionDomainError, TransactionRepository, UpdateFrequency,
@@ -41,9 +41,15 @@ impl AccountService {
     // Account CRUD
     // -------------------------------------------------------------------------
 
-    /// Retrieves all non-deleted accounts.
-    pub async fn get_all(&self) -> anyhow::Result<Vec<Account>> {
-        self.account_repo.get_all().await
+    /// Retrieves all non-deleted accounts. Read-only — only infrastructure
+    /// failures can fire here, so the surface is the narrow `InfrastructureError`.
+    pub async fn get_all(&self) -> Result<Vec<Account>, InfrastructureError> {
+        self.account_repo.get_all().await.map_err(|e| {
+            tracing::error!(target: BACKEND, err = ?e, "get_all: repository failure");
+            InfrastructureError::Unknown {
+                hint: format!("get_all: {e:#}"),
+            }
+        })
     }
 
     /// Retrieves an account by ID.
@@ -57,18 +63,21 @@ impl AccountService {
         name: String,
         currency: String,
         update_frequency: UpdateFrequency,
-    ) -> anyhow::Result<Account> {
+    ) -> Result<Account, AccountCrudError> {
         let account = Account::new(name, currency, update_frequency)?;
-        if self
-            .account_repo
-            .find_by_name(&account.name)
+        if find_account_by_name(&*self.account_repo, &account.name)
             .await?
             .is_some()
         {
             return Err(AccountApplicationError::NameAlreadyExists.into());
         }
         info!(target: BACKEND, account_id = %account.id, name = %account.name, "creating account");
-        let created = self.account_repo.create(account).await?;
+        let created = self.account_repo.create(account).await.map_err(|e| {
+            tracing::error!(target: BACKEND, err = ?e, "create: repository failure");
+            InfrastructureError::Unknown {
+                hint: format!("create: {e:#}"),
+            }
+        })?;
         self.emit_account_updated();
         Ok(created)
     }
@@ -80,23 +89,34 @@ impl AccountService {
         name: String,
         currency: String,
         update_frequency: UpdateFrequency,
-    ) -> anyhow::Result<Account> {
+    ) -> Result<Account, AccountCrudError> {
         let account = Account::with_id(id, name, currency, update_frequency)?;
-        if let Some(existing) = self.account_repo.find_by_name(&account.name).await? {
+        if let Some(existing) = find_account_by_name(&*self.account_repo, &account.name).await? {
             if existing.id != account.id {
                 return Err(AccountApplicationError::NameAlreadyExists.into());
             }
         }
         info!(target: BACKEND, account_id = %account.id, name = %account.name, "updating account");
-        let updated = self.account_repo.update(account).await?;
+        let updated = self.account_repo.update(account).await.map_err(|e| {
+            tracing::error!(target: BACKEND, err = ?e, "update: repository failure");
+            InfrastructureError::Unknown {
+                hint: format!("update: {e:#}"),
+            }
+        })?;
         self.emit_account_updated();
         Ok(updated)
     }
 
     /// Permanently deletes an account and cascades to its holdings (R5).
-    pub async fn delete(&self, id: &str) -> anyhow::Result<()> {
+    /// Pure infrastructure surface — no domain rejections (cascade is repo-level).
+    pub async fn delete(&self, id: &str) -> Result<(), InfrastructureError> {
         info!(target: BACKEND, account_id = %id, "deleting account");
-        self.account_repo.delete(id).await?;
+        self.account_repo.delete(id).await.map_err(|e| {
+            tracing::error!(target: BACKEND, account_id = %id, err = ?e, "delete: repository failure");
+            InfrastructureError::Unknown {
+                hint: format!("delete: {e:#}"),
+            }
+        })?;
         self.emit_account_updated();
         Ok(())
     }
@@ -142,10 +162,20 @@ impl AccountService {
     }
 
     /// Returns distinct asset IDs that have transactions for the given account (TXL-013).
-    pub async fn get_asset_ids_for_account(&self, account_id: &str) -> anyhow::Result<Vec<String>> {
+    /// Read-only — only infrastructure failures can fire here.
+    pub async fn get_asset_ids_for_account(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<String>, InfrastructureError> {
         self.transaction_repo
             .get_asset_ids_for_account(account_id)
             .await
+            .map_err(|e| {
+                tracing::error!(target: BACKEND, account_id = %account_id, err = ?e, "get_asset_ids_for_account: repository failure");
+                InfrastructureError::Unknown {
+                    hint: format!("get_asset_ids_for_account: {e:#}"),
+                }
+            })
     }
 
     // -------------------------------------------------------------------------
@@ -439,6 +469,26 @@ async fn save_account(
     })
 }
 
+/// CRUD-family parallel to the load/save helpers above. Wraps the
+/// `find_by_name` uniqueness pre-check used by `create` and `update`,
+/// translating any repository failure into `AccountCrudError::Infrastructure`.
+///
+/// Unlike `load_account`, `Ok(None)` is the **success** path here (the name
+/// is available); the caller decides what to do with `Some(existing)`. Only
+/// genuine repository errors map to `Infrastructure(Unknown)`.
+async fn find_account_by_name(
+    repo: &dyn AccountRepository,
+    name: &str,
+) -> Result<Option<Account>, AccountCrudError> {
+    repo.find_by_name(name).await.map_err(|e| {
+        tracing::error!(target: BACKEND, name = %name, err = ?e, "find_by_name: repository failure");
+        InfrastructureError::Unknown {
+            hint: format!("find_by_name: {e:#}"),
+        }
+        .into()
+    })
+}
+
 /// Open-holding parallel to `load_account`. Same shape; targets `OpenHoldingError`.
 async fn load_account_for_open_holding(
     repo: &dyn AccountRepository,
@@ -719,10 +769,10 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AccountApplicationError>(),
-                Some(AccountApplicationError::NameAlreadyExists)
+                err,
+                AccountCrudError::Application(AccountApplicationError::NameAlreadyExists)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -756,10 +806,10 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AccountApplicationError>(),
-                Some(AccountApplicationError::NameAlreadyExists)
+                err,
+                AccountCrudError::Application(AccountApplicationError::NameAlreadyExists)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -1799,6 +1849,104 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(err, HoldingTransactionError::Infrastructure(_)),
+            "got: {err:?}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Account CRUD typed-error coverage (PR 5)
+    // -------------------------------------------------------------------------
+
+    // PR 5 — create surfaces find_by_name repo failure as Infrastructure(Unknown)
+    // with the helper name + underlying message in the hint. Exercises the
+    // typed-error contract for the uniqueness pre-check failure path.
+    #[tokio::test]
+    async fn test_create_returns_infrastructure_when_find_by_name_fails() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_find_by_name()
+            .once()
+            .returning(|_| Err(SimulatedSaveError.into()));
+        let svc = AccountService::new(
+            Box::new(mock_ar),
+            Box::new(MockHoldingRepository::new()),
+            Box::new(MockTransactionRepository::new()),
+        );
+        let err = svc
+            .create(
+                "Test".to_string(),
+                "EUR".to_string(),
+                UpdateFrequency::ManualMonth,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                AccountCrudError::Infrastructure(InfrastructureError::Unknown { hint })
+                    if hint.contains("simulated DB failure")
+                        && hint.contains("find_by_name")
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // PR 5 — create surfaces repo.create failure (after passing the uniqueness
+    // pre-check) as Infrastructure(Unknown). Distinct path from find_by_name.
+    #[tokio::test]
+    async fn test_create_returns_infrastructure_when_repo_create_fails() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar.expect_find_by_name().once().returning(|_| Ok(None));
+        mock_ar
+            .expect_create()
+            .once()
+            .returning(|_| Err(SimulatedSaveError.into()));
+        let svc = AccountService::new(
+            Box::new(mock_ar),
+            Box::new(MockHoldingRepository::new()),
+            Box::new(MockTransactionRepository::new()),
+        );
+        let err = svc
+            .create(
+                "Test".to_string(),
+                "EUR".to_string(),
+                UpdateFrequency::ManualMonth,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                AccountCrudError::Infrastructure(InfrastructureError::Unknown { hint })
+                    if hint.contains("simulated DB failure") && hint.contains("create")
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // PR 5 — delete surfaces repo failure as Infrastructure(Unknown). The
+    // delete surface is intentionally narrower than create/update (no domain
+    // rejections — cascade is repo-level), so this is the only failure path
+    // worth exercising.
+    #[tokio::test]
+    async fn test_delete_returns_infrastructure_when_repo_fails() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_delete()
+            .once()
+            .returning(|_| Err(SimulatedSaveError.into()));
+        let svc = AccountService::new(
+            Box::new(mock_ar),
+            Box::new(MockHoldingRepository::new()),
+            Box::new(MockTransactionRepository::new()),
+        );
+        let err = svc.delete("any-id").await.unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                InfrastructureError::Unknown { hint }
+                    if hint.contains("simulated DB failure") && hint.contains("delete")
+            ),
             "got: {err:?}"
         );
     }

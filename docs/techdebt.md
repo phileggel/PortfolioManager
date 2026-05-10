@@ -78,3 +78,19 @@ Entries are observations, not commitments. Triaged by `/whats-next` alongside
 - Context: branch `refactor/cash-tx-aggregate-split` @ `2c2ea3e`
 - Severity: 🔵
 - Observation: `opening_balance_variant_exists` asserts a value equals itself; `transaction_type_variants_are_distinct` asserts the compiler-derived `PartialEq` distinguishes named variants. Both are tautological — they exercise the language, not the domain. Candidates for deletion in a B33 sweep alongside other trivial tests in the suite.
+
+## 2026-05-10 — InfrastructureError.hint crosses IPC and round-trips
+
+- Found by: reviewer-security
+- Where: src-tauri/src/core/error.rs:21-30 (InfrastructureError::Unknown.hint) — applied across all *Error composites
+- Context: branch `refactor/account-crud-typed-error` @ `cad6ee6`
+- Severity: 🟡
+- Observation: The `hint: String` field on `InfrastructureError::Unknown` is serialized into the IPC response and crosses the Tauri boundary verbatim. Each `format!("{e:#}")` call in service.rs forwards the full anyhow chain — SQLx error text, query fragments, file-system paths, OS diagnostics — to the frontend. The frontend then logs it via `logger.error(result.error)` which round-trips it back to the backend tracing log via `log_frontend`, producing duplicate logs and exposing diagnostic detail across IPC.
+
+## 2026-05-10 — Tagged-at-boundary enums must avoid tuple variants
+
+- Found by: reviewer-backend
+- Where: src-tauri/src/context/account/domain/error.rs:9-25 (AccountDomainError::InvalidCurrency)
+- Context: branch `refactor/account-crud-typed-error` @ `cad6ee6`
+- Severity: 🔵
+- Observation: The variant changed from tuple-style `InvalidCurrency(String)` to struct-style `InvalidCurrency { currency: String }` because serde's `#[serde(tag = "code")]` (internally-tagged) does not accept tuple variants. This is a breaking variant shape change for any downstream pattern-match on the tuple form. Today the only call site is `validate_currency` (updated in PR 5), but `AccountDomainError` is a public domain export through `account/mod.rs` and was previously reachable through anyhow downcasts. The same constraint will reach any other domain-error enum we expose at the FE boundary through an untagged composite — the pattern is now "no tuple variants on tagged-at-boundary enums."

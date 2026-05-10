@@ -154,8 +154,11 @@ async deleteAssetPrice(assetId: string, date: string) : Promise<Result<null, Del
 },
 /**
  * Retrieves all accounts.
+ * 
+ * Read-only — only infrastructure failures (DB / repository) can fire here,
+ * so the surface is the narrow shared `InfrastructureError`.
  */
-async getAccounts() : Promise<Result<Account[], AccountCommandError>> {
+async getAccounts() : Promise<Result<Account[], InfrastructureError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_accounts") };
 } catch (e) {
@@ -165,8 +168,14 @@ async getAccounts() : Promise<Result<Account[], AccountCommandError>> {
 },
 /**
  * Adds a new account.
+ * 
+ * Returns the typed `AccountCrudError` directly — no boundary type or mapper
+ * is needed because every leaf in the composite (`AccountApplicationError`,
+ * `AccountDomainError`, shared `InfrastructureError`) already serializes with
+ * `#[serde(tag = "code")]`, and `AccountCrudError`'s `#[serde(untagged)]`
+ * flattens them into a single FE-visible union.
  */
-async addAccount(dto: CreateAccountDTO) : Promise<Result<Account, AccountCommandError>> {
+async addAccount(dto: CreateAccountDTO) : Promise<Result<Account, AccountCrudError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("add_account", { dto }) };
 } catch (e) {
@@ -177,7 +186,7 @@ async addAccount(dto: CreateAccountDTO) : Promise<Result<Account, AccountCommand
 /**
  * Updates an existing account.
  */
-async updateAccount(dto: UpdateAccountDTO) : Promise<Result<Account, AccountCommandError>> {
+async updateAccount(dto: UpdateAccountDTO) : Promise<Result<Account, AccountCrudError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_account", { dto }) };
 } catch (e) {
@@ -187,8 +196,10 @@ async updateAccount(dto: UpdateAccountDTO) : Promise<Result<Account, AccountComm
 },
 /**
  * Deletes an account.
+ * 
+ * Pure infrastructure surface — no domain rejections (cascade is repo-level).
  */
-async deleteAccount(id: string) : Promise<Result<null, AccountCommandError>> {
+async deleteAccount(id: string) : Promise<Result<null, InfrastructureError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_account", { id }) };
 } catch (e) {
@@ -198,8 +209,10 @@ async deleteAccount(id: string) : Promise<Result<null, AccountCommandError>> {
 },
 /**
  * Returns the distinct asset IDs that have transactions for the given account (TXL-013).
+ * 
+ * Read-only — only infrastructure failures can fire here.
  */
-async getAssetIdsForAccount(accountId: string) : Promise<Result<string[], AccountCommandError>> {
+async getAssetIdsForAccount(accountId: string) : Promise<Result<string[], InfrastructureError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_asset_ids_for_account", { accountId }) };
 } catch (e) {
@@ -494,25 +507,43 @@ export type AccountApplicationError =
  */
 { code: "NameAlreadyExists" }
 /**
- * Typed error returned to the frontend for account commands.
+ * Service-layer composite for the **Account CRUD** failure surface — the
+ * write commands `add_account` and `update_account`. Replaces the anyhow-era
+ * `AccountCommandError` boundary type per the rejection-layer rule
+ * (`docs/ddd-reference.md` § Errors): each leaf retains its single, typed
+ * failure source in its proper layer; `#[serde(untagged)]` flattens them
+ * into a single FE-visible union of `{ code: "..." }` discriminated variants.
+ * 
+ * **This IS the FE-facing contract** for `add_account` / `update_account`.
+ * No separate boundary type / mapper is needed. `delete_account`,
+ * `get_accounts`, and `get_asset_ids_for_account` use the narrower shared
+ * `InfrastructureError` directly because they have no domain-rejection paths.
+ * 
+ * Each leaf lives in its rightful layer:
+ * - `AccountApplicationError` — application layer (this module) — raises
+ * `NameAlreadyExists` from the service-layer uniqueness pre-check.
+ * - `AccountDomainError` — domain layer (`account/domain/`) — raises
+ * `NameEmpty` / `InvalidCurrency` from the `Account::new` /
+ * `Account::with_id` constructors on their own input.
+ * - `InfrastructureError` — shared catch-all (`core/`) — opaques repository
+ * failures.
+ * 
+ * `AccountCrudError` itself owns no variants; it only enumerates which
+ * leaves the create/update commands can produce.
  */
-export type AccountCommandError = 
+export type AccountCrudError = 
 /**
- * Account name is empty or whitespace-only.
+ * Service-layer rejection (`NameAlreadyExists`).
  */
-{ code: "NameEmpty" } | 
+AccountApplicationError | 
 /**
- * An account with the same name already exists.
+ * Aggregate-constructor rejection (`NameEmpty`, `InvalidCurrency`).
  */
-{ code: "NameAlreadyExists" } | 
+AccountDomainError | 
 /**
- * The currency string is not a valid ISO 4217 code.
+ * Opaque catch-all for repository failures.
  */
-{ code: "InvalidCurrency" } | 
-/**
- * An unexpected server-side error occurred.
- */
-{ code: "Unknown" }
+InfrastructureError
 /**
  * Typed error returned to the frontend for the get_account_deletion_summary command.
  */
@@ -540,9 +571,8 @@ export type AccountDetailsCommandError =
 /**
  * No account exists with the requested ID.
  * 
- * Intentionally a unit variant — unlike the write-path counterparts
- * (`AccountApplicationError::AccountNotFound`,
- * `OpenHoldingCommandError::AccountNotFound`) which carry
+ * Intentionally a unit variant — unlike the write-path counterpart
+ * `AccountApplicationError::AccountNotFound` which carries
  * `{ account_id: String }`, this is a read command: the caller already
  * supplied `account_id` as the query parameter, so echoing it back adds
  * no diagnostic value. Do not cargo-cult-add the field.
@@ -591,6 +621,29 @@ total_unrealized_pnl: number | null;
  * Returns 0 when no Cash Holding and no priced non-cash holdings.
  */
 total_global_value: number }
+/**
+ * Typed errors for the account bounded context.
+ * 
+ * All domain error enums in this module derive `serde::Serialize` + `specta::Type` +
+ * `#[serde(tag = "code")]` so they can be exposed verbatim at the Tauri boundary.
+ * Boundary error types compose them via untagged unions to avoid redefining variants
+ * (review feedback on PR #5).
+ */
+export type AccountDomainError = 
+/**
+ * Account name is empty or whitespace-only. Raised by the `Account`
+ * aggregate constructor on its own input — value-object validation,
+ * domain-class per Rule B'.
+ */
+{ code: "NameEmpty" } | 
+/**
+ * The currency string is not a valid ISO 4217 code. Raised by the
+ * `Account` aggregate constructor on its own input. Struct variant so the
+ * internally-tagged serde representation (`#[serde(tag = "code")]`) can
+ * flatten the offending currency alongside `code` at the FE boundary
+ * (serde does not support internally-tagged tuple variants).
+ */
+{ code: "InvalidCurrency"; currency: string }
 /**
  * Typed errors raised by Account aggregate operations (buy/sell/correct/cancel/cash).
  */
