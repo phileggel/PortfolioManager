@@ -24,17 +24,18 @@ The DDD doc now codifies the canonical shape (domain wrapped, application born, 
 
 ## Locked rules
 
-### Rule B' (classification)
+### Rejection-layer rule (canonical reference)
 
-> An error is a **domain** error if and only if it is raised by an aggregate method (or value-object constructor) enforcing an invariant on its own loaded state or input.
-> Anything raised by the service or use case layer — NotFound, uniqueness checks, cross-BC preconditions, infrastructure failures — is **application** (or **infrastructure** for opaque catch-alls).
+The classification rule that governs every PR in this refactor — internally referred to as **"Rule B'"** through PR descriptions 1–4 — is now codified by the kit as the **rejection-layer rule** in [`docs/ddd-reference.md`](../ddd-reference.md) § Errors. That is the canonical statement; consult it when in doubt.
 
-Concretely:
+Kit alignment: codified in **claude-kit v4.4.0** (synced 2026-05-10), alongside the related anemic-domain rule **B37** in `docs/backend-rules.md`. PRs 1–4 of this plan were authored against the same definition before it had a name in the kit; the framing was correct, only the citation moved.
 
-- Aggregate method rejection → domain
-- Service-level pre-check → application (move into aggregate if the rule is intrinsic to the entity)
-- Use-case orchestrator rejection (cross-BC) → application
-- Translated infra failure → application or opaque `Infrastructure(hint)` catch-all
+Quick reminder of the test (full version in the kit doc):
+
+- Aggregate method rejection → **domain**
+- Service-level pre-check (`NotFound`, uniqueness) → **application** (move into the aggregate if the rule is intrinsic — see B37)
+- Use-case orchestrator rejection (cross-BC) → **application**
+- Translated infra failure → **application** or opaque `Infrastructure(hint)` catch-all
 
 ### Layering
 
@@ -115,7 +116,7 @@ A **failure-surface-family** = methods sharing the same set of leaf errors. ONE 
 
 **PR 3 family-merge note**: The original map split "Cash recording" (deposit/withdrawal) and "Holding transaction" (buy/sell/correct/cancel) into separate families. PR 3 collapsed them — both share an identical leaf set (AccountAppErr + AccountOpErr + TxDomainErr + InfraErr) because they're all kinds of holding transaction (cash deposit/withdrawal IS a holding transaction against the System Cash Asset, CSH-014). One composite (`HoldingTransactionError`) covers all six commands. Also: `get_transactions` (read-only) was narrowed to `Result<Vec<Transaction>, InfrastructureError>` directly — the wider composite is reserved for write commands.
 
-**PR 4 leaf-split note**: Three variants previously in `OpeningBalanceDomainError` (`AssetNotFound`, `ArchivedAsset`, `OpeningBalanceOnCashAsset`) were migrated to a new `OpenHoldingApplicationError` enum (use-case-owned, in `use_cases/holding_transaction/error.rs`) per Rule B' — they're cross-BC asset-check rejections born at the orchestrator, not aggregate invariants. `OpeningBalanceDomainError` now holds only the genuinely-domain `InvalidTotalCost` (raised by `Account::open_holding` on its own input).
+**PR 4 leaf-split note**: Three variants previously in `OpeningBalanceDomainError` (`AssetNotFound`, `ArchivedAsset`, `OpeningBalanceOnCashAsset`) were migrated to a new `OpenHoldingApplicationError` enum (use-case-owned, in `use_cases/holding_transaction/error.rs`) per the rejection-layer rule (`docs/ddd-reference.md` § Errors) — they're cross-BC asset-check rejections born at the orchestrator, not aggregate invariants. `OpeningBalanceDomainError` now holds only the genuinely-domain `InvalidTotalCost` (raised by `Account::open_holding` on its own input).
 
 **PR 4 layering exception (worth ratifying explicitly)**: `AccountService::open_holding` returns `OpenHoldingError`, which is owned by `use_cases/holding_transaction/`. This inverts the canonical dependency arrow (BC service depending on a use-case-owned type). The pragmatic alternative — defining a smaller `OpenHoldingServiceError` in `account/application/` and nesting composites — was rejected as over-engineered for a single method. The choice is **acceptable for exactly one method** and should NOT be cargo-culted: the standard pattern (PR 3 precedent: `HoldingTransactionError` in `account/application/` covering 6 methods) is to define the composite in the BC that owns the failure leaves. Future families with cross-BC-leaves should prefer the nested-composite approach unless the same one-method economics apply. May be promoted to an ADR if the pattern recurs.
 
