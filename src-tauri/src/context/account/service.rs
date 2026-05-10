@@ -1,7 +1,7 @@
-use super::application::{AccountApplicationError, CashRecordingError};
+use super::application::{AccountApplicationError, HoldingTransactionError};
 use super::domain::{
-    Account, AccountDomainError, AccountRepository, Holding, HoldingRepository, Transaction,
-    TransactionRepository, UpdateFrequency,
+    Account, AccountOperationError, AccountRepository, Holding, HoldingRepository, Transaction,
+    TransactionDomainError, TransactionRepository, UpdateFrequency,
 };
 use crate::core::{logger::BACKEND, Event, InfrastructureError, SideEffectEventBus};
 use anyhow::Result;
@@ -65,7 +65,7 @@ impl AccountService {
             .await?
             .is_some()
         {
-            return Err(AccountDomainError::NameAlreadyExists.into());
+            return Err(AccountApplicationError::NameAlreadyExists.into());
         }
         info!(target: BACKEND, account_id = %account.id, name = %account.name, "creating account");
         let created = self.account_repo.create(account).await?;
@@ -84,7 +84,7 @@ impl AccountService {
         let account = Account::with_id(id, name, currency, update_frequency)?;
         if let Some(existing) = self.account_repo.find_by_name(&account.name).await? {
             if existing.id != account.id {
-                return Err(AccountDomainError::NameAlreadyExists.into());
+                return Err(AccountApplicationError::NameAlreadyExists.into());
             }
         }
         info!(target: BACKEND, account_id = %account.id, name = %account.name, "updating account");
@@ -154,7 +154,10 @@ impl AccountService {
 
     /// Records a purchase of an asset into the account (TRX-020, TRX-026).
     ///
-    /// Loads the Account aggregate, delegates to `Account::buy_holding`, saves atomically.
+    /// Loads the Account aggregate, delegates to `Account::buy_holding`, saves
+    /// atomically. Returns a typed `HoldingTransactionError` — same composite as
+    /// the cash methods, since cash deposit/withdrawal and asset buy/sell are
+    /// all kinds of holding transaction.
     #[allow(clippy::too_many_arguments)]
     pub async fn buy_holding(
         &self,
@@ -166,14 +169,9 @@ impl AccountService {
         exchange_rate: i64,
         fees: i64,
         note: Option<String>,
-    ) -> Result<Transaction> {
-        let mut account = self
-            .account_repo
-            .get_with_holdings_and_transactions(account_id)
-            .await?
-            // TODO(error-model-refactor PR 3+): migrate to AccountApplicationError::AccountNotFound (Rule B' — service-layer not-found is application-class).
-            .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
+    ) -> std::result::Result<Transaction, HoldingTransactionError> {
         info!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, "buy_holding");
+        let mut account = load_account(&*self.account_repo, account_id).await?;
         let tx = account
             .buy_holding(
                 asset_id,
@@ -183,9 +181,10 @@ impl AccountService {
                 exchange_rate,
                 fees,
                 note,
-            )?
+            )
+            .map_err(to_holding_tx_error)?
             .clone();
-        self.account_repo.save(&mut account).await?;
+        save_account(&*self.account_repo, &mut account).await?;
         self.emit_transaction_updated();
         Ok(tx)
     }
@@ -204,14 +203,9 @@ impl AccountService {
         exchange_rate: i64,
         fees: i64,
         note: Option<String>,
-    ) -> Result<Transaction> {
-        let mut account = self
-            .account_repo
-            .get_with_holdings_and_transactions(account_id)
-            .await?
-            // TODO(error-model-refactor PR 3+): migrate to AccountApplicationError::AccountNotFound (Rule B' — service-layer not-found is application-class).
-            .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
+    ) -> std::result::Result<Transaction, HoldingTransactionError> {
         info!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, "sell_holding");
+        let mut account = load_account(&*self.account_repo, account_id).await?;
         let tx = account
             .sell_holding(
                 asset_id,
@@ -221,9 +215,10 @@ impl AccountService {
                 exchange_rate,
                 fees,
                 note,
-            )?
+            )
+            .map_err(to_holding_tx_error)?
             .clone();
-        self.account_repo.save(&mut account).await?;
+        save_account(&*self.account_repo, &mut account).await?;
         self.emit_transaction_updated();
         Ok(tx)
     }
@@ -242,18 +237,14 @@ impl AccountService {
         exchange_rate: i64,
         fees: i64,
         note: Option<String>,
-    ) -> Result<Transaction> {
-        let mut account = self
-            .account_repo
-            .get_with_holdings_and_transactions(account_id)
-            .await?
-            // TODO(error-model-refactor PR 3+): migrate to AccountApplicationError::AccountNotFound (Rule B' — service-layer not-found is application-class).
-            .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
+    ) -> std::result::Result<Transaction, HoldingTransactionError> {
         info!(target: BACKEND, account_id = %account_id, tx_id = %tx_id, "correct_transaction");
+        let mut account = load_account(&*self.account_repo, account_id).await?;
         let tx = account
-            .correct_transaction(tx_id, date, quantity, unit_price, exchange_rate, fees, note)?
+            .correct_transaction(tx_id, date, quantity, unit_price, exchange_rate, fees, note)
+            .map_err(to_holding_tx_error)?
             .clone();
-        self.account_repo.save(&mut account).await?;
+        save_account(&*self.account_repo, &mut account).await?;
         self.emit_transaction_updated();
         Ok(tx)
     }
@@ -261,16 +252,17 @@ impl AccountService {
     /// Deletes a transaction and recalculates (or removes) the associated holding (TRX-034).
     ///
     /// Loads the Account aggregate, delegates to `Account::cancel_transaction`, saves atomically.
-    pub async fn cancel_transaction(&self, account_id: &str, tx_id: &str) -> Result<()> {
-        let mut account = self
-            .account_repo
-            .get_with_holdings_and_transactions(account_id)
-            .await?
-            // TODO(error-model-refactor PR 3+): migrate to AccountApplicationError::AccountNotFound (Rule B' — service-layer not-found is application-class).
-            .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
+    pub async fn cancel_transaction(
+        &self,
+        account_id: &str,
+        tx_id: &str,
+    ) -> std::result::Result<(), HoldingTransactionError> {
         info!(target: BACKEND, account_id = %account_id, tx_id = %tx_id, "cancel_transaction");
-        account.cancel_transaction(tx_id)?;
-        self.account_repo.save(&mut account).await?;
+        let mut account = load_account(&*self.account_repo, account_id).await?;
+        account
+            .cancel_transaction(tx_id)
+            .map_err(to_holding_tx_error)?;
+        save_account(&*self.account_repo, &mut account).await?;
         self.emit_transaction_updated();
         Ok(())
     }
@@ -291,8 +283,9 @@ impl AccountService {
             .account_repo
             .get_with_holdings_and_transactions(account_id)
             .await?
-            // TODO(error-model-refactor PR 3+): migrate to AccountApplicationError::AccountNotFound (Rule B' — service-layer not-found is application-class).
-            .ok_or_else(|| AccountDomainError::AccountNotFound(account_id.to_string()))?;
+            .ok_or_else(|| AccountApplicationError::AccountNotFound {
+                account_id: account_id.to_string(),
+            })?;
         info!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, "open_holding");
         let tx = account
             .open_holding(asset_id, date, quantity, total_cost)?
@@ -307,7 +300,7 @@ impl AccountService {
     /// Application-layer composition: loads the Account, builds the Transaction
     /// via `Transaction::new_deposit` (TRX-020 enforced by the factory), applies
     /// it via `Account::apply_deposit` (CSH-080 enforced by the aggregate),
-    /// then saves atomically. Returns a typed `CashRecordingError` — no
+    /// then saves atomically. Returns a typed `HoldingTransactionError` — no
     /// `anyhow` at this boundary; the caller (orchestrator / api) propagates
     /// the typed enum directly.
     pub async fn record_deposit(
@@ -316,7 +309,7 @@ impl AccountService {
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, CashRecordingError> {
+    ) -> std::result::Result<Transaction, HoldingTransactionError> {
         info!(target: BACKEND, account_id = %account_id, amount = amount, "record_deposit");
         let mut account = load_account(&*self.account_repo, account_id).await?;
         let tx = Transaction::new_deposit(
@@ -343,7 +336,7 @@ impl AccountService {
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, CashRecordingError> {
+    ) -> std::result::Result<Transaction, HoldingTransactionError> {
         info!(target: BACKEND, account_id = %account_id, amount = amount, "record_withdrawal");
         let mut account = load_account(&*self.account_repo, account_id).await?;
         let tx = Transaction::new_withdrawal(
@@ -407,13 +400,13 @@ impl AccountService {
 
 /// Loads an Account aggregate (with holdings + transactions) for a typed
 /// cash-recording flow. Translates repository failures into typed
-/// `CashRecordingError` variants — `AccountNotFound` for `Ok(None)`,
+/// `HoldingTransactionError` variants — `AccountNotFound` for `Ok(None)`,
 /// `Infrastructure` for any anyhow error (the underlying error is logged
 /// before being opaqued).
 async fn load_account(
     repo: &dyn AccountRepository,
     account_id: &str,
-) -> std::result::Result<Account, CashRecordingError> {
+) -> std::result::Result<Account, HoldingTransactionError> {
     match repo.get_with_holdings_and_transactions(account_id).await {
         Ok(Some(acc)) => Ok(acc),
         Ok(None) => Err(AccountApplicationError::AccountNotFound {
@@ -432,12 +425,12 @@ async fn load_account(
 
 /// Persists an Account aggregate's pending changes for a typed cash-recording
 /// flow. Translates repository failures into the shared
-/// `InfrastructureError::Unknown { hint }` (composed into `CashRecordingError`
+/// `InfrastructureError::Unknown { hint }` (composed into `HoldingTransactionError`
 /// via `#[from]`) after logging the underlying error.
 async fn save_account(
     repo: &dyn AccountRepository,
     account: &mut Account,
-) -> std::result::Result<(), CashRecordingError> {
+) -> std::result::Result<(), HoldingTransactionError> {
     repo.save(account).await.map_err(|e| {
         tracing::error!(target: BACKEND, account_id = %account.id, err = ?e, "save_account: repository failure");
         InfrastructureError::Unknown {
@@ -447,6 +440,32 @@ async fn save_account(
     })
 }
 
+/// Converts the `anyhow::Error` returned by the buy/sell/correct/cancel
+/// aggregate methods into a typed `HoldingTransactionError` leaf. Bridge for
+/// the period before those aggregate methods are themselves migrated to typed
+/// Result (planned follow-up: split each into factory + apply per the cash
+/// pattern). Until then, this helper preserves the typed surface at the
+/// service boundary by downcasting.
+///
+/// Errors that don't downcast to a known leaf are logged and surfaced as
+/// `InfrastructureError::Unknown` — the same opaque catch-all used by the
+/// helpers above.
+fn to_holding_tx_error(e: anyhow::Error) -> HoldingTransactionError {
+    let e = match e.downcast::<AccountOperationError>() {
+        Ok(err) => return err.into(),
+        Err(e) => e,
+    };
+    let e = match e.downcast::<TransactionDomainError>() {
+        Ok(err) => return err.into(),
+        Err(e) => e,
+    };
+    tracing::error!(target: BACKEND, err = ?e, "unexpected error in holding-tx service method");
+    InfrastructureError::Unknown {
+        hint: format!("holding-tx aggregate: {e:#}"),
+    }
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -454,7 +473,7 @@ mod tests {
     // catch constraint violations) and mock-based unit tests (fast delegation checks).
     // SQLite tests are grouped first; mock-based unit tests follow after the section header.
     use crate::context::account::{
-        AccountApplicationError, AccountOperationError, CashRecordingError, Holding,
+        AccountApplicationError, AccountOperationError, Holding, HoldingTransactionError,
         MockAccountRepository, MockHoldingRepository, MockTransactionRepository,
         SqliteAccountRepository, SqliteHoldingRepository, SqliteTransactionRepository,
         TransactionDomainError,
@@ -569,8 +588,8 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AccountDomainError>(),
-                Some(AccountDomainError::NameAlreadyExists)
+                err.downcast_ref::<AccountApplicationError>(),
+                Some(AccountApplicationError::NameAlreadyExists)
             ),
             "got: {err}"
         );
@@ -606,8 +625,8 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AccountDomainError>(),
-                Some(AccountDomainError::NameAlreadyExists)
+                err.downcast_ref::<AccountApplicationError>(),
+                Some(AccountApplicationError::NameAlreadyExists)
             ),
             "got: {err}"
         );
@@ -718,10 +737,11 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            err.downcast_ref::<AccountOperationError>()
-                .map(|e| matches!(e, AccountOperationError::Oversell { .. }))
-                .unwrap_or(false),
-            "expected Oversell, got: {err}"
+            matches!(
+                err,
+                HoldingTransactionError::Operation(AccountOperationError::Oversell { .. })
+            ),
+            "expected Oversell, got: {err:?}"
         );
     }
 
@@ -865,10 +885,11 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            err.downcast_ref::<AccountOperationError>()
-                .map(|e| matches!(e, AccountOperationError::CascadingOversell))
-                .unwrap_or(false),
-            "expected CascadingOversell, got: {err}"
+            matches!(
+                err,
+                HoldingTransactionError::Operation(AccountOperationError::CascadingOversell)
+            ),
+            "expected CascadingOversell, got: {err:?}"
         );
     }
 
@@ -917,11 +938,17 @@ mod tests {
             .await;
 
         let err = result.unwrap_err();
+        // The repo save error is opaqued at the service boundary — translated
+        // to InfrastructureError::Unknown with a hint that includes the
+        // underlying error string. Assert the variant + that the hint carries
+        // the SimulatedSaveError display.
         assert!(
-            err.downcast_ref::<SimulatedSaveError>()
-                .map(|_| true)
-                .unwrap_or(false),
-            "buy_holding must propagate repository save errors unchanged, got: {err}"
+            matches!(
+                &err,
+                HoldingTransactionError::Infrastructure(InfrastructureError::Unknown { hint })
+                    if hint.contains("simulated DB failure")
+            ),
+            "buy_holding must surface save failures as Infrastructure(Unknown), got: {err:?}"
         );
     }
 
@@ -944,10 +971,10 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            err.downcast_ref::<AccountDomainError>()
-                .map(|e| matches!(e, AccountDomainError::AccountNotFound(_)))
+            err.downcast_ref::<AccountApplicationError>()
+                .map(|e| matches!(e, AccountApplicationError::AccountNotFound { .. }))
                 .unwrap_or(false),
-            "expected AccountDomainError::AccountNotFound, got: {err}"
+            "expected AccountApplicationError::AccountNotFound, got: {err}"
         );
     }
 
@@ -1289,7 +1316,7 @@ mod tests {
     // -------------------------------------------------------------------------
     // Typed cash service error paths (B34) — mock-based unit tests for
     // record_deposit / record_withdrawal covering all four typed-Result
-    // variants of CashRecordingError. Happy paths are covered by the SQLite
+    // variants of HoldingTransactionError. Happy paths are covered by the SQLite
     // csh_100_* tests above.
     // -------------------------------------------------------------------------
 
@@ -1327,7 +1354,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                CashRecordingError::Validation(TransactionDomainError::AmountNotPositive)
+                HoldingTransactionError::Validation(TransactionDomainError::AmountNotPositive)
             ),
             "got: {err:?}"
         );
@@ -1347,7 +1374,7 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            CashRecordingError::Application(AccountApplicationError::AccountNotFound {
+            HoldingTransactionError::Application(AccountApplicationError::AccountNotFound {
                 account_id,
             }) => {
                 assert_eq!(account_id, "missing");
@@ -1356,7 +1383,7 @@ mod tests {
         }
     }
 
-    // load_account translates a repo Err → CashRecordingError::Infrastructure(InfrastructureError).
+    // load_account translates a repo Err → HoldingTransactionError::Infrastructure(InfrastructureError).
     #[tokio::test]
     async fn record_deposit_returns_infrastructure_when_load_fails() {
         let mut mock_ar = MockAccountRepository::new();
@@ -1370,12 +1397,12 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(err, CashRecordingError::Infrastructure(_)),
+            matches!(err, HoldingTransactionError::Infrastructure(_)),
             "got: {err:?}"
         );
     }
 
-    // save_account translates a repo Err → CashRecordingError::Infrastructure(InfrastructureError).
+    // save_account translates a repo Err → HoldingTransactionError::Infrastructure(InfrastructureError).
     #[tokio::test]
     async fn record_deposit_returns_infrastructure_when_save_fails() {
         let mut mock_ar = MockAccountRepository::new();
@@ -1401,7 +1428,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(err, CashRecordingError::Infrastructure(_)),
+            matches!(err, HoldingTransactionError::Infrastructure(_)),
             "got: {err:?}"
         );
     }
@@ -1432,7 +1459,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                CashRecordingError::Validation(TransactionDomainError::AmountNotPositive)
+                HoldingTransactionError::Validation(TransactionDomainError::AmountNotPositive)
             ),
             "got: {err:?}"
         );
@@ -1452,7 +1479,7 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            CashRecordingError::Application(AccountApplicationError::AccountNotFound {
+            HoldingTransactionError::Application(AccountApplicationError::AccountNotFound {
                 account_id,
             }) => {
                 assert_eq!(account_id, "missing");
@@ -1461,7 +1488,7 @@ mod tests {
         }
     }
 
-    // load_account translates a repo Err → CashRecordingError::Infrastructure(InfrastructureError).
+    // load_account translates a repo Err → HoldingTransactionError::Infrastructure(InfrastructureError).
     #[tokio::test]
     async fn record_withdrawal_returns_infrastructure_when_load_fails() {
         let mut mock_ar = MockAccountRepository::new();
@@ -1475,12 +1502,12 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(err, CashRecordingError::Infrastructure(_)),
+            matches!(err, HoldingTransactionError::Infrastructure(_)),
             "got: {err:?}"
         );
     }
 
-    // save_account translates a repo Err → CashRecordingError::Infrastructure(InfrastructureError).
+    // save_account translates a repo Err → HoldingTransactionError::Infrastructure(InfrastructureError).
     #[tokio::test]
     async fn record_withdrawal_returns_infrastructure_when_save_fails() {
         let mut mock_ar = MockAccountRepository::new();
@@ -1540,7 +1567,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(err, CashRecordingError::Infrastructure(_)),
+            matches!(err, HoldingTransactionError::Infrastructure(_)),
             "got: {err:?}"
         );
     }

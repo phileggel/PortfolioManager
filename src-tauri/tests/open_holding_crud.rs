@@ -4,7 +4,7 @@
 /// These tests exercise AccountService directly: persist correct fields, account-not-found.
 use sqlx::sqlite::SqlitePoolOptions;
 use vault_compass_lib::context::account::{
-    AccountDomainError, AccountService, SqliteAccountRepository, SqliteHoldingRepository,
+    AccountApplicationError, AccountService, SqliteAccountRepository, SqliteHoldingRepository,
     SqliteTransactionRepository, TransactionType, UpdateFrequency,
 };
 
@@ -116,9 +116,9 @@ async fn open_holding_account_not_found_propagates() {
         .unwrap_err();
 
     assert!(
-        err.downcast_ref::<AccountDomainError>()
-            .map(|e| matches!(e, AccountDomainError::AccountNotFound(_)))
+        err.downcast_ref::<AccountApplicationError>()
+            .map(|e| matches!(e, AccountApplicationError::AccountNotFound { .. }))
             .unwrap_or(false),
-        "expected AccountDomainError::AccountNotFound, got: {err}"
+        "expected AccountApplicationError::AccountNotFound, got: {err}"
     );
 }

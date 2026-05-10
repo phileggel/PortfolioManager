@@ -209,8 +209,12 @@ async getAssetIdsForAccount(accountId: string) : Promise<Result<string[], Accoun
 },
 /**
  * Retrieves all transactions for an account/asset pair (TRX-036).
+ * 
+ * Read-only — only infrastructure failures (DB / repository) can fire here,
+ * so the surface is a single `InfrastructureError`. The wider
+ * `HoldingTransactionError` composite is reserved for write commands.
  */
-async getTransactions(accountId: string, assetId: string) : Promise<Result<Transaction[], TransactionCommandError>> {
+async getTransactions(accountId: string, assetId: string) : Promise<Result<Transaction[], InfrastructureError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_transactions", { accountId, assetId }) };
 } catch (e) {
@@ -254,7 +258,7 @@ async openHolding(dto: OpenHoldingDTO) : Promise<Result<Transaction, OpenHolding
 /**
  * Records a purchase of an asset into an account (TRX-027).
  */
-async buyHolding(dto: BuyHoldingDTO) : Promise<Result<Transaction, TransactionCommandError>> {
+async buyHolding(dto: BuyHoldingDTO) : Promise<Result<Transaction, HoldingTransactionError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("buy_holding", { dto }) };
 } catch (e) {
@@ -265,7 +269,7 @@ async buyHolding(dto: BuyHoldingDTO) : Promise<Result<Transaction, TransactionCo
 /**
  * Records a sale of an asset from an account (SEL-012, SEL-021, SEL-023, SEL-024).
  */
-async sellHolding(dto: SellHoldingDTO) : Promise<Result<Transaction, TransactionCommandError>> {
+async sellHolding(dto: SellHoldingDTO) : Promise<Result<Transaction, HoldingTransactionError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("sell_holding", { dto }) };
 } catch (e) {
@@ -276,7 +280,7 @@ async sellHolding(dto: SellHoldingDTO) : Promise<Result<Transaction, Transaction
 /**
  * Corrects an existing transaction and recalculates the affected holding (TRX-031).
  */
-async correctTransaction(id: string, accountId: string, dto: CorrectTransactionDTO) : Promise<Result<Transaction, TransactionCommandError>> {
+async correctTransaction(id: string, accountId: string, dto: CorrectTransactionDTO) : Promise<Result<Transaction, HoldingTransactionError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("correct_transaction", { id, accountId, dto }) };
 } catch (e) {
@@ -287,7 +291,7 @@ async correctTransaction(id: string, accountId: string, dto: CorrectTransactionD
 /**
  * Cancels a transaction and recalculates (or removes) the associated holding (TRX-034).
  */
-async cancelTransaction(id: string, accountId: string) : Promise<Result<null, TransactionCommandError>> {
+async cancelTransaction(id: string, accountId: string) : Promise<Result<null, HoldingTransactionError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("cancel_transaction", { id, accountId }) };
 } catch (e) {
@@ -298,14 +302,14 @@ async cancelTransaction(id: string, accountId: string) : Promise<Result<null, Tr
 /**
  * Records a cash deposit into an account (CSH-022).
  * 
- * The Tauri command returns the typed `CashRecordingError` directly — no
+ * The Tauri command returns the typed `HoldingTransactionError` directly — no
  * boundary type or mapper is needed because every leaf in the composite
  * (`AccountApplicationError`, `AccountOperationError`, `TransactionDomainError`,
  * shared `InfrastructureError`) already serializes with `#[serde(tag = "code")]`,
- * and `CashRecordingError`'s `#[serde(untagged)]` flattens them into a
+ * and `HoldingTransactionError`'s `#[serde(untagged)]` flattens them into a
  * single FE-visible union.
  */
-async recordDeposit(dto: DepositDTO) : Promise<Result<Transaction, CashRecordingError>> {
+async recordDeposit(dto: DepositDTO) : Promise<Result<Transaction, HoldingTransactionError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("record_deposit", { dto }) };
 } catch (e) {
@@ -316,7 +320,7 @@ async recordDeposit(dto: DepositDTO) : Promise<Result<Transaction, CashRecording
 /**
  * Records a cash withdrawal from an account (CSH-032).
  */
-async recordWithdrawal(dto: WithdrawalDTO) : Promise<Result<Transaction, CashRecordingError>> {
+async recordWithdrawal(dto: WithdrawalDTO) : Promise<Result<Transaction, HoldingTransactionError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("record_withdrawal", { dto }) };
 } catch (e) {
@@ -481,7 +485,14 @@ export type AccountApplicationError =
  * `account_id` mirrors the (deprecated) `AccountDomainError::AccountNotFound`
  * payload so the diagnostic chain doesn't lose the requested ID.
  */
-{ code: "AccountNotFound"; account_id: string }
+{ code: "AccountNotFound"; account_id: string } | 
+/**
+ * Account name (case-insensitive) collides with an existing one. Born at
+ * the service layer from a `find_by_name` uniqueness pre-check before the
+ * repository write — a cross-aggregate invariant, not a single-aggregate
+ * state rule, so application-class per Rule B'.
+ */
+{ code: "NameAlreadyExists" }
 /**
  * Typed error returned to the frontend for account commands.
  */
@@ -531,8 +542,7 @@ export type AccountDetailsCommandError =
  * 
  * Intentionally a unit variant — unlike the write-path counterparts
  * (`AccountApplicationError::AccountNotFound`,
- * `OpenHoldingCommandError::AccountNotFound`,
- * `TransactionCommandError::AccountNotFound`) which carry
+ * `OpenHoldingCommandError::AccountNotFound`) which carry
  * `{ account_id: String }`, this is a read command: the caller already
  * supplied `account_id` as the query parameter, so echoing it back adds
  * no diagnostic value. Do not cargo-cult-add the field.
@@ -604,11 +614,7 @@ export type AccountOperationError =
 /**
  * Attempted cash debit (or chronological replay step) would drive the cash holding strictly negative (CSH-080).
  */
-{ code: "InsufficientCash"; current_balance_micros: number; currency: string } | 
-/**
- * Deposit / Withdrawal amount was zero or negative (CSH-021, CSH-031).
- */
-{ code: "AmountNotPositive" }
+{ code: "InsufficientCash"; current_balance_micros: number; currency: string }
 /**
  * Typed error returned to the frontend for the archive_asset command.
  */
@@ -856,47 +862,6 @@ fees: number;
  * Optional user note.
  */
 note: string | null }
-/**
- * Service-layer composite for the cash-recording failure-surface-family
- * (`AccountService::record_deposit` and `record_withdrawal`). Replaces the
- * deleted domain-layer `CashOperationError` per Rule B' — composition belongs
- * in the application layer; each leaf retains its single, typed failure
- * source in its proper layer (no cash-prefixed leaf types).
- * 
- * **This IS the FE-facing contract** for cash-recording Tauri commands. No
- * separate boundary type / mapper is needed: the four leaf enums below each
- * derive `Serialize` + `specta::Type` with `#[serde(tag = "code")]`, and
- * `#[serde(untagged)]` here flattens them into a single FE-visible union of
- * `{ code: "...", ... }` discriminated variants.
- * 
- * Each leaf lives in its rightful layer:
- * - `AccountApplicationError` — application layer (`account/application/`)
- * - `AccountOperationError` — domain layer (`account/domain/`)
- * - `TransactionDomainError` — domain layer (`account/domain/`)
- * - `InfrastructureError` — shared catch-all (`core/`)
- * 
- * `CashRecordingError` itself owns no variants; it only enumerates which
- * leaves cash recording can produce.
- */
-export type CashRecordingError = 
-/**
- * Application-layer rejection (`AccountNotFound`).
- */
-AccountApplicationError | 
-/**
- * Aggregate-level domain rejection (`AmountNotPositive`, `InsufficientCash`).
- */
-AccountOperationError | 
-/**
- * Transaction-factory validation rejection (invalid date variants, etc.).
- */
-TransactionDomainError | 
-/**
- * Opaque catch-all for repository / cross-BC infrastructure failures.
- * Wire shape: `{ code: "Unknown", hint: "..." }`. The `hint` mirrors the
- * corresponding `tracing::error!` log; FE shows `error.Unknown`.
- */
-InfrastructureError
 /**
  * Typed error returned to the frontend for category commands.
  */
@@ -1187,9 +1152,61 @@ unrealized_pnl: number | null;
  */
 performance_pct: number | null }
 /**
+ * Service-layer composite for the **holding-transaction** failure surface —
+ * every operation that mutates an Account's holdings ledger:
+ * `record_deposit`, `record_withdrawal`, `buy_holding`, `sell_holding`,
+ * `correct_transaction`, `cancel_transaction`.
+ * 
+ * Cash deposit / withdrawal are the special case where the holding IS the
+ * System Cash Asset (CSH-014); mechanically they share the same aggregate,
+ * the same replay invariants, and therefore the same failure surface. So
+ * they share the composite — one FE-facing type covers all six commands.
+ * 
+ * Replaces the deleted domain-layer `CashOperationError` and the anyhow-era
+ * `TransactionCommandError` boundary type per Rule B' — composition belongs
+ * in the application layer; each leaf retains its single, typed failure
+ * source in its proper layer.
+ * 
+ * **This IS the FE-facing contract** for holding-transaction Tauri commands.
+ * No separate boundary type / mapper is needed: the four leaf enums below
+ * each derive `Serialize` + `specta::Type` with `#[serde(tag = "code")]`, and
+ * `#[serde(untagged)]` here flattens them into a single FE-visible union of
+ * `{ code: "...", ... }` discriminated variants.
+ * 
+ * Each leaf lives in its rightful layer:
+ * - `AccountApplicationError` — application layer (`account/application/`)
+ * - `AccountOperationError` — domain layer (`account/domain/`)
+ * - `TransactionDomainError` — domain layer (`account/domain/`)
+ * - `InfrastructureError` — shared catch-all (`core/`)
+ * 
+ * `HoldingTransactionError` itself owns no variants; it only enumerates which
+ * leaves any holding-transaction command can produce.
+ */
+export type HoldingTransactionError = 
+/**
+ * Application-layer rejection (`AccountNotFound`).
+ */
+AccountApplicationError | 
+/**
+ * Aggregate-level domain rejection (e.g. `InsufficientCash` from
+ * `Account::apply_withdrawal`, `Oversell` from `sell_holding`).
+ */
+AccountOperationError | 
+/**
+ * Transaction-factory validation rejection (invalid date, negative
+ * quantity, `AmountNotPositive` from cash factories, etc.).
+ */
+TransactionDomainError | 
+/**
+ * Opaque catch-all for repository / cross-BC infrastructure failures.
+ * Wire shape: `{ code: "Unknown", hint: "..." }`. The `hint` mirrors the
+ * corresponding `tracing::error!` log; FE shows `error.Unknown`.
+ */
+InfrastructureError
+/**
  * Shared application-wide infrastructure-error type.
  * 
- * Composed into every typed service composite (e.g. `CashRecordingError`)
+ * Composed into every typed service composite (e.g. `HoldingTransactionError`)
  * via `#[from]` so any layer can translate an opaque infrastructure failure
  * (repository crash, file-system error, network failure, deserialization
  * error, cross-BC infra step) into a typed leaf without re-defining the same
@@ -1379,73 +1396,6 @@ realized_pnl: number | null;
  */
 created_at: string }
 /**
- * Typed error returned to the frontend for holding operation commands.
- */
-export type TransactionCommandError = 
-/**
- * No transaction exists with the requested ID.
- */
-{ code: "TransactionNotFound" } | 
-/**
- * No account exists with the requested ID. Wire shape mirrors
- * `AccountApplicationError::AccountNotFound` and
- * `OpenHoldingCommandError::AccountNotFound` for FE consistency across
- * every cash and non-cash command (per PR 2b's tightening).
- */
-{ code: "AccountNotFound"; account_id: string } | 
-/**
- * Sell requested but holding has zero available units.
- */
-{ code: "ClosedPosition" } | 
-/**
- * Sell quantity exceeds currently held units.
- */
-{ code: "Oversell"; available: number; requested: number } | 
-/**
- * Editing would leave a later transaction with insufficient units.
- */
-{ code: "CascadingOversell" } | 
-/**
- * Cash debit (or replay step) would drive the cash holding strictly negative (CSH-080).
- */
-{ code: "InsufficientCash"; current_balance_micros: number; currency: string } | 
-/**
- * Date string could not be parsed as YYYY-MM-DD.
- */
-{ code: "InvalidDate" } | 
-/**
- * Transaction date is in the future.
- */
-{ code: "DateInFuture" } | 
-/**
- * Transaction date is before 1900-01-01.
- */
-{ code: "DateTooOld" } | 
-/**
- * Quantity is zero or negative.
- */
-{ code: "QuantityNotPositive" } | 
-/**
- * Unit price is negative.
- */
-{ code: "UnitPriceNegative" } | 
-/**
- * Fees amount is negative.
- */
-{ code: "FeesNegative" } | 
-/**
- * Exchange rate is zero or negative.
- */
-{ code: "ExchangeRateNotPositive" } | 
-/**
- * Total amount is zero or negative.
- */
-{ code: "TotalAmountNotPositive" } | 
-/**
- * An unexpected server-side error occurred.
- */
-{ code: "Unknown" }
-/**
  * Typed errors for transaction domain validation (TRX-020).
  * 
  * Derives `Serialize + specta::Type + #[serde(tag = "code")]` so it can be exposed
@@ -1469,6 +1419,14 @@ export type TransactionDomainError =
  * Quantity is zero or negative.
  */
 { code: "QuantityNotPositive" } | 
+/**
+ * Cash deposit/withdrawal amount was zero or negative (CSH-021/CSH-031).
+ * Cash-specific framing of the same TRX-020 constraint that surfaces as
+ * `QuantityNotPositive` for non-cash transactions; raised by the cash
+ * factories (`Transaction::new_deposit` / `new_withdrawal`) BEFORE the
+ * generic check, so the FE sees the cash-specific error code.
+ */
+{ code: "AmountNotPositive" } | 
 /**
  * Unit price is negative.
  */

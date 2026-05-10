@@ -3,8 +3,8 @@
 
 use super::HoldingTransactionUseCase;
 use crate::context::account::{
-    to_transaction_error, AccountDomainError, CashRecordingError, OpeningBalanceDomainError,
-    Transaction, TransactionCommandError, TransactionDomainError,
+    AccountApplicationError, HoldingTransactionError, OpeningBalanceDomainError, Transaction,
+    TransactionDomainError,
 };
 use crate::core::logger::BACKEND;
 use serde::{Deserialize, Serialize};
@@ -119,18 +119,19 @@ fn to_open_holding_error(e: anyhow::Error) -> OpenHoldingCommandError {
             }
         };
     }
-    if let Some(err) = e.downcast_ref::<AccountDomainError>() {
+    if let Some(err) = e.downcast_ref::<AccountApplicationError>() {
         return match err {
-            AccountDomainError::AccountNotFound(account_id) => {
+            AccountApplicationError::AccountNotFound { account_id } => {
                 OpenHoldingCommandError::AccountNotFound {
                     account_id: account_id.clone(),
                 }
             }
-            // NameEmpty / NameAlreadyExists / InvalidCurrency cannot fire from open_holding.
-            _ => {
-                tracing::error!(target: BACKEND, err = ?err, "BUG: unexpected AccountDomainError in open_holding command");
+            // NameAlreadyExists cannot fire from open_holding — it's raised
+            // only by the create/update name-uniqueness pre-check.
+            AccountApplicationError::NameAlreadyExists => {
+                tracing::error!(target: BACKEND, err = ?err, "BUG: NameAlreadyExists in open_holding command");
                 OpenHoldingCommandError::Unknown {
-                    hint: format!("BUG: unexpected AccountDomainError::{err:?} in open_holding"),
+                    hint: "BUG: NameAlreadyExists in open_holding".to_string(),
                 }
             }
         };
@@ -144,7 +145,7 @@ fn to_open_holding_error(e: anyhow::Error) -> OpenHoldingCommandError {
 }
 
 // =============================================================================
-// Buy / Sell / Correct — DTOs (shared TransactionCommandError)
+// Buy / Sell / Correct — DTOs (shared HoldingTransactionError composite)
 // =============================================================================
 
 /// Parameters for recording a purchase of an asset into an account.
@@ -235,7 +236,7 @@ pub async fn open_holding(
 pub async fn buy_holding(
     uc: State<'_, HoldingTransactionUseCase>,
     dto: BuyHoldingDTO,
-) -> Result<Transaction, TransactionCommandError> {
+) -> Result<Transaction, HoldingTransactionError> {
     uc.buy_holding(
         &dto.account_id,
         dto.asset_id,
@@ -247,7 +248,6 @@ pub async fn buy_holding(
         dto.note,
     )
     .await
-    .map_err(to_transaction_error)
 }
 
 /// Records a sale of an asset from an account (SEL-012, SEL-021, SEL-023, SEL-024).
@@ -256,7 +256,7 @@ pub async fn buy_holding(
 pub async fn sell_holding(
     uc: State<'_, HoldingTransactionUseCase>,
     dto: SellHoldingDTO,
-) -> Result<Transaction, TransactionCommandError> {
+) -> Result<Transaction, HoldingTransactionError> {
     uc.sell_holding(
         &dto.account_id,
         dto.asset_id,
@@ -268,7 +268,6 @@ pub async fn sell_holding(
         dto.note,
     )
     .await
-    .map_err(to_transaction_error)
 }
 
 /// Corrects an existing transaction and recalculates the affected holding (TRX-031).
@@ -279,7 +278,7 @@ pub async fn correct_transaction(
     id: String,
     account_id: String,
     dto: CorrectTransactionDTO,
-) -> Result<Transaction, TransactionCommandError> {
+) -> Result<Transaction, HoldingTransactionError> {
     uc.correct_transaction(
         &account_id,
         &id,
@@ -291,7 +290,6 @@ pub async fn correct_transaction(
         dto.note,
     )
     .await
-    .map_err(to_transaction_error)
 }
 
 /// Cancels a transaction and recalculates (or removes) the associated holding (TRX-034).
@@ -301,10 +299,8 @@ pub async fn cancel_transaction(
     uc: State<'_, HoldingTransactionUseCase>,
     id: String,
     account_id: String,
-) -> Result<(), TransactionCommandError> {
-    uc.cancel_transaction(&account_id, &id)
-        .await
-        .map_err(to_transaction_error)
+) -> Result<(), HoldingTransactionError> {
+    uc.cancel_transaction(&account_id, &id).await
 }
 
 // =============================================================================
@@ -339,18 +335,18 @@ pub struct WithdrawalDTO {
 
 /// Records a cash deposit into an account (CSH-022).
 ///
-/// The Tauri command returns the typed `CashRecordingError` directly — no
+/// The Tauri command returns the typed `HoldingTransactionError` directly — no
 /// boundary type or mapper is needed because every leaf in the composite
 /// (`AccountApplicationError`, `AccountOperationError`, `TransactionDomainError`,
 /// shared `InfrastructureError`) already serializes with `#[serde(tag = "code")]`,
-/// and `CashRecordingError`'s `#[serde(untagged)]` flattens them into a
+/// and `HoldingTransactionError`'s `#[serde(untagged)]` flattens them into a
 /// single FE-visible union.
 #[tauri::command]
 #[specta::specta]
 pub async fn record_deposit(
     uc: State<'_, HoldingTransactionUseCase>,
     dto: DepositDTO,
-) -> Result<Transaction, CashRecordingError> {
+) -> Result<Transaction, HoldingTransactionError> {
     uc.record_deposit(&dto.account_id, dto.date, dto.amount_micros, dto.note)
         .await
 }
@@ -361,7 +357,7 @@ pub async fn record_deposit(
 pub async fn record_withdrawal(
     uc: State<'_, HoldingTransactionUseCase>,
     dto: WithdrawalDTO,
-) -> Result<Transaction, CashRecordingError> {
+) -> Result<Transaction, HoldingTransactionError> {
     uc.record_withdrawal(&dto.account_id, dto.date, dto.amount_micros, dto.note)
         .await
 }

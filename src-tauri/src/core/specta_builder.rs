@@ -27,7 +27,8 @@ pub fn create_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .typ::<account::AccountCommandError>()
         .typ::<account::Transaction>()
         .typ::<account::TransactionType>()
-        .typ::<account::TransactionCommandError>()
+        .typ::<account::HoldingTransactionError>()
+        .typ::<crate::core::InfrastructureError>()
         // ----- use cases -----
         .typ::<archive_asset::ArchiveAssetCommandError>()
         .typ::<delete_asset::DeleteAssetCommandError>()
@@ -38,7 +39,6 @@ pub fn create_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .typ::<holding_transaction::OpenHoldingCommandError>()
         .typ::<holding_transaction::DepositDTO>()
         .typ::<holding_transaction::WithdrawalDTO>()
-        .typ::<crate::context::account::CashRecordingError>()
         .typ::<account_details::HoldingDetail>()
         .typ::<account_details::ClosedHoldingDetail>()
         .typ::<account_details::AccountDetailsResponse>()

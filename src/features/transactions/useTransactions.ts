@@ -3,9 +3,9 @@ import { useTranslation } from "react-i18next";
 import type {
   BuyHoldingDTO,
   CorrectTransactionDTO,
+  HoldingTransactionError,
   SellHoldingDTO,
   Transaction,
-  TransactionCommandError,
 } from "@/bindings";
 import { logger } from "@/lib/logger";
 import { microToFormatted } from "@/lib/microUnits";
@@ -21,7 +21,7 @@ export function useTransactions() {
   // CSH-081 — InsufficientCash carries a balance + currency payload that must be
   // surfaced inline. All other errors round-trip via their legacy translation key.
   const formatError = useCallback(
-    (err: TransactionCommandError): string => {
+    (err: HoldingTransactionError): string => {
       if (err.code === "InsufficientCash") {
         return t("cash.insufficient_cash_inline", {
           balance: microToFormatted(err.current_balance_micros, 2),

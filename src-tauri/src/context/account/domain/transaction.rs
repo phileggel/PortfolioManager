@@ -70,7 +70,7 @@ impl Transaction {
     /// Creates a new Transaction with a generated ID.
     /// Validates TRX-020 and TRX-026. Returns a typed `TransactionDomainError`
     /// so callers can propagate it through typed unions (e.g. the application-
-    /// layer `CashRecordingError` composed by `AccountService::record_deposit`).
+    /// layer `HoldingTransactionError` composed by `AccountService::record_deposit`).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         account_id: String,
