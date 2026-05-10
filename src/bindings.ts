@@ -247,7 +247,7 @@ async deleteAsset(id: string) : Promise<Result<null, DeleteAssetCommandError>> {
 /**
  * Seeds a holding directly from a known quantity and total cost (TRX-042, TRX-047).
  */
-async openHolding(dto: OpenHoldingDTO) : Promise<Result<Transaction, OpenHoldingCommandError>> {
+async openHolding(dto: OpenHoldingDTO) : Promise<Result<Transaction, OpenHoldingError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("open_holding", { dto }) };
 } catch (e) {
@@ -1231,53 +1231,35 @@ export type InfrastructureError =
  */
 { code: "Unknown"; hint: string }
 /**
- * Typed error returned to the frontend for the open_holding command.
+ * Application-layer rejections specific to the `open_holding` use case —
+ * cross-BC asset checks performed by the orchestrator before delegating to
+ * `AccountService::open_holding`.
+ * 
+ * Per Rule B' (`docs/plan/error-model-refactor.md`): an error is **domain**
+ * only if raised by an aggregate method on its own loaded state. These three
+ * rejections are use-case orchestration concerns (the orchestrator queries
+ * the asset service and decides whether to proceed) — application-class.
+ * 
+ * Tagged with `#[serde(tag = "code")]` so it serializes verbatim across the
+ * Tauri boundary into a flat `{ code: "..." }` shape.
  */
-export type OpenHoldingCommandError = 
+export type OpenHoldingApplicationError = 
 /**
- * No account exists with the requested ID. Wire shape mirrors
- * `AccountApplicationError::AccountNotFound` for FE consistency across
- * every cash and non-cash command (per PR 2b's tightening).
- */
-{ code: "AccountNotFound"; account_id: string } | 
-/**
- * No asset exists with the requested ID.
+ * No asset exists with the requested ID (TRX-056).
  */
 { code: "AssetNotFound" } | 
 /**
- * Asset is archived — cannot open a holding (TRX-050).
+ * Target asset is archived — cannot open a holding (TRX-050).
+ * The orchestrator does not auto-unarchive; the caller must unarchive
+ * explicitly through the asset BC first.
  */
 { code: "ArchivedAsset" } | 
 /**
- * Target asset is a system Cash Asset — record initial cash via `record_deposit` (CSH-061).
+ * Target asset is a system Cash Asset (CSH-061). Initial cash should be
+ * recorded via `record_deposit`, which goes through the cash-recording
+ * path and lazy-creates the Cash Holding.
  */
-{ code: "OpeningBalanceOnCashAsset" } | 
-/**
- * Total cost is zero or negative (TRX-045).
- */
-{ code: "InvalidTotalCost" } | 
-/**
- * Quantity is zero or negative (TRX-044).
- */
-{ code: "QuantityNotPositive" } | 
-/**
- * Date string could not be parsed as YYYY-MM-DD.
- */
-{ code: "InvalidDate" } | 
-/**
- * Transaction date is in the future.
- */
-{ code: "DateInFuture" } | 
-/**
- * Transaction date is before 1900-01-01.
- */
-{ code: "DateTooOld" } | 
-/**
- * An unexpected server-side error occurred. `hint` carries a developer-only
- * diagnostic string mirroring the `tracing::error!` log so support reports
- * can be triaged without correlating timestamps.
- */
-{ code: "Unknown"; hint: string }
+{ code: "OpeningBalanceOnCashAsset" }
 /**
  * Parameters for recording an opening balance for an asset in an account (TRX-042).
  */
@@ -1302,6 +1284,68 @@ quantity: number;
  * Total cost paid in account currency (micro-units); strictly positive (TRX-045).
  */
 total_cost: number }
+/**
+ * Use-case composite for the **open holding** failure surface — the single
+ * command `open_holding` (TRX-042) and its full chain of rejections. Replaces
+ * the anyhow-era `OpenHoldingCommandError` boundary type per Rule B' —
+ * composition belongs in the use-case layer; each leaf retains its single,
+ * typed failure source in its proper layer.
+ * 
+ * **This IS the FE-facing contract** for the `open_holding` Tauri command.
+ * No separate boundary type / mapper is needed: each leaf below derives
+ * `Serialize` + `specta::Type` with `#[serde(tag = "code")]`, and
+ * `#[serde(untagged)]` here flattens them into a single FE-visible union of
+ * `{ code: "...", ... }` discriminated variants.
+ * 
+ * Each leaf lives in its rightful layer:
+ * - `AccountApplicationError` — application layer (`account/application/`),
+ * raises `AccountNotFound { account_id }` from the service-layer load.
+ * - `OpenHoldingApplicationError` — use-case-owned (this file), raises the
+ * 3 cross-BC rejections (`AssetNotFound`, `ArchivedAsset`,
+ * `OpeningBalanceOnCashAsset`).
+ * - `OpeningBalanceDomainError` — domain layer (`account/domain/`), raises
+ * `InvalidTotalCost` from `Account::open_holding` on its own input.
+ * - `TransactionDomainError` — domain layer (`account/domain/`), raises
+ * the date / quantity invariants enforced by `Transaction::new`.
+ * - `InfrastructureError` — shared catch-all (`core/`), opaques repository /
+ * cross-BC asset-service infrastructure failures.
+ * 
+ * `OpenHoldingError` itself owns no variants; it only enumerates which
+ * leaves the open_holding command can produce.
+ */
+export type OpenHoldingError = 
+/**
+ * Service-layer rejection (`AccountNotFound`).
+ */
+AccountApplicationError | 
+/**
+ * Use-case-layer rejection (cross-BC asset checks).
+ */
+OpenHoldingApplicationError | 
+/**
+ * Aggregate-level domain rejection (`InvalidTotalCost`).
+ */
+OpeningBalanceDomainError | 
+/**
+ * Transaction-factory validation rejection (invalid date, negative
+ * quantity, etc. — subset of variants reachable from `open_holding`).
+ */
+TransactionDomainError | 
+/**
+ * Opaque catch-all for repository / cross-BC asset-service failures.
+ * Wire shape: `{ code: "Unknown", hint: "..." }`. The `hint` mirrors the
+ * corresponding `tracing::error!` log; FE shows `error.Unknown`.
+ */
+InfrastructureError
+/**
+ * Aggregate-level domain rejection raised by `Account::open_holding` on its
+ * own input — currently only the `total_cost > 0` invariant (TRX-045).
+ */
+export type OpeningBalanceDomainError = 
+/**
+ * total_cost was zero or negative (TRX-045).
+ */
+{ code: "InvalidTotalCost" }
 /**
  * Parameters for recording a sale of an asset from an account.
  */

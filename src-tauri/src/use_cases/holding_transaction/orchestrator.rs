@@ -1,11 +1,10 @@
+use super::error::{OpenHoldingApplicationError, OpenHoldingError};
 use super::shared::ensure_cash_asset;
 use crate::context::account::{
-    AccountApplicationError, AccountService, HoldingTransactionError, OpeningBalanceDomainError,
-    Transaction,
+    AccountApplicationError, AccountService, HoldingTransactionError, Transaction,
 };
 use crate::context::asset::{AssetClass, AssetService};
 use crate::core::{logger::BACKEND, InfrastructureError};
-use anyhow::Result;
 use std::sync::Arc;
 
 /// Single orchestrator for every operation that mutates a `Holding` through a `Transaction`:
@@ -31,8 +30,13 @@ impl HoldingTransactionUseCase {
 
     /// Seeds a holding from a known quantity and total cost (TRX-042).
     ///
-    /// Cross-BC guard: rejects the request if the asset does not exist or is archived
-    /// (TRX-050, TRX-056). Delegates the account-side write to `AccountService::open_holding`.
+    /// Cross-BC guard: rejects the request if the asset does not exist
+    /// (TRX-056), is archived (TRX-050), or is a system Cash Asset (CSH-061).
+    /// Delegates the account-side write to `AccountService::open_holding`.
+    /// Returns the typed `OpenHoldingError` composite — every leaf is in its
+    /// rightful layer: cross-BC checks raise `UseCase(OpenHoldingApplicationError)`;
+    /// asset-service repo failures opaque to `Infrastructure(Unknown)`; the
+    /// account-side slice flows through unchanged.
     pub async fn open_holding(
         &self,
         account_id: &str,
@@ -40,14 +44,26 @@ impl HoldingTransactionUseCase {
         date: String,
         quantity: i64,
         total_cost: i64,
-    ) -> Result<Transaction> {
-        match self.asset_service.get_asset_by_id(&asset_id).await? {
-            None => return Err(OpeningBalanceDomainError::AssetNotFound.into()),
-            Some(a) if a.is_archived => return Err(OpeningBalanceDomainError::ArchivedAsset.into()),
+    ) -> std::result::Result<Transaction, OpenHoldingError> {
+        let asset = self
+            .asset_service
+            .get_asset_by_id(&asset_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(target: BACKEND, asset_id = %asset_id, err = ?e, "open_holding: get_asset_by_id failed");
+                InfrastructureError::Unknown {
+                    hint: format!("get_asset_by_id (open_holding): {e:#}"),
+                }
+            })?;
+        match asset {
+            None => return Err(OpenHoldingApplicationError::AssetNotFound.into()),
+            Some(a) if a.is_archived => {
+                return Err(OpenHoldingApplicationError::ArchivedAsset.into())
+            }
             // CSH-061 — Cash Assets cannot be seeded via OpeningBalance; user records
             // initial cash via `record_deposit` instead.
             Some(a) if a.class == AssetClass::Cash => {
-                return Err(OpeningBalanceDomainError::OpeningBalanceOnCashAsset.into())
+                return Err(OpenHoldingApplicationError::OpeningBalanceOnCashAsset.into())
             }
             Some(_) => {}
         }
@@ -219,7 +235,11 @@ impl HoldingTransactionUseCase {
             .get_by_id(account_id)
             .await
             .map_err(|e| {
-                tracing::error!(target: BACKEND, account_id = %account_id, op = op, err = ?e, "ensure_cash_for: get_by_id failed");
+                tracing::error!(target: BACKEND, account_id = %account_id, op = %op, err = ?e, "ensure_cash_for: get_by_id failed");
+                // Returns InfrastructureError; the trailing `?` drives
+                // From<InfrastructureError> for HoldingTransactionError. Adding
+                // an explicit `.into()` here would force inference between two
+                // valid From paths and fail to compile.
                 InfrastructureError::Unknown {
                     hint: format!("get_by_id ({op}): {e:#}"),
                 }
@@ -230,7 +250,7 @@ impl HoldingTransactionUseCase {
         ensure_cash_asset(&self.asset_service, &account.currency)
             .await
             .map_err(|e| {
-                tracing::error!(target: BACKEND, account_id = %account_id, op = op, err = ?e, "ensure_cash_for: ensure_cash_asset failed");
+                tracing::error!(target: BACKEND, account_id = %account_id, op = %op, err = ?e, "ensure_cash_for: ensure_cash_asset failed");
                 InfrastructureError::Unknown {
                     hint: format!("ensure_cash_asset ({op}): {e:#}"),
                 }
@@ -321,10 +341,11 @@ mod tests {
             .unwrap_err();
 
         assert!(
-            err.downcast_ref::<OpeningBalanceDomainError>()
-                .map(|e| matches!(e, OpeningBalanceDomainError::AssetNotFound))
-                .unwrap_or(false),
-            "expected AssetNotFound, got: {err}"
+            matches!(
+                err,
+                OpenHoldingError::UseCase(OpenHoldingApplicationError::AssetNotFound)
+            ),
+            "expected UseCase(AssetNotFound), got: {err:?}"
         );
     }
 
@@ -357,10 +378,11 @@ mod tests {
             .unwrap_err();
 
         assert!(
-            err.downcast_ref::<OpeningBalanceDomainError>()
-                .map(|e| matches!(e, OpeningBalanceDomainError::ArchivedAsset))
-                .unwrap_or(false),
-            "expected ArchivedAsset, got: {err}"
+            matches!(
+                err,
+                OpenHoldingError::UseCase(OpenHoldingApplicationError::ArchivedAsset)
+            ),
+            "expected UseCase(ArchivedAsset), got: {err:?}"
         );
     }
 
@@ -393,10 +415,11 @@ mod tests {
             .unwrap_err();
 
         assert!(
-            err.downcast_ref::<OpeningBalanceDomainError>()
-                .map(|e| matches!(e, OpeningBalanceDomainError::OpeningBalanceOnCashAsset))
-                .unwrap_or(false),
-            "expected OpeningBalanceOnCashAsset, got: {err}"
+            matches!(
+                err,
+                OpenHoldingError::UseCase(OpenHoldingApplicationError::OpeningBalanceOnCashAsset)
+            ),
+            "expected UseCase(OpeningBalanceOnCashAsset), got: {err:?}"
         );
     }
 

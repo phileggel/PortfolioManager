@@ -7,10 +7,13 @@
 
 /// Tauri command handlers for transaction-recording operations.
 mod api;
+/// Use-case-owned typed errors (composite + application leaf).
+mod error;
 /// Cross-BC orchestrator (one struct, one method per operation).
 mod orchestrator;
 /// Shared helpers used by the orchestrator.
 mod shared;
 
 pub use api::*;
+pub use error::{OpenHoldingApplicationError, OpenHoldingError};
 pub use orchestrator::HoldingTransactionUseCase;

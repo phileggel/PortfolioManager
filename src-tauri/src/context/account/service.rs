@@ -270,7 +270,12 @@ impl AccountService {
     /// Seeds a holding directly from a quantity and total cost (TRX-042, TRX-047).
     ///
     /// Asset existence and archived-status checks are the caller's responsibility
-    /// (handled by OpenHoldingUseCase — TRX-050, TRX-056).
+    /// (handled by `HoldingTransactionUseCase::open_holding` — TRX-050, TRX-056).
+    /// Returns the use-case-owned `OpenHoldingError`; the service-internal slice
+    /// (load + aggregate + save) raises `Application(AccountNotFound)`,
+    /// `Validation(InvalidTotalCost)`, `TxValidation(...)`, or
+    /// `Infrastructure(Unknown)`. Cross-BC asset rejections never reach this
+    /// method — the orchestrator raises them before delegating.
     pub async fn open_holding(
         &self,
         account_id: &str,
@@ -278,19 +283,15 @@ impl AccountService {
         date: String,
         quantity: i64,
         total_cost: i64,
-    ) -> Result<Transaction> {
-        let mut account = self
-            .account_repo
-            .get_with_holdings_and_transactions(account_id)
-            .await?
-            .ok_or_else(|| AccountApplicationError::AccountNotFound {
-                account_id: account_id.to_string(),
-            })?;
+    ) -> std::result::Result<Transaction, crate::use_cases::holding_transaction::OpenHoldingError>
+    {
         info!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, "open_holding");
+        let mut account = load_account_for_open_holding(&*self.account_repo, account_id).await?;
         let tx = account
-            .open_holding(asset_id, date, quantity, total_cost)?
+            .open_holding(asset_id, date, quantity, total_cost)
+            .map_err(to_open_holding_error)?
             .clone();
-        self.account_repo.save(&mut account).await?;
+        save_account_for_open_holding(&*self.account_repo, &mut account).await?;
         self.emit_transaction_updated();
         Ok(tx)
     }
@@ -398,11 +399,10 @@ impl AccountService {
     }
 }
 
-/// Loads an Account aggregate (with holdings + transactions) for a typed
-/// cash-recording flow. Translates repository failures into typed
+/// Loads an Account aggregate (with holdings + transactions) for the
+/// holding-transaction family. Translates repository failures into typed
 /// `HoldingTransactionError` variants — `AccountNotFound` for `Ok(None)`,
-/// `Infrastructure` for any anyhow error (the underlying error is logged
-/// before being opaqued).
+/// `Infrastructure` for any anyhow error (logged before being opaqued).
 async fn load_account(
     repo: &dyn AccountRepository,
     account_id: &str,
@@ -423,8 +423,8 @@ async fn load_account(
     }
 }
 
-/// Persists an Account aggregate's pending changes for a typed cash-recording
-/// flow. Translates repository failures into the shared
+/// Persists an Account aggregate's pending changes for the holding-transaction
+/// family. Translates repository failures into the shared
 /// `InfrastructureError::Unknown { hint }` (composed into `HoldingTransactionError`
 /// via `#[from]`) after logging the underlying error.
 async fn save_account(
@@ -435,6 +435,41 @@ async fn save_account(
         tracing::error!(target: BACKEND, account_id = %account.id, err = ?e, "save_account: repository failure");
         InfrastructureError::Unknown {
             hint: format!("save_account: {e:#}"),
+        }
+        .into()
+    })
+}
+
+/// Open-holding parallel to `load_account`. Same shape; targets `OpenHoldingError`.
+async fn load_account_for_open_holding(
+    repo: &dyn AccountRepository,
+    account_id: &str,
+) -> std::result::Result<Account, crate::use_cases::holding_transaction::OpenHoldingError> {
+    match repo.get_with_holdings_and_transactions(account_id).await {
+        Ok(Some(acc)) => Ok(acc),
+        Ok(None) => Err(AccountApplicationError::AccountNotFound {
+            account_id: account_id.to_string(),
+        }
+        .into()),
+        Err(e) => {
+            tracing::error!(target: BACKEND, account_id = %account_id, err = ?e, "load_account_for_open_holding: repository failure");
+            Err(InfrastructureError::Unknown {
+                hint: format!("load_account_for_open_holding: {e:#}"),
+            }
+            .into())
+        }
+    }
+}
+
+/// Open-holding parallel to `save_account`. Same shape; targets `OpenHoldingError`.
+async fn save_account_for_open_holding(
+    repo: &dyn AccountRepository,
+    account: &mut Account,
+) -> std::result::Result<(), crate::use_cases::holding_transaction::OpenHoldingError> {
+    repo.save(account).await.map_err(|e| {
+        tracing::error!(target: BACKEND, account_id = %account.id, err = ?e, "save_account_for_open_holding: repository failure");
+        InfrastructureError::Unknown {
+            hint: format!("save_account_for_open_holding: {e:#}"),
         }
         .into()
     })
@@ -462,6 +497,28 @@ fn to_holding_tx_error(e: anyhow::Error) -> HoldingTransactionError {
     tracing::error!(target: BACKEND, err = ?e, "unexpected error in holding-tx service method");
     InfrastructureError::Unknown {
         hint: format!("holding-tx aggregate: {e:#}"),
+    }
+    .into()
+}
+
+/// Bridge for the open_holding aggregate method, which still returns
+/// `anyhow::Result` and can raise `OpeningBalanceDomainError::InvalidTotalCost`
+/// or any `TransactionDomainError` reachable from `Transaction::new`. Same
+/// shape as `to_holding_tx_error`; targets `OpenHoldingError` instead.
+fn to_open_holding_error(
+    e: anyhow::Error,
+) -> crate::use_cases::holding_transaction::OpenHoldingError {
+    let e = match e.downcast::<super::domain::OpeningBalanceDomainError>() {
+        Ok(err) => return err.into(),
+        Err(e) => e,
+    };
+    let e = match e.downcast::<TransactionDomainError>() {
+        Ok(err) => return err.into(),
+        Err(e) => e,
+    };
+    tracing::error!(target: BACKEND, err = ?e, "unexpected error in open_holding service method");
+    InfrastructureError::Unknown {
+        hint: format!("open_holding aggregate: {e:#}"),
     }
     .into()
 }
@@ -513,6 +570,45 @@ mod tests {
         // Anything else → Infrastructure(Unknown) with the message in the hint
         match to_holding_tx_error(anyhow::anyhow!("synthetic infra failure")) {
             HoldingTransactionError::Infrastructure(InfrastructureError::Unknown { hint }) => {
+                assert!(
+                    hint.contains("synthetic infra failure"),
+                    "hint should embed the underlying error, got: {hint}"
+                );
+            }
+            other => panic!("expected Infrastructure(Unknown), got: {other:?}"),
+        }
+    }
+
+    // PR 4 — to_open_holding_error is the anyhow→typed bridge for
+    // `Account::open_holding` (which still returns `anyhow::Result`). One
+    // global test covers the three branches: known domain leaves
+    // (OpeningBalanceDomainError, TransactionDomainError) route to their
+    // typed variants; unrecognized errors opaque to Infrastructure(Unknown)
+    // with the underlying message in the hint.
+    #[test]
+    fn to_open_holding_error_maps_every_branch() {
+        use crate::context::account::OpeningBalanceDomainError;
+        use crate::use_cases::holding_transaction::OpenHoldingError;
+
+        // OpeningBalanceDomainError leaf → Validation
+        assert!(matches!(
+            to_open_holding_error(anyhow::Error::new(
+                OpeningBalanceDomainError::InvalidTotalCost
+            )),
+            OpenHoldingError::Validation(OpeningBalanceDomainError::InvalidTotalCost)
+        ));
+
+        // TransactionDomainError leaf → TxValidation
+        assert!(matches!(
+            to_open_holding_error(anyhow::Error::new(
+                TransactionDomainError::QuantityNotPositive
+            )),
+            OpenHoldingError::TxValidation(TransactionDomainError::QuantityNotPositive)
+        ));
+
+        // Anything else → Infrastructure(Unknown) with the message in the hint
+        match to_open_holding_error(anyhow::anyhow!("synthetic infra failure")) {
+            OpenHoldingError::Infrastructure(InfrastructureError::Unknown { hint }) => {
                 assert!(
                     hint.contains("synthetic infra failure"),
                     "hint should embed the underlying error, got: {hint}"
@@ -1008,11 +1104,13 @@ mod tests {
             )
             .await
             .unwrap_err();
+        use crate::use_cases::holding_transaction::OpenHoldingError;
         assert!(
-            err.downcast_ref::<AccountApplicationError>()
-                .map(|e| matches!(e, AccountApplicationError::AccountNotFound { .. }))
-                .unwrap_or(false),
-            "expected AccountApplicationError::AccountNotFound, got: {err}"
+            matches!(
+                err,
+                OpenHoldingError::Application(AccountApplicationError::AccountNotFound { .. })
+            ),
+            "expected Application(AccountNotFound), got: {err:?}"
         );
     }
 
@@ -1042,11 +1140,13 @@ mod tests {
             .unwrap_err();
 
         use crate::context::account::TransactionDomainError;
+        use crate::use_cases::holding_transaction::OpenHoldingError;
         assert!(
-            err.downcast_ref::<TransactionDomainError>()
-                .map(|e| matches!(e, TransactionDomainError::QuantityNotPositive))
-                .unwrap_or(false),
-            "expected QuantityNotPositive, got: {err}"
+            matches!(
+                err,
+                OpenHoldingError::TxValidation(TransactionDomainError::QuantityNotPositive)
+            ),
+            "expected TxValidation(QuantityNotPositive), got: {err:?}"
         );
     }
 
@@ -1054,6 +1154,7 @@ mod tests {
     #[tokio::test]
     async fn test_open_holding_propagates_invalid_total_cost() {
         use crate::context::account::OpeningBalanceDomainError;
+        use crate::use_cases::holding_transaction::OpenHoldingError;
         let pool = make_pool().await;
         let (svc, asset_id) = setup(&pool).await;
         let account = svc
@@ -1077,10 +1178,11 @@ mod tests {
             .unwrap_err();
 
         assert!(
-            err.downcast_ref::<OpeningBalanceDomainError>()
-                .map(|e| matches!(e, OpeningBalanceDomainError::InvalidTotalCost))
-                .unwrap_or(false),
-            "expected InvalidTotalCost, got: {err}"
+            matches!(
+                err,
+                OpenHoldingError::Validation(OpeningBalanceDomainError::InvalidTotalCost)
+            ),
+            "expected Validation(InvalidTotalCost), got: {err:?}"
         );
     }
 
