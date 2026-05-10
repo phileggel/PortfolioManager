@@ -15,8 +15,7 @@ pub enum AccountDetailsCommandError {
     ///
     /// Intentionally a unit variant — unlike the write-path counterparts
     /// (`AccountApplicationError::AccountNotFound`,
-    /// `OpenHoldingCommandError::AccountNotFound`,
-    /// `TransactionCommandError::AccountNotFound`) which carry
+    /// `OpenHoldingCommandError::AccountNotFound`) which carry
     /// `{ account_id: String }`, this is a read command: the caller already
     /// supplied `account_id` as the query parameter, so echoing it back adds
     /// no diagnostic value. Do not cargo-cult-add the field.

@@ -7,19 +7,22 @@
 #[derive(Debug, thiserror::Error, serde::Serialize, specta::Type, Clone)]
 #[serde(tag = "code")]
 pub enum AccountDomainError {
-    /// Account name is empty or whitespace-only.
+    /// Account name is empty or whitespace-only. Raised by the `Account`
+    /// aggregate constructor on its own input — value-object validation,
+    /// domain-class per Rule B'.
     #[error("Account name cannot be empty")]
     NameEmpty,
-    /// An account with the same name (case-insensitive) already exists.
-    #[error("An account with this name already exists")]
-    NameAlreadyExists,
-    /// The currency string is not a valid ISO 4217 code.
+    /// The currency string is not a valid ISO 4217 code. Raised by the
+    /// `Account` aggregate constructor on its own input.
     #[error("Invalid currency code: {0}")]
     InvalidCurrency(String),
-    /// No account exists with the requested ID.
-    #[error("Account not found: {0}")]
-    AccountNotFound(String),
 }
+
+// `AccountDomainError::NameAlreadyExists` and `AccountNotFound` were migrated
+// to `AccountApplicationError` in PR `refactor/holding-transaction-typed-error`.
+// Both are service-layer rejections (uniqueness pre-check / repository
+// `Ok(None)`), not single-aggregate state rules — application-class per
+// Rule B' (`docs/plan/error-model-refactor.md`).
 
 /// Typed errors raised during holding validation.
 #[derive(Debug, thiserror::Error, serde::Serialize, specta::Type, Clone)]
@@ -93,7 +96,7 @@ pub enum AccountOperationError {
 // `CashOperationError` was deleted in PR `refactor/cash-typed-result`. Its
 // purpose — unifying the two failure sources of `Account::record_deposit` —
 // no longer exists at this layer: cash recording is now composed at the
-// application layer via `CashRecordingError` (in `application/error.rs`).
+// application layer via `HoldingTransactionError` (in `application/error.rs`).
 // Each domain leaf (`AccountOperationError`, `TransactionDomainError`) is
 // raised by exactly one method and travels up unwrapped. See Rule B' in
 // `docs/plan/error-model-refactor.md`.

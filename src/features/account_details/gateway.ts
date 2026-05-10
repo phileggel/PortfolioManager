@@ -3,9 +3,9 @@ import type {
   AccountDetailsResponse,
   AssetPrice,
   AssetPriceCommandError,
-  CashRecordingError,
   DeleteAssetPriceCommandError,
   DepositDTO,
+  HoldingTransactionError,
   OpenHoldingCommandError,
   OpenHoldingDTO,
   Result,
@@ -54,11 +54,13 @@ export const accountDetailsGateway = {
     return commands.openHolding(dto);
   },
 
-  async recordDeposit(dto: DepositDTO): Promise<Result<Transaction, CashRecordingError>> {
+  async recordDeposit(dto: DepositDTO): Promise<Result<Transaction, HoldingTransactionError>> {
     return commands.recordDeposit(dto);
   },
 
-  async recordWithdrawal(dto: WithdrawalDTO): Promise<Result<Transaction, CashRecordingError>> {
+  async recordWithdrawal(
+    dto: WithdrawalDTO,
+  ): Promise<Result<Transaction, HoldingTransactionError>> {
     return commands.recordWithdrawal(dto);
   },
 

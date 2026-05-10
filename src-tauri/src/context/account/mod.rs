@@ -10,7 +10,7 @@ mod repository;
 mod service;
 
 pub use api::*;
-pub use application::{AccountApplicationError, CashRecordingError};
+pub use application::{AccountApplicationError, HoldingTransactionError};
 pub use domain::*;
 pub use repository::*;
 pub use service::*;

@@ -3,9 +3,10 @@ import type {
   AssetPriceCommandError,
   BuyHoldingDTO,
   CorrectTransactionDTO,
+  HoldingTransactionError,
+  InfrastructureError,
   SellHoldingDTO,
   Transaction,
-  TransactionCommandError,
 } from "../../bindings";
 import { commands, type Result } from "../../bindings";
 
@@ -14,11 +15,11 @@ import { commands, type Result } from "../../bindings";
  * Centralizes all Tauri command calls for the Transaction feature.
  */
 export const transactionGateway = {
-  async buyHolding(dto: BuyHoldingDTO): Promise<Result<Transaction, TransactionCommandError>> {
+  async buyHolding(dto: BuyHoldingDTO): Promise<Result<Transaction, HoldingTransactionError>> {
     return await commands.buyHolding(dto);
   },
 
-  async sellHolding(dto: SellHoldingDTO): Promise<Result<Transaction, TransactionCommandError>> {
+  async sellHolding(dto: SellHoldingDTO): Promise<Result<Transaction, HoldingTransactionError>> {
     return await commands.sellHolding(dto);
   },
 
@@ -26,21 +27,21 @@ export const transactionGateway = {
     id: string,
     accountId: string,
     dto: CorrectTransactionDTO,
-  ): Promise<Result<Transaction, TransactionCommandError>> {
+  ): Promise<Result<Transaction, HoldingTransactionError>> {
     return await commands.correctTransaction(id, accountId, dto);
   },
 
   async cancelTransaction(
     id: string,
     accountId: string,
-  ): Promise<Result<null, TransactionCommandError>> {
+  ): Promise<Result<null, HoldingTransactionError>> {
     return await commands.cancelTransaction(id, accountId);
   },
 
   async getTransactions(
     accountId: string,
     assetId: string,
-  ): Promise<Result<Transaction[], TransactionCommandError>> {
+  ): Promise<Result<Transaction[], InfrastructureError>> {
     return await commands.getTransactions(accountId, assetId);
   },
 

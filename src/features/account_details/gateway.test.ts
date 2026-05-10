@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
-  CashRecordingError,
   DepositDTO,
+  HoldingTransactionError,
   OpenHoldingCommandError,
   OpenHoldingDTO,
   Transaction,
@@ -239,7 +239,7 @@ describe("accountDetailsGateway — recordDeposit (CSH-022)", () => {
       amount_micros: 250_000_000,
       note: null,
     };
-    const err: CashRecordingError = {
+    const err: HoldingTransactionError = {
       code: "AccountNotFound",
       account_id: "no-such",
     };
@@ -257,7 +257,7 @@ describe("accountDetailsGateway — recordDeposit (CSH-022)", () => {
       amount_micros: 0,
       note: null,
     };
-    const err: CashRecordingError = { code: "AmountNotPositive" };
+    const err: HoldingTransactionError = { code: "AmountNotPositive" };
     mockInvoke.mockRejectedValue(err);
 
     const result = await accountDetailsGateway.recordDeposit(dto);
@@ -309,7 +309,7 @@ describe("accountDetailsGateway — recordWithdrawal (CSH-032)", () => {
       amount_micros: 999_000_000,
       note: null,
     };
-    const err: CashRecordingError = {
+    const err: HoldingTransactionError = {
       code: "InsufficientCash",
       current_balance_micros: 50_000_000,
       currency: "EUR",

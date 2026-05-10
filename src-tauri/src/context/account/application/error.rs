@@ -24,17 +24,32 @@ pub enum AccountApplicationError {
         /// The ID the caller asked for.
         account_id: String,
     },
+    /// Account name (case-insensitive) collides with an existing one. Born at
+    /// the service layer from a `find_by_name` uniqueness pre-check before the
+    /// repository write — a cross-aggregate invariant, not a single-aggregate
+    /// state rule, so application-class per Rule B'.
+    #[error("Account name already exists")]
+    NameAlreadyExists,
 }
 
-/// Service-layer composite for the cash-recording failure-surface-family
-/// (`AccountService::record_deposit` and `record_withdrawal`). Replaces the
-/// deleted domain-layer `CashOperationError` per Rule B' — composition belongs
-/// in the application layer; each leaf retains its single, typed failure
-/// source in its proper layer (no cash-prefixed leaf types).
+/// Service-layer composite for the **holding-transaction** failure surface —
+/// every operation that mutates an Account's holdings ledger:
+/// `record_deposit`, `record_withdrawal`, `buy_holding`, `sell_holding`,
+/// `correct_transaction`, `cancel_transaction`.
 ///
-/// **This IS the FE-facing contract** for cash-recording Tauri commands. No
-/// separate boundary type / mapper is needed: the four leaf enums below each
-/// derive `Serialize` + `specta::Type` with `#[serde(tag = "code")]`, and
+/// Cash deposit / withdrawal are the special case where the holding IS the
+/// System Cash Asset (CSH-014); mechanically they share the same aggregate,
+/// the same replay invariants, and therefore the same failure surface. So
+/// they share the composite — one FE-facing type covers all six commands.
+///
+/// Replaces the deleted domain-layer `CashOperationError` and the anyhow-era
+/// `TransactionCommandError` boundary type per Rule B' — composition belongs
+/// in the application layer; each leaf retains its single, typed failure
+/// source in its proper layer.
+///
+/// **This IS the FE-facing contract** for holding-transaction Tauri commands.
+/// No separate boundary type / mapper is needed: the four leaf enums below
+/// each derive `Serialize` + `specta::Type` with `#[serde(tag = "code")]`, and
 /// `#[serde(untagged)]` here flattens them into a single FE-visible union of
 /// `{ code: "...", ... }` discriminated variants.
 ///
@@ -44,21 +59,20 @@ pub enum AccountApplicationError {
 /// - `TransactionDomainError` — domain layer (`account/domain/`)
 /// - `InfrastructureError` — shared catch-all (`core/`)
 ///
-/// `CashRecordingError` itself owns no variants; it only enumerates which
-/// leaves cash recording can produce.
+/// `HoldingTransactionError` itself owns no variants; it only enumerates which
+/// leaves any holding-transaction command can produce.
 #[derive(Debug, thiserror::Error, serde::Serialize, specta::Type)]
 #[serde(untagged)]
-pub enum CashRecordingError {
+pub enum HoldingTransactionError {
     /// Application-layer rejection (`AccountNotFound`).
     #[error(transparent)]
     Application(#[from] AccountApplicationError),
     /// Aggregate-level domain rejection (e.g. `InsufficientCash` from
-    /// `Account::apply_withdrawal`). Cash input-validation rejections
-    /// (`AmountNotPositive`) live in `Validation` below — raised by the cash
-    /// factories, not the aggregate.
+    /// `Account::apply_withdrawal`, `Oversell` from `sell_holding`).
     #[error(transparent)]
     Operation(#[from] AccountOperationError),
-    /// Transaction-factory validation rejection (invalid date variants, etc.).
+    /// Transaction-factory validation rejection (invalid date, negative
+    /// quantity, `AmountNotPositive` from cash factories, etc.).
     #[error(transparent)]
     Validation(#[from] TransactionDomainError),
     /// Opaque catch-all for repository / cross-BC infrastructure failures.

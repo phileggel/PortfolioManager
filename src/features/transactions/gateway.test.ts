@@ -2,11 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AccountCommandError,
+  AssetPriceCommandError,
   BuyHoldingDTO,
   CorrectTransactionDTO,
+  HoldingTransactionError,
   SellHoldingDTO,
   Transaction,
-  TransactionCommandError,
 } from "@/bindings";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -54,7 +55,7 @@ describe("transactionGateway", () => {
   });
 
   it("buyHolding returns error on failure", async () => {
-    const err: TransactionCommandError = {
+    const err: HoldingTransactionError = {
       code: "AccountNotFound",
       account_id: "acc-1",
     };
@@ -94,7 +95,7 @@ describe("transactionGateway", () => {
       fees: 0,
       note: null,
     };
-    const err: TransactionCommandError = {
+    const err: HoldingTransactionError = {
       code: "Oversell",
       available: 500_000,
       requested: 999_000_000,
@@ -127,7 +128,7 @@ describe("transactionGateway", () => {
   });
 
   it("correctTransaction returns error on failure", async () => {
-    const err: TransactionCommandError = { code: "TransactionNotFound" };
+    const err: HoldingTransactionError = { code: "TransactionNotFound" };
     mockInvoke.mockRejectedValue(err);
     const dto: CorrectTransactionDTO = {
       date: "2024-01-20",
@@ -154,7 +155,7 @@ describe("transactionGateway", () => {
   });
 
   it("cancelTransaction returns error on failure", async () => {
-    const err: TransactionCommandError = { code: "TransactionNotFound" };
+    const err: HoldingTransactionError = { code: "TransactionNotFound" };
     mockInvoke.mockRejectedValue(err);
     const result = await transactionGateway.cancelTransaction("tx-1", "acc-1");
     expect(result).toEqual({ status: "error", error: err });
@@ -205,7 +206,7 @@ describe("transactionGateway", () => {
   });
 
   it("recordAssetPrice returns error on failure", async () => {
-    const err: TransactionCommandError = { code: "Unknown" };
+    const err: AssetPriceCommandError = { code: "Unknown" };
     mockInvoke.mockRejectedValue(err);
     const result = await transactionGateway.recordAssetPrice("asset-1", "2024-01-15", 150.5);
     expect(result).toEqual({ status: "error", error: err });
