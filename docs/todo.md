@@ -9,6 +9,7 @@
 Industry convention: ISIN is the canonical identity (stable across rebrands, globally unique by ISO 6166), ticker is a venue-specific display label that can change (e.g. `TOT → TTE` for Total → TotalEnergies in 2021).
 
 **Proposed shape (additive, no breaking migration):**
+
 - New nullable column `isin: Option<String>` on `Asset`
 - Existing `reference` field becomes the human-friendly ticker (rename to `ticker` if breaking is acceptable; otherwise leave as-is and treat the field as ticker)
 - Uniqueness check switches to ISIN-when-present, ticker-when-not
@@ -24,23 +25,15 @@ Industry convention: ISIN is the canonical identity (stable across rebrands, glo
 
 `docs/spec-index.md` lists PFD as `planning — paused — blocked on cash-tracking spec`. Cash-tracking shipped on 2026-05-06, so the blocker is lifted, but no `docs/spec/portfolio-dashboard.md` has been written yet. Next step when picked up: run `/spec-writer portfolio-dashboard` to author the cross-account aggregate-view spec (KPIs + per-account list, per the registry description), then the standard `/contract` → `feature-planner` flow. Update `docs/spec-index.md` to drop the "paused — blocked on cash-tracking spec" suffix at the same time.
 
-## (backend) — Roll out untagged-composition pattern for boundary error types
+## (backend) — Error-model refactor (multi-PR)
 
-Following PR #5 review, `RecordDepositCommandError` and `RecordWithdrawalCommandError` now compose `AccountOperationError | TransactionDomainError | CashCommandBoundaryError` via `#[serde(untagged)]` instead of redefining variants. The same pattern should be rolled out to the older boundary types — `TransactionCommandError`, `OpenHoldingCommandError`, `AccountCommandError`, `AssetCommandError`, `AccountDetailsCommandError`, `ArchiveAssetCommandError`, `DeleteAssetCommandError`, `CategoryCommandError`, `AssetPriceCommandError`, `UpdateAssetPriceCommandError`, `DeleteAssetPriceCommandError`, `WebLookupCommandError`, `AccountDeletionCommandError` — so the entire boundary layer stops duplicating domain error variants. Each conversion is mechanical (compose existing domain enums + a per-command boundary-only enum for `Unknown` / `*NotFound`). Out of scope for the cash PR to keep its diff focused.
+Tracked in `docs/plan/error-model-refactor.md`. Migrates services from `anyhow::Result` to typed Result with composed error enums per `docs/ddd-reference.md` § Errors. Supersedes the previous "untagged-composition rollout" and "convert services to typed Result" TODOs.
 
-## (backend) — Convert service layer methods to typed Result returns
+Status (2026-05-09): PR 1 (asset/category state checks → aggregates) and PR 2 (cash typed Result + `CashRecordingError` + shared `core::InfrastructureError`) shipped. PR 3+ migrates one failure-surface-family per PR — see plan doc § Failure-surface-family map for the remaining ~10 families.
 
-Service layer (`AccountService`, `AssetService`) currently returns `anyhow::Result<T>`. Domain errors get wrapped and downcast at the API boundary. The api.rs mappers downcast each domain error type explicitly, which works but loses the type-system guarantee that "this method can only return errors X, Y, Z". Convert each public service method to a typed `Result<T, ConcreteError>` where `ConcreteError` is either a single domain error enum or a small composition. Spawning point: cash methods (`record_deposit`, `record_withdrawal`) — they're new, contained, and only emit `AccountOperationError` / `TransactionDomainError` / `AccountDomainError`. Surfaced during PR #5 review (2026-05-06).
+## (backend) — `correct_transaction` / `cancel_transaction` parameter style
 
-## (backend) — Consolidate transaction-recording command contracts
-
-After the `use_cases/holding_transaction/` consolidation, two pre-existing contract inconsistencies remain in the moved commands. Surfaced during the cash-tracking spec review (2026-05-05); deliberately deferred from the consolidation refactor to keep that PR scope-minimal.
-
-**1. Per-command error enums.** `buy_holding`, `sell_holding`, `correct_transaction`, `cancel_transaction` share one permissive `TransactionCommandError` enum whose variants are a union of every error any of them might emit. `account-contract.md` already documents per-command subsets (e.g. `cancel_transaction` only emits `TransactionNotFound`/`DbError`) but the type system can't enforce that. Split into `BuyHoldingCommandError`, `SellHoldingCommandError`, `CorrectTransactionCommandError`, `CancelTransactionCommandError` matching what the contract already claims. `open_holding` already follows this pattern. Frontend impact: error-handler types in gateway/forms regenerate.
-
-**2. Parameter style.** `correct_transaction(id: String, account_id: String, dto: CorrectTransactionDTO)` and `cancel_transaction(id: String, account_id: String)` mix primitives + DTO; the rest are DTO-only. Move `id`/`account_id` into the DTOs for consistency. Frontend impact: gateway call sites change.
-
-Work order: do (1) first; (2) is optional and lower value. (1) becomes notably more relevant once cash lands, because `InsufficientCash { current_balance_micros, currency }` would otherwise pollute the shared enum and bleed into `cancel_transaction`'s TS type even though it only fires from a replay-violation edge case.
+`correct_transaction(id: String, account_id: String, dto: CorrectTransactionDTO)` and `cancel_transaction(id: String, account_id: String)` mix primitives + DTO; the rest of the holding-transaction commands are DTO-only. Move `id`/`account_id` into the DTOs for consistency. Frontend impact: gateway call sites change. Surfaced during cash-tracking spec review (2026-05-05); per-command-error-enums concern from the original entry is subsumed by `docs/plan/error-model-refactor.md` PR 3.
 
 ## (backend) — Promote BC application services to traits, mock with mockall
 
