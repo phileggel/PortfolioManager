@@ -44,7 +44,7 @@ impl HoldingTransactionUseCase {
         date: String,
         quantity: i64,
         total_cost: i64,
-    ) -> std::result::Result<Transaction, OpenHoldingError> {
+    ) -> Result<Transaction, OpenHoldingError> {
         let asset = self
             .asset_service
             .get_asset_by_id(&asset_id)
@@ -86,7 +86,7 @@ impl HoldingTransactionUseCase {
         exchange_rate: i64,
         fees: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, HoldingTransactionError> {
+    ) -> Result<Transaction, HoldingTransactionError> {
         self.ensure_cash_for(account_id, "buy_holding").await?;
         self.account_service
             .buy_holding(
@@ -116,7 +116,7 @@ impl HoldingTransactionUseCase {
         exchange_rate: i64,
         fees: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, HoldingTransactionError> {
+    ) -> Result<Transaction, HoldingTransactionError> {
         self.ensure_cash_for(account_id, "sell_holding").await?;
         self.account_service
             .sell_holding(
@@ -146,7 +146,7 @@ impl HoldingTransactionUseCase {
         exchange_rate: i64,
         fees: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, HoldingTransactionError> {
+    ) -> Result<Transaction, HoldingTransactionError> {
         self.ensure_cash_for(account_id, "correct_transaction")
             .await?;
         self.account_service
@@ -169,7 +169,7 @@ impl HoldingTransactionUseCase {
         &self,
         account_id: &str,
         transaction_id: &str,
-    ) -> std::result::Result<(), HoldingTransactionError> {
+    ) -> Result<(), HoldingTransactionError> {
         self.ensure_cash_for(account_id, "cancel_transaction")
             .await?;
         self.account_service
@@ -189,7 +189,7 @@ impl HoldingTransactionUseCase {
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, HoldingTransactionError> {
+    ) -> Result<Transaction, HoldingTransactionError> {
         self.ensure_cash_for(account_id, "record_deposit").await?;
         self.account_service
             .record_deposit(account_id, date, amount, note)
@@ -204,7 +204,7 @@ impl HoldingTransactionUseCase {
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, HoldingTransactionError> {
+    ) -> Result<Transaction, HoldingTransactionError> {
         self.ensure_cash_for(account_id, "record_withdrawal")
             .await?;
         self.account_service
@@ -229,7 +229,7 @@ impl HoldingTransactionUseCase {
         &self,
         account_id: &str,
         op: &str,
-    ) -> std::result::Result<(), HoldingTransactionError> {
+    ) -> Result<(), HoldingTransactionError> {
         let account = self
             .account_service
             .get_by_id(account_id)
