@@ -113,6 +113,34 @@ Tauri 2 app (React 19 + Rust) using Domain-Driven Design.
 
 **Data Flow**: Component → Hook → Gateway → Tauri Command → Rust Service → Repository
 
+## 🥇 Gold Standards & Bit-by-Bit Trajectory
+
+The project has three evolving "gold" targets the codebase moves toward **bit by bit** over time. Future sessions follow them for **new code** and for **small surgical updates** to existing code, but **never trigger a big-bang refactor** to make existing code conformant.
+
+### The three golds
+
+1. **Backend layout gold** — kit v4.4.0 (already shipped). Rules `B0`, `B37`–`B43` in `docs/backend-rules.md`. New code under `shared/` (not `core/`), `context/{bc}/{application,domain,infrastructure}/` symmetric trio, `infrastructure/` (not `repository/`).
+2. **Frontend layout gold** — pending kit issues [#21](https://github.com/phileggel/claude-kit/issues/21), [#22](https://github.com/phileggel/claude-kit/issues/22), [#23](https://github.com/phileggel/claude-kit/issues/23) (FE cross-feature import reframe; canonical hook/presenter/component error-handling layering; `src/` folder mandates + `lib/` → `infra/` rename). Likely lands in kit v4.5+. Until then, follow the proposed shape from those issue bodies for new FE code.
+3. **Error-model gold** — `docs/plan/error-model-refactor.md` § Locked rules → "Infra translation rule (project-specific tightening)". Per-BC `*ApplicationError::DatabaseError`; shared `InfrastructureError` does NOT appear on the FE wire surface; application layer translates raw infra errors and logs server-side via `tracing::error!`. Upstream proposal: kit issue [#28](https://github.com/phileggel/claude-kit/issues/28).
+
+### Bit-by-bit update rule
+
+Apply gold to **new code** (new files, new commands, new error variants, new features). For **existing code that touches a gold-standard area** during a task, fold gold conformance into the current task ONLY when ALL three hold:
+
+- **Size**: ≤50 LOC of conformance changes (a checkpoint number, not a magic threshold — see "two stories" check below).
+- **Locality**: changes stay within the natural file set the task already touches. Don't pull unrelated files into the diff just to gold-conform them.
+- **Mechanical**: rename, import update, signature swap, type substitution. Any fresh **design judgement** ("which layer does this belong in?", "what should this variant be named?") triggers defer even if the line count is small — that's a design call that deserves its own PR + discussion.
+
+If any of the three fails, **DO NOT refactor** — match the current project standard in the touched area and continue. The bigger gold migrations are tracked in `docs/techdebt.md` (e.g. "FE gold layout migration", "`core/` → `shared/` rename") and ratcheted in their own dedicated PRs when the user schedules them.
+
+**The "two stories" sanity check** (overrides the LOC number when in tension): would a reviewer say this PR is telling **one story** (the feature/fix) or **two stories** (the feature/fix + a layout migration)? If two, the gold conformance IS the second story — defer it. The LOC threshold is just a fast-path heuristic for catching this; "two stories" is the real test.
+
+**Why this rule**: gold consistency is a long-term ratchet, not a per-PR mandate. Refactor sprawl (touching unrelated files to make them gold-conformant) is the failure mode this policy prevents. The target of this app is shipping working features, not perfect layering. Each task pushes the codebase **a bit** closer to gold; never let "but it's not gold" block forward progress, and never let "while I'm here" balloon a task into a refactor.
+
+**Consistency is not the goal**: if a touched area is currently using the OLD project standard and the surrounding code is OLD, KEEP IT OLD when conformance would breach the 50-LOC threshold. Mixed-standard codebase is acceptable during the bit-by-bit migration; pure gold conformance is acceptable too. What is NOT acceptable is partial-mid-flight refactors that leave neither standard intact.
+
+**When in doubt** about whether something crosses the 50-LOC threshold: estimate, mention it in the task plan, ask the user. Don't silently drift into a big refactor.
+
 ## 📏 Standards
 
 - **Commits**: Conventional commits (`feat:`, `fix:`, etc.).
