@@ -13,9 +13,8 @@ use tauri::State;
 pub enum AccountDetailsCommandError {
     /// No account exists with the requested ID.
     ///
-    /// Intentionally a unit variant — unlike the write-path counterparts
-    /// (`AccountApplicationError::AccountNotFound`,
-    /// `OpenHoldingCommandError::AccountNotFound`) which carry
+    /// Intentionally a unit variant — unlike the write-path counterpart
+    /// `AccountApplicationError::AccountNotFound` which carries
     /// `{ account_id: String }`, this is a read command: the caller already
     /// supplied `account_id` as the query parameter, so echoing it back adds
     /// no diagnostic value. Do not cargo-cult-add the field.

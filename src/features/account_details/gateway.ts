@@ -6,8 +6,8 @@ import type {
   DeleteAssetPriceCommandError,
   DepositDTO,
   HoldingTransactionError,
-  OpenHoldingCommandError,
   OpenHoldingDTO,
+  OpenHoldingError,
   Result,
   Transaction,
   UpdateAssetPriceCommandError,
@@ -50,7 +50,7 @@ export const accountDetailsGateway = {
     return commands.deleteAssetPrice(assetId, date);
   },
 
-  async openHolding(dto: OpenHoldingDTO): Promise<Result<Transaction, OpenHoldingCommandError>> {
+  async openHolding(dto: OpenHoldingDTO): Promise<Result<Transaction, OpenHoldingError>> {
     return commands.openHolding(dto);
   },
 

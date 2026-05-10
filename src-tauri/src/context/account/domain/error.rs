@@ -36,24 +36,23 @@ pub enum HoldingDomainError {
     NegativeAveragePrice,
 }
 
-/// Typed errors raised by the open_holding operation (TRX-042 through TRX-056).
+/// Aggregate-level domain rejection raised by `Account::open_holding` on its
+/// own input — currently only the `total_cost > 0` invariant (TRX-045).
 #[derive(Debug, thiserror::Error, serde::Serialize, specta::Type, Clone)]
 #[serde(tag = "code")]
 pub enum OpeningBalanceDomainError {
     /// total_cost was zero or negative (TRX-045).
     #[error("Total cost must be strictly positive")]
     InvalidTotalCost,
-    /// No asset with the given ID exists (TRX-056).
-    #[error("Asset not found")]
-    AssetNotFound,
-    /// The target asset is archived — no auto-unarchive (TRX-050).
-    #[error("Cannot open a holding for an archived asset")]
-    ArchivedAsset,
-    /// Attempt to record an OpeningBalance against a Cash Asset (CSH-061).
-    /// User must record initial cash via `record_deposit` instead.
-    #[error("Opening balance cannot be recorded against a cash asset; use record_deposit")]
-    OpeningBalanceOnCashAsset,
 }
+
+// `OpeningBalanceDomainError::AssetNotFound`, `ArchivedAsset`, and
+// `OpeningBalanceOnCashAsset` were migrated to
+// `use_cases::holding_transaction::OpenHoldingApplicationError` in PR
+// `refactor/open-holding-typed-error`. All three are use-case orchestration
+// rejections (cross-BC asset checks performed before delegating to the
+// aggregate) — application-class per Rule B'
+// (`docs/plan/error-model-refactor.md`).
 
 /// Typed errors raised by Account aggregate operations (buy/sell/correct/cancel/cash).
 #[derive(Debug, thiserror::Error, serde::Serialize, specta::Type, Clone)]

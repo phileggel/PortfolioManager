@@ -115,10 +115,12 @@ async fn open_holding_account_not_found_propagates() {
         .await
         .unwrap_err();
 
+    use vault_compass_lib::use_cases::holding_transaction::OpenHoldingError;
     assert!(
-        err.downcast_ref::<AccountApplicationError>()
-            .map(|e| matches!(e, AccountApplicationError::AccountNotFound { .. }))
-            .unwrap_or(false),
-        "expected AccountApplicationError::AccountNotFound, got: {err}"
+        matches!(
+            err,
+            OpenHoldingError::Application(AccountApplicationError::AccountNotFound { .. })
+        ),
+        "expected Application(AccountNotFound), got: {err:?}"
     );
 }

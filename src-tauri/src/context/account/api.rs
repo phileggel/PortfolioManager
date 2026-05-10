@@ -144,7 +144,7 @@ pub async fn get_asset_ids_for_account(
         .get_asset_ids_for_account(&account_id)
         .await
         .map_err(|e| {
-            tracing::error!(err = ?e, "unexpected error in get_asset_ids_for_account");
+            tracing::error!(target: BACKEND, err = ?e, "unexpected error in get_asset_ids_for_account");
             AccountCommandError::Unknown
         })
 }

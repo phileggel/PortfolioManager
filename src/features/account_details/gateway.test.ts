@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DepositDTO,
   HoldingTransactionError,
-  OpenHoldingCommandError,
   OpenHoldingDTO,
+  OpenHoldingError,
   Transaction,
   WithdrawalDTO,
 } from "@/bindings";
@@ -63,7 +63,7 @@ describe("accountDetailsGateway — openHolding", () => {
       quantity: 1_000_000,
       total_cost: 100_000_000,
     };
-    const err: OpenHoldingCommandError = {
+    const err: OpenHoldingError = {
       code: "AccountNotFound",
       account_id: "acc-1",
     };
@@ -85,7 +85,7 @@ describe("accountDetailsGateway — openHolding", () => {
       quantity: 1_000_000,
       total_cost: 100_000_000,
     };
-    const err: OpenHoldingCommandError = { code: "AssetNotFound" };
+    const err: OpenHoldingError = { code: "AssetNotFound" };
     mockInvoke.mockRejectedValue(err);
 
     const result = await accountDetailsGateway.openHolding(dto);
@@ -103,7 +103,44 @@ describe("accountDetailsGateway — openHolding", () => {
       quantity: 1_000_000,
       total_cost: 100_000_000,
     };
-    const err: OpenHoldingCommandError = { code: "ArchivedAsset" };
+    const err: OpenHoldingError = { code: "ArchivedAsset" };
+    mockInvoke.mockRejectedValue(err);
+
+    const result = await accountDetailsGateway.openHolding(dto);
+
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  // CSH-061 — OpeningBalanceOnCashAsset error is surfaced correctly
+  it("openHolding returns OpeningBalanceOnCashAsset when asset is system Cash", async () => {
+    const dto: OpenHoldingDTO = {
+      account_id: "account-1",
+      asset_id: "system-cash-eur",
+      date: "2024-01-15",
+      quantity: 1_000_000,
+      total_cost: 100_000_000,
+    };
+    const err: OpenHoldingError = { code: "OpeningBalanceOnCashAsset" };
+    mockInvoke.mockRejectedValue(err);
+
+    const result = await accountDetailsGateway.openHolding(dto);
+
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  // Infrastructure(Unknown) — opaque catch-all preserves the hint payload
+  it("openHolding returns Infrastructure(Unknown) on unexpected backend failure", async () => {
+    const dto: OpenHoldingDTO = {
+      account_id: "account-1",
+      asset_id: "asset-1",
+      date: "2024-01-15",
+      quantity: 1_000_000,
+      total_cost: 100_000_000,
+    };
+    const err: OpenHoldingError = {
+      code: "Unknown",
+      hint: "load_account_for_open_holding: db connection lost",
+    };
     mockInvoke.mockRejectedValue(err);
 
     const result = await accountDetailsGateway.openHolding(dto);
@@ -120,7 +157,7 @@ describe("accountDetailsGateway — openHolding", () => {
       quantity: 0,
       total_cost: 100_000_000,
     };
-    const err: OpenHoldingCommandError = { code: "QuantityNotPositive" };
+    const err: OpenHoldingError = { code: "QuantityNotPositive" };
     mockInvoke.mockRejectedValue(err);
 
     const result = await accountDetailsGateway.openHolding(dto);
@@ -137,7 +174,7 @@ describe("accountDetailsGateway — openHolding", () => {
       quantity: 1_000_000,
       total_cost: 0,
     };
-    const err: OpenHoldingCommandError = { code: "InvalidTotalCost" };
+    const err: OpenHoldingError = { code: "InvalidTotalCost" };
     mockInvoke.mockRejectedValue(err);
 
     const result = await accountDetailsGateway.openHolding(dto);
@@ -154,7 +191,7 @@ describe("accountDetailsGateway — openHolding", () => {
       quantity: 1_000_000,
       total_cost: 100_000_000,
     };
-    const err: OpenHoldingCommandError = { code: "DateInFuture" };
+    const err: OpenHoldingError = { code: "DateInFuture" };
     mockInvoke.mockRejectedValue(err);
 
     const result = await accountDetailsGateway.openHolding(dto);
@@ -171,7 +208,7 @@ describe("accountDetailsGateway — openHolding", () => {
       quantity: 1_000_000,
       total_cost: 100_000_000,
     };
-    const err: OpenHoldingCommandError = { code: "DateTooOld" };
+    const err: OpenHoldingError = { code: "DateTooOld" };
     mockInvoke.mockRejectedValue(err);
 
     const result = await accountDetailsGateway.openHolding(dto);
@@ -188,7 +225,7 @@ describe("accountDetailsGateway — openHolding", () => {
       quantity: 1_000_000,
       total_cost: 100_000_000,
     };
-    const err: OpenHoldingCommandError = { code: "InvalidDate" };
+    const err: OpenHoldingError = { code: "InvalidDate" };
     mockInvoke.mockRejectedValue(err);
 
     const result = await accountDetailsGateway.openHolding(dto);
