@@ -71,8 +71,7 @@ impl HoldingTransactionUseCase {
         fees: i64,
         note: Option<String>,
     ) -> std::result::Result<Transaction, HoldingTransactionError> {
-        self.ensure_cash_for_typed(account_id, "buy_holding")
-            .await?;
+        self.ensure_cash_for(account_id, "buy_holding").await?;
         self.account_service
             .buy_holding(
                 account_id,
@@ -102,8 +101,7 @@ impl HoldingTransactionUseCase {
         fees: i64,
         note: Option<String>,
     ) -> std::result::Result<Transaction, HoldingTransactionError> {
-        self.ensure_cash_for_typed(account_id, "sell_holding")
-            .await?;
+        self.ensure_cash_for(account_id, "sell_holding").await?;
         self.account_service
             .sell_holding(
                 account_id,
@@ -133,7 +131,7 @@ impl HoldingTransactionUseCase {
         fees: i64,
         note: Option<String>,
     ) -> std::result::Result<Transaction, HoldingTransactionError> {
-        self.ensure_cash_for_typed(account_id, "correct_transaction")
+        self.ensure_cash_for(account_id, "correct_transaction")
             .await?;
         self.account_service
             .correct_transaction(
@@ -156,7 +154,7 @@ impl HoldingTransactionUseCase {
         account_id: &str,
         transaction_id: &str,
     ) -> std::result::Result<(), HoldingTransactionError> {
-        self.ensure_cash_for_typed(account_id, "cancel_transaction")
+        self.ensure_cash_for(account_id, "cancel_transaction")
             .await?;
         self.account_service
             .cancel_transaction(account_id, transaction_id)
@@ -166,9 +164,9 @@ impl HoldingTransactionUseCase {
     /// Records a Deposit into an account (CSH-022).
     /// Seeds the system Cash Asset (CSH-010) before delegating; the aggregate
     /// lazy-creates the Cash Holding (CSH-012) and persists the Transaction.
-    /// Returns a typed `HoldingTransactionError`; the cross-BC `ensure_cash_for`
-    /// step is wrapped into the `Infrastructure` opaque variant on failure
-    /// (asset-side errors are not part of the cash-recording contract).
+    /// Returns a typed `HoldingTransactionError`: in-account NotFound flows
+    /// through as `Application(AccountNotFound)`; cross-BC asset-side failures
+    /// opaque to `Infrastructure(Unknown)` (see `ensure_cash_for`).
     pub async fn record_deposit(
         &self,
         account_id: &str,
@@ -176,8 +174,7 @@ impl HoldingTransactionUseCase {
         amount: i64,
         note: Option<String>,
     ) -> std::result::Result<Transaction, HoldingTransactionError> {
-        self.ensure_cash_for_typed(account_id, "record_deposit")
-            .await?;
+        self.ensure_cash_for(account_id, "record_deposit").await?;
         self.account_service
             .record_deposit(account_id, date, amount, note)
             .await
@@ -192,43 +189,53 @@ impl HoldingTransactionUseCase {
         amount: i64,
         note: Option<String>,
     ) -> std::result::Result<Transaction, HoldingTransactionError> {
-        self.ensure_cash_for_typed(account_id, "record_withdrawal")
+        self.ensure_cash_for(account_id, "record_withdrawal")
             .await?;
         self.account_service
             .record_withdrawal(account_id, date, amount, note)
             .await
     }
 
-    /// Loads the account's currency and ensures the system Cash Asset for that currency
-    /// exists (CSH-010, CSH-011, CSH-017). Idempotent: safe to call on every cash-affecting
-    /// command.
-    async fn ensure_cash_for(&self, account_id: &str) -> Result<()> {
-        let account = self
-            .account_service
-            .get_by_id(account_id)
-            .await?
-            .ok_or_else(|| AccountApplicationError::AccountNotFound {
-                account_id: account_id.to_string(),
-            })?;
-        ensure_cash_asset(&self.asset_service, &account.currency).await
-    }
-
-    /// Typed wrapper around `ensure_cash_for` — folds any cross-BC failure into
-    /// `HoldingTransactionError::Infrastructure`. Used by every holding-transaction
-    /// orchestrator method (buy/sell/correct/cancel/deposit/withdrawal) so each
-    /// can propagate via `?` and stay typed end-to-end.
-    async fn ensure_cash_for_typed(
+    /// Loads the account, then ensures the system Cash Asset for its currency
+    /// exists (CSH-010, CSH-011, CSH-017). Idempotent: safe to call on every
+    /// cash-affecting command. Returns a typed `HoldingTransactionError` so
+    /// callers can propagate via `?` and stay typed end-to-end.
+    ///
+    /// Distinguishes the two error sources honestly:
+    /// - **In-account NotFound** (the account doesn't exist) propagates as
+    ///   `HoldingTransactionError::Application(AccountNotFound { account_id })`
+    ///   — the same surface every other caller of `load_account` returns, so
+    ///   the FE sees a single typed shape regardless of which step rejected.
+    /// - **Cross-BC asset-side failure** (repo failure on the asset query, or
+    ///   `ensure_cash_asset` failure) opaques to `Infrastructure(Unknown)` —
+    ///   asset-side errors are not part of the holding-transaction contract.
+    async fn ensure_cash_for(
         &self,
         account_id: &str,
         op: &str,
     ) -> std::result::Result<(), HoldingTransactionError> {
-        self.ensure_cash_for(account_id).await.map_err(|e| {
-            tracing::error!(target: BACKEND, account_id = %account_id, op = op, err = ?e, "ensure_cash_for failed");
-            InfrastructureError::Unknown {
-                hint: format!("ensure_cash_for ({op}): {e:#}"),
-            }
-            .into()
-        })
+        let account = self
+            .account_service
+            .get_by_id(account_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(target: BACKEND, account_id = %account_id, op = op, err = ?e, "ensure_cash_for: get_by_id failed");
+                InfrastructureError::Unknown {
+                    hint: format!("get_by_id ({op}): {e:#}"),
+                }
+            })?
+            .ok_or_else(|| AccountApplicationError::AccountNotFound {
+                account_id: account_id.to_string(),
+            })?;
+        ensure_cash_asset(&self.asset_service, &account.currency)
+            .await
+            .map_err(|e| {
+                tracing::error!(target: BACKEND, account_id = %account_id, op = op, err = ?e, "ensure_cash_for: ensure_cash_asset failed");
+                InfrastructureError::Unknown {
+                    hint: format!("ensure_cash_asset ({op}): {e:#}"),
+                }
+                .into()
+            })
     }
 }
 
@@ -483,14 +490,15 @@ mod tests {
         assert_eq!(tx.total_amount, micro(200));
     }
 
-    // PR 3 contract — when the orchestrator's ensure_cash_for cross-BC step
-    // fails (here: account does not exist), the typed surface returns
-    // `HoldingTransactionError::Infrastructure(Unknown { hint })` with the
-    // underlying error embedded in the hint. By design `ensure_cash_for_typed`
-    // opaques the entire cross-BC chain — including AccountNotFound — so the
-    // service-layer `Application(AccountNotFound)` surface is NOT reached.
+    // PR 3 contract — when `buy_holding` is called for a nonexistent account,
+    // the orchestrator's `ensure_cash_for` surfaces it as the typed
+    // `Application(AccountNotFound { account_id })` — same shape every other
+    // path raises for the same condition. Cross-BC asset-side failures still
+    // opaque to `Infrastructure(Unknown)`, but in-account NotFound flows
+    // through honestly so the FE sees one consistent typed shape regardless of
+    // which step rejected.
     #[tokio::test]
-    async fn buy_holding_orchestrator_unknown_account_returns_infrastructure() {
+    async fn buy_holding_orchestrator_unknown_account_returns_application() {
         let pool = setup_pool().await;
         let (account_svc, asset_svc) = make_services(&pool);
         let uc = HoldingTransactionUseCase::new(account_svc, asset_svc);
@@ -510,17 +518,12 @@ mod tests {
             .unwrap_err();
 
         match err {
-            HoldingTransactionError::Infrastructure(InfrastructureError::Unknown { hint }) => {
-                assert!(
-                    hint.contains("ensure_cash_for (buy_holding)"),
-                    "hint should identify the failing op, got: {hint}"
-                );
-                assert!(
-                    hint.contains("Account not found"),
-                    "hint should embed the underlying AccountNotFound, got: {hint}"
-                );
+            HoldingTransactionError::Application(AccountApplicationError::AccountNotFound {
+                account_id,
+            }) => {
+                assert_eq!(account_id, "nonexistent-account-id");
             }
-            other => panic!("expected Infrastructure(Unknown), got: {other:?}"),
+            other => panic!("expected Application(AccountNotFound), got: {other:?}"),
         }
     }
 
