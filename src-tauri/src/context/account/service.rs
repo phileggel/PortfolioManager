@@ -4,7 +4,7 @@ use super::domain::{
     TransactionDomainError, TransactionRepository, UpdateFrequency,
 };
 use crate::core::{logger::BACKEND, Event, InfrastructureError, SideEffectEventBus};
-use anyhow::Result;
+use crate::use_cases::holding_transaction::OpenHoldingError;
 use std::sync::Arc;
 use tracing::info;
 
@@ -42,12 +42,12 @@ impl AccountService {
     // -------------------------------------------------------------------------
 
     /// Retrieves all non-deleted accounts.
-    pub async fn get_all(&self) -> Result<Vec<Account>> {
+    pub async fn get_all(&self) -> anyhow::Result<Vec<Account>> {
         self.account_repo.get_all().await
     }
 
     /// Retrieves an account by ID.
-    pub async fn get_by_id(&self, id: &str) -> Result<Option<Account>> {
+    pub async fn get_by_id(&self, id: &str) -> anyhow::Result<Option<Account>> {
         self.account_repo.get_by_id(id).await
     }
 
@@ -57,7 +57,7 @@ impl AccountService {
         name: String,
         currency: String,
         update_frequency: UpdateFrequency,
-    ) -> Result<Account> {
+    ) -> anyhow::Result<Account> {
         let account = Account::new(name, currency, update_frequency)?;
         if self
             .account_repo
@@ -80,7 +80,7 @@ impl AccountService {
         name: String,
         currency: String,
         update_frequency: UpdateFrequency,
-    ) -> Result<Account> {
+    ) -> anyhow::Result<Account> {
         let account = Account::with_id(id, name, currency, update_frequency)?;
         if let Some(existing) = self.account_repo.find_by_name(&account.name).await? {
             if existing.id != account.id {
@@ -94,7 +94,7 @@ impl AccountService {
     }
 
     /// Permanently deletes an account and cascades to its holdings (R5).
-    pub async fn delete(&self, id: &str) -> Result<()> {
+    pub async fn delete(&self, id: &str) -> anyhow::Result<()> {
         info!(target: BACKEND, account_id = %id, "deleting account");
         self.account_repo.delete(id).await?;
         self.emit_account_updated();
@@ -106,7 +106,7 @@ impl AccountService {
     // -------------------------------------------------------------------------
 
     /// Retrieves all holdings for a given account (ACD-022, ADR-004).
-    pub async fn get_holdings_for_account(&self, account_id: &str) -> Result<Vec<Holding>> {
+    pub async fn get_holdings_for_account(&self, account_id: &str) -> anyhow::Result<Vec<Holding>> {
         self.holding_repo.get_by_account(account_id).await
     }
 
@@ -115,7 +115,7 @@ impl AccountService {
         &self,
         account_id: &str,
         asset_id: &str,
-    ) -> Result<Option<Holding>> {
+    ) -> anyhow::Result<Option<Holding>> {
         self.holding_repo
             .get_by_account_asset(account_id, asset_id)
             .await
@@ -126,7 +126,7 @@ impl AccountService {
     // -------------------------------------------------------------------------
 
     /// Retrieves a transaction by ID.
-    pub async fn get_transaction_by_id(&self, id: &str) -> Result<Option<Transaction>> {
+    pub async fn get_transaction_by_id(&self, id: &str) -> anyhow::Result<Option<Transaction>> {
         self.transaction_repo.get_by_id(id).await
     }
 
@@ -135,14 +135,14 @@ impl AccountService {
         &self,
         account_id: &str,
         asset_id: &str,
-    ) -> Result<Vec<Transaction>> {
+    ) -> anyhow::Result<Vec<Transaction>> {
         self.transaction_repo
             .get_by_account_asset(account_id, asset_id)
             .await
     }
 
     /// Returns distinct asset IDs that have transactions for the given account (TXL-013).
-    pub async fn get_asset_ids_for_account(&self, account_id: &str) -> Result<Vec<String>> {
+    pub async fn get_asset_ids_for_account(&self, account_id: &str) -> anyhow::Result<Vec<String>> {
         self.transaction_repo
             .get_asset_ids_for_account(account_id)
             .await
@@ -169,7 +169,7 @@ impl AccountService {
         exchange_rate: i64,
         fees: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, HoldingTransactionError> {
+    ) -> Result<Transaction, HoldingTransactionError> {
         info!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, "buy_holding");
         let mut account = load_account(&*self.account_repo, account_id).await?;
         let tx = account
@@ -203,7 +203,7 @@ impl AccountService {
         exchange_rate: i64,
         fees: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, HoldingTransactionError> {
+    ) -> Result<Transaction, HoldingTransactionError> {
         info!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, "sell_holding");
         let mut account = load_account(&*self.account_repo, account_id).await?;
         let tx = account
@@ -237,7 +237,7 @@ impl AccountService {
         exchange_rate: i64,
         fees: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, HoldingTransactionError> {
+    ) -> Result<Transaction, HoldingTransactionError> {
         info!(target: BACKEND, account_id = %account_id, tx_id = %tx_id, "correct_transaction");
         let mut account = load_account(&*self.account_repo, account_id).await?;
         let tx = account
@@ -256,7 +256,7 @@ impl AccountService {
         &self,
         account_id: &str,
         tx_id: &str,
-    ) -> std::result::Result<(), HoldingTransactionError> {
+    ) -> Result<(), HoldingTransactionError> {
         info!(target: BACKEND, account_id = %account_id, tx_id = %tx_id, "cancel_transaction");
         let mut account = load_account(&*self.account_repo, account_id).await?;
         account
@@ -283,8 +283,7 @@ impl AccountService {
         date: String,
         quantity: i64,
         total_cost: i64,
-    ) -> std::result::Result<Transaction, crate::use_cases::holding_transaction::OpenHoldingError>
-    {
+    ) -> Result<Transaction, OpenHoldingError> {
         info!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, "open_holding");
         let mut account = load_account_for_open_holding(&*self.account_repo, account_id).await?;
         let tx = account
@@ -310,7 +309,7 @@ impl AccountService {
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, HoldingTransactionError> {
+    ) -> Result<Transaction, HoldingTransactionError> {
         info!(target: BACKEND, account_id = %account_id, amount = amount, "record_deposit");
         let mut account = load_account(&*self.account_repo, account_id).await?;
         let tx = Transaction::new_deposit(
@@ -337,7 +336,7 @@ impl AccountService {
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, HoldingTransactionError> {
+    ) -> Result<Transaction, HoldingTransactionError> {
         info!(target: BACKEND, account_id = %account_id, amount = amount, "record_withdrawal");
         let mut account = load_account(&*self.account_repo, account_id).await?;
         let tx = Transaction::new_withdrawal(
@@ -359,7 +358,7 @@ impl AccountService {
 
     /// Returns true if any account holds a non-zero quantity of the given asset.
     /// Used by the archive_asset use case to enforce OQ-6.
-    pub async fn has_active_holdings_for_asset(&self, asset_id: &str) -> Result<bool> {
+    pub async fn has_active_holdings_for_asset(&self, asset_id: &str) -> anyhow::Result<bool> {
         self.holding_repo
             .has_active_holdings_for_asset(asset_id)
             .await
@@ -367,14 +366,14 @@ impl AccountService {
 
     /// Returns true if any transaction references the given asset.
     /// Used by the delete_asset use case to block hard-deletion when history exists.
-    pub async fn has_holding_entries_for_asset(&self, asset_id: &str) -> Result<bool> {
+    pub async fn has_holding_entries_for_asset(&self, asset_id: &str) -> anyhow::Result<bool> {
         self.transaction_repo
             .has_transactions_for_asset(asset_id)
             .await
     }
 
     /// Returns the count of active holdings and total transactions for an account (ACC-020).
-    pub async fn get_deletion_summary(&self, account_id: &str) -> Result<(u32, u32)> {
+    pub async fn get_deletion_summary(&self, account_id: &str) -> anyhow::Result<(u32, u32)> {
         let (holding_count, transaction_count) = tokio::try_join!(
             self.holding_repo.count_active_for_account(account_id),
             self.transaction_repo.count_by_account(account_id),
@@ -406,7 +405,7 @@ impl AccountService {
 async fn load_account(
     repo: &dyn AccountRepository,
     account_id: &str,
-) -> std::result::Result<Account, HoldingTransactionError> {
+) -> Result<Account, HoldingTransactionError> {
     match repo.get_with_holdings_and_transactions(account_id).await {
         Ok(Some(acc)) => Ok(acc),
         Ok(None) => Err(AccountApplicationError::AccountNotFound {
@@ -430,7 +429,7 @@ async fn load_account(
 async fn save_account(
     repo: &dyn AccountRepository,
     account: &mut Account,
-) -> std::result::Result<(), HoldingTransactionError> {
+) -> Result<(), HoldingTransactionError> {
     repo.save(account).await.map_err(|e| {
         tracing::error!(target: BACKEND, account_id = %account.id, err = ?e, "save_account: repository failure");
         InfrastructureError::Unknown {
@@ -444,7 +443,7 @@ async fn save_account(
 async fn load_account_for_open_holding(
     repo: &dyn AccountRepository,
     account_id: &str,
-) -> std::result::Result<Account, crate::use_cases::holding_transaction::OpenHoldingError> {
+) -> Result<Account, OpenHoldingError> {
     match repo.get_with_holdings_and_transactions(account_id).await {
         Ok(Some(acc)) => Ok(acc),
         Ok(None) => Err(AccountApplicationError::AccountNotFound {
@@ -465,7 +464,7 @@ async fn load_account_for_open_holding(
 async fn save_account_for_open_holding(
     repo: &dyn AccountRepository,
     account: &mut Account,
-) -> std::result::Result<(), crate::use_cases::holding_transaction::OpenHoldingError> {
+) -> Result<(), OpenHoldingError> {
     repo.save(account).await.map_err(|e| {
         tracing::error!(target: BACKEND, account_id = %account.id, err = ?e, "save_account_for_open_holding: repository failure");
         InfrastructureError::Unknown {
@@ -505,9 +504,7 @@ fn to_holding_tx_error(e: anyhow::Error) -> HoldingTransactionError {
 /// `anyhow::Result` and can raise `OpeningBalanceDomainError::InvalidTotalCost`
 /// or any `TransactionDomainError` reachable from `Transaction::new`. Same
 /// shape as `to_holding_tx_error`; targets `OpenHoldingError` instead.
-fn to_open_holding_error(
-    e: anyhow::Error,
-) -> crate::use_cases::holding_transaction::OpenHoldingError {
+fn to_open_holding_error(e: anyhow::Error) -> OpenHoldingError {
     let e = match e.downcast::<super::domain::OpeningBalanceDomainError>() {
         Ok(err) => return err.into(),
         Err(e) => e,
@@ -588,7 +585,7 @@ mod tests {
     #[test]
     fn to_open_holding_error_maps_every_branch() {
         use crate::context::account::OpeningBalanceDomainError;
-        use crate::use_cases::holding_transaction::OpenHoldingError;
+        use OpenHoldingError;
 
         // OpeningBalanceDomainError leaf → Validation
         assert!(matches!(
@@ -1104,7 +1101,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-        use crate::use_cases::holding_transaction::OpenHoldingError;
+        use OpenHoldingError;
         assert!(
             matches!(
                 err,
@@ -1140,7 +1137,7 @@ mod tests {
             .unwrap_err();
 
         use crate::context::account::TransactionDomainError;
-        use crate::use_cases::holding_transaction::OpenHoldingError;
+        use OpenHoldingError;
         assert!(
             matches!(
                 err,
@@ -1154,7 +1151,7 @@ mod tests {
     #[tokio::test]
     async fn test_open_holding_propagates_invalid_total_cost() {
         use crate::context::account::OpeningBalanceDomainError;
-        use crate::use_cases::holding_transaction::OpenHoldingError;
+        use OpenHoldingError;
         let pool = make_pool().await;
         let (svc, asset_id) = setup(&pool).await;
         let account = svc
