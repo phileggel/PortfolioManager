@@ -361,3 +361,72 @@ pub async fn record_withdrawal(
     uc.record_withdrawal(&dto.account_id, dto.date, dto.amount_micros, dto.note)
         .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+
+    // PR 3 — to_open_holding_error covers every classified branch in one test:
+    // the OpeningBalanceDomainError leaves, a TransactionDomainError leaf
+    // (both possible-from-open_holding and impossible-from-open_holding cases),
+    // the AccountApplicationError arms (AccountNotFound preserves payload;
+    // NameAlreadyExists is the BUG-guard added in PR 3), and the unclassified
+    // fallback. Mapper IS the FE wire contract.
+    #[test]
+    fn to_open_holding_error_maps_every_branch() {
+        // OpeningBalanceDomainError leaves
+        assert!(matches!(
+            to_open_holding_error(OpeningBalanceDomainError::AssetNotFound.into()),
+            OpenHoldingCommandError::AssetNotFound
+        ));
+        assert!(matches!(
+            to_open_holding_error(OpeningBalanceDomainError::ArchivedAsset.into()),
+            OpenHoldingCommandError::ArchivedAsset
+        ));
+        assert!(matches!(
+            to_open_holding_error(OpeningBalanceDomainError::OpeningBalanceOnCashAsset.into()),
+            OpenHoldingCommandError::OpeningBalanceOnCashAsset
+        ));
+        assert!(matches!(
+            to_open_holding_error(OpeningBalanceDomainError::InvalidTotalCost.into()),
+            OpenHoldingCommandError::InvalidTotalCost
+        ));
+
+        // TransactionDomainError — possible variant (DateInFuture)
+        assert!(matches!(
+            to_open_holding_error(TransactionDomainError::DateInFuture.into()),
+            OpenHoldingCommandError::DateInFuture
+        ));
+        // TransactionDomainError — impossible-from-open_holding variant
+        // (cash-factory-only) hits the BUG arm and surfaces as Unknown.
+        assert!(matches!(
+            to_open_holding_error(TransactionDomainError::AmountNotPositive.into()),
+            OpenHoldingCommandError::Unknown { .. }
+        ));
+
+        // AccountApplicationError — AccountNotFound preserves the account_id payload
+        match to_open_holding_error(
+            AccountApplicationError::AccountNotFound {
+                account_id: "acc-42".into(),
+            }
+            .into(),
+        ) {
+            OpenHoldingCommandError::AccountNotFound { account_id } => {
+                assert_eq!(account_id, "acc-42");
+            }
+            other => panic!("expected AccountNotFound, got: {other:?}"),
+        }
+        // NameAlreadyExists is the BUG-guard added in PR 3 (impossible from open_holding).
+        assert!(matches!(
+            to_open_holding_error(AccountApplicationError::NameAlreadyExists.into()),
+            OpenHoldingCommandError::Unknown { .. }
+        ));
+
+        // Unclassified fallback
+        assert!(matches!(
+            to_open_holding_error(anyhow!("synthetic infra failure")),
+            OpenHoldingCommandError::Unknown { .. }
+        ));
+    }
+}

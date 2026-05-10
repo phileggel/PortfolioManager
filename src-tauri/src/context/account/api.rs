@@ -172,3 +172,51 @@ pub async fn get_transactions(
             }
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::account::AccountApplicationError;
+    use anyhow::anyhow;
+
+    // PR 3 — to_account_error covers every classified branch in one test:
+    // application-class (NameAlreadyExists / AccountNotFound BUG-guard),
+    // domain-class (NameEmpty / InvalidCurrency), and unclassified fallback.
+    // Mapper IS the FE wire contract; one global assertion per branch keeps
+    // the test compact while still catching any regression in the mapping.
+    #[test]
+    fn to_account_error_maps_every_branch() {
+        // Application leaves
+        assert!(matches!(
+            to_account_error(AccountApplicationError::NameAlreadyExists.into()),
+            AccountCommandError::NameAlreadyExists
+        ));
+        assert!(matches!(
+            to_account_error(
+                AccountApplicationError::AccountNotFound {
+                    account_id: "x".into(),
+                }
+                .into(),
+            ),
+            // BUG-guard: NotFound from create/update is impossible by design;
+            // surfaced as Unknown so the FE doesn't show a misleading message.
+            AccountCommandError::Unknown
+        ));
+
+        // Domain leaves
+        assert!(matches!(
+            to_account_error(AccountDomainError::NameEmpty.into()),
+            AccountCommandError::NameEmpty
+        ));
+        assert!(matches!(
+            to_account_error(AccountDomainError::InvalidCurrency("XX".into()).into()),
+            AccountCommandError::InvalidCurrency
+        ));
+
+        // Unclassified fallback
+        assert!(matches!(
+            to_account_error(anyhow!("synthetic infra failure")),
+            AccountCommandError::Unknown
+        ));
+    }
+}
