@@ -349,6 +349,7 @@
   },
   "error": {
     "Unknown": "Une erreur inattendue est survenue. Veuillez réessayer.",
+    "DatabaseError": "Une erreur de base de données inattendue est survenue. Veuillez réessayer.",
     "NameEmpty": "Le nom ne peut pas être vide.",
     "NameAlreadyExists": "Un compte avec ce nom existe déjà.",
     "InvalidCurrency": "Code de devise invalide.",
