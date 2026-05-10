@@ -1,9 +1,7 @@
 // Allow unreachable lint as tauri::command and specta::specta macros generate false positives
 #![allow(clippy::unreachable)]
 
-use crate::context::asset::domain::error::{
-    AssetDomainError, AssetPriceDomainError, CategoryDomainError,
-};
+use crate::context::asset::domain::error::{AssetDomainError, AssetPriceDomainError};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -97,9 +95,11 @@ fn to_asset_error(e: anyhow::Error) -> AssetCommandError {
             AssetDomainError::NotFound(_) => AssetCommandError::NotFound,
         };
     }
-    if let Some(err) = e.downcast_ref::<CategoryDomainError>() {
+    if let Some(err) = e.downcast_ref::<crate::context::asset::CategoryApplicationError>() {
         return match err {
-            CategoryDomainError::NotFound(_) => AssetCommandError::CategoryNotFound,
+            crate::context::asset::CategoryApplicationError::NotFound { .. } => {
+                AssetCommandError::CategoryNotFound
+            }
             other => {
                 tracing::error!(err = ?other, "unexpected category error in asset command");
                 AssetCommandError::Unknown
@@ -108,45 +108,6 @@ fn to_asset_error(e: anyhow::Error) -> AssetCommandError {
     }
     tracing::error!(err = ?e, "unexpected error in asset command");
     AssetCommandError::Unknown
-}
-
-/// Typed error returned to the frontend for category commands.
-#[derive(Debug, Serialize, Type, thiserror::Error)]
-#[serde(tag = "code")]
-pub enum CategoryCommandError {
-    /// Category label is empty or whitespace-only.
-    #[error("Category label cannot be empty")]
-    LabelEmpty,
-    /// A category with the same name already exists.
-    #[error("A category with this name already exists")]
-    DuplicateName,
-    /// Attempt to rename the system default category.
-    #[error("The system category cannot be renamed")]
-    SystemReadonly,
-    /// Attempt to delete the system default category.
-    #[error("The system category cannot be deleted")]
-    SystemProtected,
-    /// An unexpected server-side error occurred.
-    #[error("An unexpected error occurred")]
-    Unknown,
-}
-
-fn to_category_error(e: anyhow::Error) -> CategoryCommandError {
-    if let Some(err) = e.downcast_ref::<CategoryDomainError>() {
-        match err {
-            CategoryDomainError::LabelEmpty => CategoryCommandError::LabelEmpty,
-            CategoryDomainError::DuplicateName => CategoryCommandError::DuplicateName,
-            CategoryDomainError::SystemReadonly => CategoryCommandError::SystemReadonly,
-            CategoryDomainError::SystemProtected => CategoryCommandError::SystemProtected,
-            other => {
-                tracing::error!(err = ?other, "unexpected category error in category command");
-                CategoryCommandError::Unknown
-            }
-        }
-    } else {
-        tracing::error!(err = ?e, "unexpected error in category command");
-        CategoryCommandError::Unknown
-    }
 }
 
 /// Typed error returned to the frontend for the record_asset_price command.
@@ -318,30 +279,31 @@ pub async fn unarchive_asset(
 // --- Categories ---
 
 /// Fetches all active categories.
+///
+/// Read-only — only infrastructure failures can fire here, so the surface is
+/// the narrow `CategoryApplicationError` (only `DatabaseError` is reachable).
 #[tauri::command]
 #[specta::specta]
 pub async fn get_categories(
     state: State<'_, AppState>,
-) -> Result<Vec<AssetCategory>, CategoryCommandError> {
-    state
-        .asset_service
-        .get_all_categories()
-        .await
-        .map_err(to_category_error)
+) -> Result<Vec<AssetCategory>, crate::context::asset::CategoryApplicationError> {
+    state.asset_service.get_all_categories().await
 }
 
 /// Creates a new category.
+///
+/// Returns the typed `CategoryCrudError` directly — no boundary type or mapper
+/// is needed because every leaf in the composite (`CategoryApplicationError`,
+/// `CategoryDomainError`) already serializes with `#[serde(tag = "code")]`,
+/// and `CategoryCrudError`'s `#[serde(untagged)]` flattens them into a single
+/// FE-visible union.
 #[tauri::command]
 #[specta::specta]
 pub async fn add_category(
     label: String,
     state: State<'_, AppState>,
-) -> Result<AssetCategory, CategoryCommandError> {
-    state
-        .asset_service
-        .create_category(&label)
-        .await
-        .map_err(to_category_error)
+) -> Result<AssetCategory, crate::context::asset::CategoryCrudError> {
+    state.asset_service.create_category(&label).await
 }
 
 /// Updates an existing category.
@@ -351,12 +313,8 @@ pub async fn update_category(
     id: String,
     label: String,
     state: State<'_, AppState>,
-) -> Result<AssetCategory, CategoryCommandError> {
-    state
-        .asset_service
-        .update_category(&id, &label)
-        .await
-        .map_err(to_category_error)
+) -> Result<AssetCategory, crate::context::asset::CategoryCrudError> {
+    state.asset_service.update_category(&id, &label).await
 }
 
 /// Deletes a category.
@@ -365,12 +323,8 @@ pub async fn update_category(
 pub async fn delete_category(
     id: String,
     state: State<'_, AppState>,
-) -> Result<(), CategoryCommandError> {
-    state
-        .asset_service
-        .delete_category(&id)
-        .await
-        .map_err(to_category_error)
+) -> Result<(), crate::context::asset::CategoryCrudError> {
+    state.asset_service.delete_category(&id).await
 }
 
 // --- AssetPrice ---

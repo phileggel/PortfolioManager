@@ -78,4 +78,3 @@ Entries are observations, not commitments. Triaged by `/whats-next` alongside
 - Context: branch `refactor/cash-tx-aggregate-split` @ `2c2ea3e`
 - Severity: 🔵
 - Observation: `opening_balance_variant_exists` asserts a value equals itself; `transaction_type_variants_are_distinct` asserts the compiler-derived `PartialEq` distinguishes named variants. Both are tautological — they exercise the language, not the domain. Candidates for deletion in a B33 sweep alongside other trivial tests in the suite.
-

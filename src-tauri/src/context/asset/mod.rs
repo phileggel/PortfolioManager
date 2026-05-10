@@ -1,5 +1,7 @@
 /// External API and Tauri commands.
 mod api;
+/// Application-layer types (errors raised by service / use cases).
+mod application;
 /// Core business entities and repository traits.
 mod domain;
 /// Data persistence implementations.
@@ -8,6 +10,7 @@ mod repository;
 mod service;
 
 pub use api::*;
+pub use application::{CategoryApplicationError, CategoryCrudError};
 pub use domain::*;
 pub use repository::*;
 pub use service::*;

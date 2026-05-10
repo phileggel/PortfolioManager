@@ -43,21 +43,32 @@ pub enum AssetPriceDomainError {
 }
 
 /// Typed errors for category domain validation.
-#[derive(Debug, thiserror::Error)]
+///
+/// Only genuine aggregate-method or value-object rejections live here per the
+/// rejection-layer rule (`docs/ddd-reference.md` § Errors):
+/// - `LabelEmpty` — value-object validation in `AssetCategory::new` /
+///   `update_from`.
+/// - `SystemReadonly` / `SystemProtected` — aggregate methods
+///   `ensure_renameable` / `ensure_deletable` enforced on loaded state.
+///
+/// Tagged with `#[serde(tag = "code")]` so it can be exposed verbatim at the
+/// Tauri boundary through the `CategoryCrudError` untagged composite.
+#[derive(Debug, thiserror::Error, serde::Serialize, specta::Type, Clone)]
+#[serde(tag = "code")]
 pub enum CategoryDomainError {
     /// Category label is empty or whitespace-only.
     #[error("Category label cannot be empty")]
     LabelEmpty,
-    /// A category with the same name (case-insensitive) already exists.
-    #[error("A category with this name already exists")]
-    DuplicateName,
     /// Attempt to rename the system default category.
     #[error("The system category cannot be renamed")]
     SystemReadonly,
     /// Attempt to delete the system default category.
     #[error("The system category cannot be deleted")]
     SystemProtected,
-    /// No category with the given ID exists.
-    #[error("Category not found: {0}")]
-    NotFound(String),
 }
+
+// `CategoryDomainError::NotFound(String)` and `DuplicateName` were migrated to
+// `CategoryApplicationError` in PR 6 (`refactor/category-crud-typed-error`).
+// Both are service-layer rejections (repository `Ok(None)` translation /
+// uniqueness pre-check), not single-aggregate state rules — application-class
+// per the rejection-layer rule (`docs/ddd-reference.md` § Errors).

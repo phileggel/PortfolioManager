@@ -28,9 +28,9 @@ impl Default for AssetCategory {
 
 impl AssetCategory {
     /// Creates a new AssetCategory.
-    pub fn new(label: String) -> Result<Self> {
+    pub fn new(label: String) -> std::result::Result<Self, CategoryDomainError> {
         if label.trim().is_empty() {
-            return Err(CategoryDomainError::LabelEmpty.into());
+            return Err(CategoryDomainError::LabelEmpty);
         }
         Ok(Self {
             id: Uuid::new_v4().to_string(),
@@ -40,9 +40,9 @@ impl AssetCategory {
 
     /// Creates a new AssetCategory with a known deterministic ID.
     /// Used by system-seeded categories (e.g. the Cash category, CSH-017).
-    pub fn with_id(id: String, label: String) -> Result<Self> {
+    pub fn with_id(id: String, label: String) -> std::result::Result<Self, CategoryDomainError> {
         if label.trim().is_empty() {
-            return Err(CategoryDomainError::LabelEmpty.into());
+            return Err(CategoryDomainError::LabelEmpty);
         }
         Ok(Self { id, name: label })
     }

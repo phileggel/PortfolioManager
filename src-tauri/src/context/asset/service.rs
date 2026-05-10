@@ -1,7 +1,7 @@
+use super::application::{CategoryApplicationError, CategoryCrudError};
 use super::domain::{
     Asset, AssetCategory, AssetCategoryRepository, AssetClass, AssetDomainError, AssetPrice,
-    AssetPriceDomainError, AssetPriceRepository, AssetRepository, CategoryDomainError,
-    SYSTEM_CATEGORY_ID,
+    AssetPriceDomainError, AssetPriceRepository, AssetRepository, SYSTEM_CATEGORY_ID,
 };
 use crate::{
     context::asset::{CreateAssetDTO, UpdateAssetDTO},
@@ -110,7 +110,9 @@ impl AssetService {
         let category = self
             .get_category_by_id(&dto.category_id)
             .await?
-            .ok_or_else(|| CategoryDomainError::NotFound(dto.category_id.clone()))?;
+            .ok_or_else(|| CategoryApplicationError::NotFound {
+                id: dto.category_id.clone(),
+            })?;
 
         let asset = Asset::new(
             dto.name,
@@ -144,7 +146,9 @@ impl AssetService {
         let category = self
             .get_category_by_id(&dto.category_id)
             .await?
-            .ok_or_else(|| CategoryDomainError::NotFound(dto.category_id.clone()))?;
+            .ok_or_else(|| CategoryApplicationError::NotFound {
+                id: dto.category_id.clone(),
+            })?;
 
         let asset = existing.update_from(
             dto.name,
@@ -225,22 +229,46 @@ impl AssetService {
     // --- Category Methods ---
 
     /// Retrieves all non-deleted categories.
-    pub async fn get_all_categories(&self) -> Result<Vec<AssetCategory>> {
-        self.category_repo.get_all().await
+    ///
+    /// Read-only — the only failure mode is a repository error, surfaced as
+    /// `CategoryApplicationError::DatabaseError` (typed, payload-free per the
+    /// gold infra-translation rule). The full diagnostic stays in
+    /// `tracing::error!` server-side.
+    pub async fn get_all_categories(
+        &self,
+    ) -> std::result::Result<Vec<AssetCategory>, CategoryApplicationError> {
+        self.category_repo.get_all().await.map_err(|e| {
+            tracing::error!(target: BACKEND, err = ?e, "get_all_categories: repository failure");
+            CategoryApplicationError::DatabaseError
+        })
     }
 
     /// Retrieves a category by ID.
+    ///
+    /// Kept on `anyhow::Result` for now — used by `create_asset` / `update_asset`
+    /// (Asset CRUD), which has not been migrated to typed errors yet. Will be
+    /// narrowed to `Result<_, CategoryApplicationError>` when Asset CRUD migrates
+    /// in a follow-up PR.
     pub async fn get_category_by_id(&self, id: &str) -> Result<Option<AssetCategory>> {
         self.category_repo.get_by_id(id).await
     }
 
     /// Creates a category and publishes a CategoryUpdated event.
-    pub async fn create_category(&self, label: &str) -> Result<AssetCategory> {
-        if self.category_repo.find_by_name(label).await?.is_some() {
-            return Err(CategoryDomainError::DuplicateName.into());
+    pub async fn create_category(
+        &self,
+        label: &str,
+    ) -> std::result::Result<AssetCategory, CategoryCrudError> {
+        if find_category_by_name(&*self.category_repo, label)
+            .await?
+            .is_some()
+        {
+            return Err(CategoryApplicationError::DuplicateName.into());
         }
         let category = AssetCategory::new(label.to_string())?;
-        let category = self.category_repo.create(category).await?;
+        let category = self.category_repo.create(category).await.map_err(|e| {
+            tracing::error!(target: BACKEND, err = ?e, "create_category: repository failure");
+            CategoryApplicationError::DatabaseError
+        })?;
         if let Some(bus) = &self.event_bus {
             bus.publish(Event::CategoryUpdated);
         }
@@ -252,19 +280,22 @@ impl AssetService {
     /// `AssetCategory::update_from` on the loaded aggregate (single source of
     /// truth). `update_from` runs before the uniqueness query so SystemReadonly
     /// takes precedence over DuplicateName when both would apply.
-    pub async fn update_category(&self, id: &str, label: &str) -> Result<AssetCategory> {
-        let existing = self
-            .category_repo
-            .get_by_id(id)
-            .await?
-            .ok_or_else(|| CategoryDomainError::NotFound(id.to_string()))?;
+    pub async fn update_category(
+        &self,
+        id: &str,
+        label: &str,
+    ) -> std::result::Result<AssetCategory, CategoryCrudError> {
+        let existing = load_category_for_crud(&*self.category_repo, id).await?;
         let candidate = existing.update_from(label.to_string())?;
-        if let Some(other) = self.category_repo.find_by_name(&candidate.name).await? {
+        if let Some(other) = find_category_by_name(&*self.category_repo, &candidate.name).await? {
             if other.id != id {
-                return Err(CategoryDomainError::DuplicateName.into());
+                return Err(CategoryApplicationError::DuplicateName.into());
             }
         }
-        let category = self.category_repo.update(candidate).await?;
+        let category = self.category_repo.update(candidate).await.map_err(|e| {
+            tracing::error!(target: BACKEND, category_id = %id, err = ?e, "update_category: repository failure");
+            CategoryApplicationError::DatabaseError
+        })?;
         if let Some(bus) = &self.event_bus {
             bus.publish(Event::CategoryUpdated);
         }
@@ -274,16 +305,19 @@ impl AssetService {
     /// Reassigns assets to default category, then deletes the category. The
     /// system-category invariant (`SystemProtected`) is enforced inside
     /// `AssetCategory::ensure_deletable` on the loaded aggregate.
-    pub async fn delete_category(&self, category_id: &str) -> Result<()> {
-        let existing = self
-            .category_repo
-            .get_by_id(category_id)
-            .await?
-            .ok_or_else(|| CategoryDomainError::NotFound(category_id.to_string()))?;
+    pub async fn delete_category(
+        &self,
+        category_id: &str,
+    ) -> std::result::Result<(), CategoryCrudError> {
+        let existing = load_category_for_crud(&*self.category_repo, category_id).await?;
         existing.ensure_deletable()?;
         self.category_repo
             .reassign_assets_and_delete(category_id, SYSTEM_CATEGORY_ID)
-            .await?;
+            .await
+            .map_err(|e| {
+                tracing::error!(target: BACKEND, category_id = %category_id, err = ?e, "delete_category: repository failure");
+                CategoryApplicationError::DatabaseError
+            })?;
         if let Some(bus) = &self.event_bus {
             bus.publish(Event::CategoryUpdated);
         }
@@ -415,12 +449,50 @@ impl AssetService {
     }
 }
 
+/// Loads a category by ID for the CRUD family (update / delete). Translates
+/// `Ok(None)` into `CategoryApplicationError::NotFound { id }` and any
+/// repository error into `CategoryApplicationError::DatabaseError` after
+/// preserving the diagnostic chain server-side via `tracing::error!`.
+///
+/// Parallel to PR 5's `load_account` helper in the account BC. Used by
+/// `update_category` and `delete_category`.
+async fn load_category_for_crud(
+    repo: &dyn AssetCategoryRepository,
+    id: &str,
+) -> std::result::Result<AssetCategory, CategoryCrudError> {
+    match repo.get_by_id(id).await {
+        Ok(Some(cat)) => Ok(cat),
+        Ok(None) => Err(CategoryApplicationError::NotFound { id: id.to_string() }.into()),
+        Err(e) => {
+            tracing::error!(target: BACKEND, category_id = %id, err = ?e, "load_category_for_crud: repository failure");
+            Err(CategoryApplicationError::DatabaseError.into())
+        }
+    }
+}
+
+/// CRUD-family parallel to PR 5's `find_account_by_name`. Wraps the
+/// `find_by_name` uniqueness pre-check used by `create_category` and
+/// `update_category`, translating any repository failure into
+/// `CategoryApplicationError::DatabaseError`.
+///
+/// Unlike `load_category_for_crud`, `Ok(None)` is the **success** path here
+/// (the name is available); the caller decides what to do with `Some(existing)`.
+async fn find_category_by_name(
+    repo: &dyn AssetCategoryRepository,
+    name: &str,
+) -> std::result::Result<Option<AssetCategory>, CategoryCrudError> {
+    repo.find_by_name(name).await.map_err(|e| {
+        tracing::error!(target: BACKEND, name = %name, err = ?e, "find_category_by_name: repository failure");
+        CategoryApplicationError::DatabaseError.into()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::context::asset::{
-        AssetClass, CreateAssetDTO, MockAssetCategoryRepository, MockAssetPriceRepository,
-        MockAssetRepository,
+        AssetClass, CategoryDomainError, CreateAssetDTO, MockAssetCategoryRepository,
+        MockAssetPriceRepository, MockAssetRepository,
     };
     use std::sync::Arc;
     use std::time::Duration;
@@ -763,10 +835,10 @@ mod tests {
         let err = svc.create_category("Bonds").await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<CategoryDomainError>(),
-                Some(CategoryDomainError::DuplicateName)
+                err,
+                CategoryCrudError::Application(CategoryApplicationError::DuplicateName)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -788,10 +860,10 @@ mod tests {
         let err = svc.create_category("bonds").await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<CategoryDomainError>(),
-                Some(CategoryDomainError::DuplicateName)
+                err,
+                CategoryCrudError::Application(CategoryApplicationError::DuplicateName)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -816,10 +888,10 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<CategoryDomainError>(),
-                Some(CategoryDomainError::SystemReadonly)
+                err,
+                CategoryCrudError::Validation(CategoryDomainError::SystemReadonly)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -847,10 +919,10 @@ mod tests {
         let err = svc.update_category("cat2-id", "bonds").await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<CategoryDomainError>(),
-                Some(CategoryDomainError::DuplicateName)
+                err,
+                CategoryCrudError::Application(CategoryApplicationError::DuplicateName)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -872,10 +944,10 @@ mod tests {
         let err = svc.delete_category(SYSTEM_CATEGORY_ID).await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<CategoryDomainError>(),
-                Some(CategoryDomainError::SystemProtected)
+                err,
+                CategoryCrudError::Validation(CategoryDomainError::SystemProtected)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -1466,10 +1538,10 @@ mod tests {
 
         assert!(
             matches!(
-                err.downcast_ref::<CategoryDomainError>(),
-                Some(CategoryDomainError::NotFound(_))
+                err.downcast_ref::<CategoryApplicationError>(),
+                Some(CategoryApplicationError::NotFound { .. })
             ),
-            "expected CategoryNotFound, got: {err}"
+            "expected CategoryApplicationError::NotFound, got: {err}"
         );
     }
 
@@ -1738,5 +1810,97 @@ mod tests {
             .await
             .expect("watch sender dropped before event fired");
         assert_eq!(*rx.borrow(), Event::CategoryUpdated);
+    }
+
+    // -------------------------------------------------------------------------
+    // Category CRUD typed-error coverage (PR 6 — first PR enforcing the new
+    // gold infra-translation rule: per-BC `*ApplicationError::DatabaseError`
+    // with no `hint` payload; full diagnostic preserved server-side via
+    // `tracing::error!` only.)
+    // -------------------------------------------------------------------------
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("simulated DB failure")]
+    struct SimulatedDbError;
+
+    // PR 6 — create_category surfaces find_by_name repo failure as
+    // CategoryApplicationError::DatabaseError (no payload — diagnostic stays
+    // in tracing). Exercises the typed-error contract for the uniqueness
+    // pre-check failure path.
+    #[tokio::test]
+    async fn test_create_category_returns_database_error_when_find_by_name_fails() {
+        let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_find_by_name()
+            .times(1)
+            .return_once(|_| Err(SimulatedDbError.into()));
+        let svc = make_svc(
+            MockAssetRepository::new(),
+            cr,
+            MockAssetPriceRepository::new(),
+        );
+        let err = svc.create_category("anything").await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                CategoryCrudError::Application(CategoryApplicationError::DatabaseError)
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // PR 6 — update_category surfaces get_by_id Ok(None) as a typed
+    // application-class NotFound carrying the requested ID. Distinct from the
+    // get_by_id Err path (which becomes DatabaseError).
+    #[tokio::test]
+    async fn test_update_category_returns_not_found_when_aggregate_missing() {
+        let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_get_by_id().times(1).return_once(|_| Ok(None));
+        let svc = make_svc(
+            MockAssetRepository::new(),
+            cr,
+            MockAssetPriceRepository::new(),
+        );
+        let err = svc
+            .update_category("missing-id", "Anything")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                CategoryCrudError::Application(CategoryApplicationError::NotFound { id })
+                    if id == "missing-id"
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // PR 6 — delete_category surfaces reassign_assets_and_delete repo failure
+    // as DatabaseError. Distinct from the get_by_id Ok(None) path (NotFound)
+    // and the ensure_deletable path (Validation::SystemProtected).
+    #[tokio::test]
+    async fn test_delete_category_returns_database_error_when_reassign_fails() {
+        let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_get_by_id().times(1).return_once(|_| {
+            Ok(Some(AssetCategory::from_storage(
+                "some-id".to_string(),
+                "Bonds".to_string(),
+            )))
+        });
+        cr.expect_reassign_assets_and_delete()
+            .times(1)
+            .return_once(|_, _| Err(SimulatedDbError.into()));
+        let svc = make_svc(
+            MockAssetRepository::new(),
+            cr,
+            MockAssetPriceRepository::new(),
+        );
+        let err = svc.delete_category("some-id").await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                CategoryCrudError::Application(CategoryApplicationError::DatabaseError)
+            ),
+            "got: {err:?}"
+        );
     }
 }

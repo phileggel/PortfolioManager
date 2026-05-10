@@ -29,7 +29,7 @@ Industry convention: ISIN is the canonical identity (stable across rebrands, glo
 
 Tracked in `docs/plan/error-model-refactor.md`. Migrates services from `anyhow::Result` to typed Result with composed error enums per `docs/ddd-reference.md` § Errors. Supersedes the previous "untagged-composition rollout" and "convert services to typed Result" TODOs.
 
-Status (2026-05-09): PR 1 (asset/category state checks → aggregates) and PR 2 (cash typed Result + `CashRecordingError` + shared `core::InfrastructureError`) shipped. PR 3+ migrates one failure-surface-family per PR — see plan doc § Failure-surface-family map for the remaining ~10 families.
+Status (2026-05-10): PRs 1–5 shipped — asset/category state-checks (PR 1), cash typed Result + shared `InfrastructureError` (PR 2), holding-transaction unification (PR 3), open-holding typed (PR 4), Account CRUD typed (PR 5). The plan doc was tightened in PR 5 with the project-specific **infra translation rule** (per-BC `*ApplicationError::DatabaseError`; shared `InfrastructureError` does NOT appear on the FE wire) — PR 6+ enforces it. 7 families remaining (Account details, Category CRUD, Asset CRUD, Asset price, Archive/Delete asset, Account deletion, Web lookup) — see plan doc § Failure-surface-family map.
 
 ## (backend) — `correct_transaction` / `cancel_transaction` parameter style
 

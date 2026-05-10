@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AssetCategory, CategoryCommandError } from "@/bindings";
+import type {
+  AssetCategory,
+  CategoryApplicationError,
+  CategoryCrudError,
+  CategoryDomainError,
+} from "@/bindings";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const mockInvoke = vi.mocked(invoke);
@@ -24,8 +29,8 @@ describe("categoryGateway", () => {
     expect(mockInvoke).toHaveBeenCalledWith("get_categories");
   });
 
-  it("getCategories propagates error", async () => {
-    const err: CategoryCommandError = { code: "Unknown" };
+  it("getCategories surfaces DatabaseError on repo failure", async () => {
+    const err: CategoryApplicationError = { code: "DatabaseError" };
     mockInvoke.mockRejectedValue(err);
     const result = await categoryGateway.getCategories();
     expect(result).toEqual({ status: "error", error: err });
@@ -43,8 +48,22 @@ describe("categoryGateway", () => {
     });
   });
 
-  it("addCategory returns DuplicateName error", async () => {
-    const err: CategoryCommandError = { code: "DuplicateName" };
+  it("addCategory surfaces DuplicateName from application leaf", async () => {
+    const err: CategoryCrudError = { code: "DuplicateName" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await categoryGateway.addCategory("Equities");
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("addCategory surfaces LabelEmpty from domain leaf", async () => {
+    const err: CategoryDomainError = { code: "LabelEmpty" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await categoryGateway.addCategory("   ");
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("addCategory surfaces DatabaseError when repo write fails", async () => {
+    const err: CategoryApplicationError = { code: "DatabaseError" };
     mockInvoke.mockRejectedValue(err);
     const result = await categoryGateway.addCategory("Equities");
     expect(result).toEqual({ status: "error", error: err });
@@ -63,10 +82,17 @@ describe("categoryGateway", () => {
     });
   });
 
-  it("updateCategory returns SystemReadonly error", async () => {
-    const err: CategoryCommandError = { code: "SystemReadonly" };
+  it("updateCategory surfaces SystemReadonly from domain leaf", async () => {
+    const err: CategoryDomainError = { code: "SystemReadonly" };
     mockInvoke.mockRejectedValue(err);
     const result = await categoryGateway.updateCategory("cat-default", "New Name");
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("updateCategory surfaces NotFound with id payload", async () => {
+    const err: CategoryApplicationError = { code: "NotFound", id: "missing-id" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await categoryGateway.updateCategory("missing-id", "Anything");
     expect(result).toEqual({ status: "error", error: err });
   });
 
@@ -79,10 +105,17 @@ describe("categoryGateway", () => {
     expect(mockInvoke).toHaveBeenCalledWith("delete_category", { id: "cat-1" });
   });
 
-  it("deleteCategory returns SystemProtected error", async () => {
-    const err: CategoryCommandError = { code: "SystemProtected" };
+  it("deleteCategory surfaces SystemProtected from domain leaf", async () => {
+    const err: CategoryDomainError = { code: "SystemProtected" };
     mockInvoke.mockRejectedValue(err);
     const result = await categoryGateway.deleteCategory("cat-default");
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("deleteCategory surfaces DatabaseError when repo cascade fails", async () => {
+    const err: CategoryApplicationError = { code: "DatabaseError" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await categoryGateway.deleteCategory("cat-1");
     expect(result).toEqual({ status: "error", error: err });
   });
 });

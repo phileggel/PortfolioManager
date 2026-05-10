@@ -65,8 +65,11 @@ async unarchiveAsset(id: string) : Promise<Result<null, AssetCommandError>> {
 },
 /**
  * Fetches all active categories.
+ * 
+ * Read-only — only infrastructure failures can fire here, so the surface is
+ * the narrow `CategoryApplicationError` (only `DatabaseError` is reachable).
  */
-async getCategories() : Promise<Result<AssetCategory[], CategoryCommandError>> {
+async getCategories() : Promise<Result<AssetCategory[], CategoryApplicationError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_categories") };
 } catch (e) {
@@ -76,8 +79,14 @@ async getCategories() : Promise<Result<AssetCategory[], CategoryCommandError>> {
 },
 /**
  * Creates a new category.
+ * 
+ * Returns the typed `CategoryCrudError` directly — no boundary type or mapper
+ * is needed because every leaf in the composite (`CategoryApplicationError`,
+ * `CategoryDomainError`) already serializes with `#[serde(tag = "code")]`,
+ * and `CategoryCrudError`'s `#[serde(untagged)]` flattens them into a single
+ * FE-visible union.
  */
-async addCategory(label: string) : Promise<Result<AssetCategory, CategoryCommandError>> {
+async addCategory(label: string) : Promise<Result<AssetCategory, CategoryCrudError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("add_category", { label }) };
 } catch (e) {
@@ -88,7 +97,7 @@ async addCategory(label: string) : Promise<Result<AssetCategory, CategoryCommand
 /**
  * Updates an existing category.
  */
-async updateCategory(id: string, label: string) : Promise<Result<AssetCategory, CategoryCommandError>> {
+async updateCategory(id: string, label: string) : Promise<Result<AssetCategory, CategoryCrudError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_category", { id, label }) };
 } catch (e) {
@@ -99,7 +108,7 @@ async updateCategory(id: string, label: string) : Promise<Result<AssetCategory, 
 /**
  * Deletes a category.
  */
-async deleteCategory(id: string) : Promise<Result<null, CategoryCommandError>> {
+async deleteCategory(id: string) : Promise<Result<null, CategoryCrudError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_category", { id }) };
 } catch (e) {
@@ -916,17 +925,97 @@ fees: number;
  */
 note: string | null }
 /**
- * Typed error returned to the frontend for category commands.
+ * Application-layer rejections for the Category sub-aggregate of the Asset
+ * bounded context — concerns raised at the service layer rather than by an
+ * aggregate method on its own loaded state.
+ * 
+ * Per the rejection-layer rule (`docs/ddd-reference.md` § Errors):
+ * - `NotFound` is born when `category_repo.get_by_id` returns `Ok(None)` —
+ * a service-level translation, not an aggregate invariant.
+ * - `DuplicateName` is born when the service-layer `find_by_name` uniqueness
+ * pre-check matches an existing row — a cross-aggregate invariant.
+ * - `DatabaseError` is the application-layer translation of any raw
+ * infrastructure failure from a category-repo call. The diagnostic chain
+ * is preserved via `tracing::error!` at the same translation site; the
+ * variant carries no payload (per the project-specific infra-translation
+ * rule in `docs/plan/error-model-refactor.md`).
+ * 
+ * Tagged with `#[serde(tag = "code")]` so each variant serializes as a flat
+ * `{ code: "..." }` shape across the Tauri boundary. `NotFound` carries the
+ * requested ID as a struct field so the FE can surface it diagnostically.
  */
-export type CategoryCommandError = 
+export type CategoryApplicationError = 
+/**
+ * No category exists with the requested ID. Born at the service layer
+ * when `category_repo.get_by_id` returns `None`.
+ */
+{ code: "NotFound"; id: string } | 
+/**
+ * A category with the same name (case-insensitive) already exists. Born
+ * at the service layer from a `find_by_name` uniqueness pre-check before
+ * the repository write — a cross-aggregate invariant, not a single-
+ * aggregate state rule.
+ */
+{ code: "DuplicateName" } | 
+/**
+ * Application-layer translation of any infrastructure failure from a
+ * category-repo call. Unit variant — no `hint` payload on the wire; the
+ * full diagnostic chain is preserved server-side via `tracing::error!`
+ * at the translation site. FE shows the i18n key `error.DatabaseError`.
+ */
+{ code: "DatabaseError" }
+/**
+ * Service-layer composite for the **Category CRUD** failure surface — the
+ * write commands `add_category`, `update_category`, `delete_category`.
+ * 
+ * Replaces the anyhow-era `CategoryCommandError` boundary type. **First PR
+ * (6) enforcing the gold infra-translation rule**: this composite has NO
+ * shared `InfrastructureError` leaf — infra failures are translated at the
+ * application layer into `CategoryApplicationError::DatabaseError` (typed,
+ * payload-free) rather than passed through opaquely.
+ * 
+ * **This IS the FE-facing contract** for write commands. `get_categories`
+ * (read-only) returns the narrower `CategoryApplicationError` directly
+ * because it has no domain-rejection paths.
+ * 
+ * Each leaf lives in its rightful layer:
+ * - `CategoryApplicationError` — application layer (this module) — raises
+ * `NotFound`, `DuplicateName`, `DatabaseError`.
+ * - `CategoryDomainError` — domain layer (`asset/domain/`) — raises
+ * `LabelEmpty` (value-object validation), `SystemReadonly` /
+ * `SystemProtected` (aggregate-method invariants on loaded state).
+ * 
+ * `CategoryCrudError` itself owns no variants; it only enumerates which
+ * leaves the create/update/delete commands can produce.
+ */
+export type CategoryCrudError = 
+/**
+ * Service-layer rejection (`NotFound`, `DuplicateName`, `DatabaseError`).
+ */
+CategoryApplicationError | 
+/**
+ * Aggregate-level domain rejection (`LabelEmpty`, `SystemReadonly`,
+ * `SystemProtected`).
+ */
+CategoryDomainError
+/**
+ * Typed errors for category domain validation.
+ * 
+ * Only genuine aggregate-method or value-object rejections live here per the
+ * rejection-layer rule (`docs/ddd-reference.md` § Errors):
+ * - `LabelEmpty` — value-object validation in `AssetCategory::new` /
+ * `update_from`.
+ * - `SystemReadonly` / `SystemProtected` — aggregate methods
+ * `ensure_renameable` / `ensure_deletable` enforced on loaded state.
+ * 
+ * Tagged with `#[serde(tag = "code")]` so it can be exposed verbatim at the
+ * Tauri boundary through the `CategoryCrudError` untagged composite.
+ */
+export type CategoryDomainError = 
 /**
  * Category label is empty or whitespace-only.
  */
 { code: "LabelEmpty" } | 
-/**
- * A category with the same name already exists.
- */
-{ code: "DuplicateName" } | 
 /**
  * Attempt to rename the system default category.
  */
@@ -934,11 +1023,7 @@ export type CategoryCommandError =
 /**
  * Attempt to delete the system default category.
  */
-{ code: "SystemProtected" } | 
-/**
- * An unexpected server-side error occurred.
- */
-{ code: "Unknown" }
+{ code: "SystemProtected" }
 /**
  * Enriched view of a fully-closed position (quantity == 0, ACD-044).
  */

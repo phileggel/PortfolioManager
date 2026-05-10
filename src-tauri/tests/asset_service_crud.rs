@@ -153,13 +153,13 @@ async fn test_update_asset_rejected_when_category_not_found() {
         .await
         .unwrap_err();
 
-    use vault_compass_lib::context::asset::CategoryDomainError;
+    use vault_compass_lib::context::asset::CategoryApplicationError;
     assert!(
         matches!(
-            err.downcast_ref::<CategoryDomainError>(),
-            Some(CategoryDomainError::NotFound(_))
+            err.downcast_ref::<CategoryApplicationError>(),
+            Some(CategoryApplicationError::NotFound { .. })
         ),
-        "expected CategoryNotFound, got: {err}"
+        "expected CategoryApplicationError::NotFound, got: {err}"
     );
 }
 
