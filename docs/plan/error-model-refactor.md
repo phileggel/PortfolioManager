@@ -35,7 +35,34 @@ Quick reminder of the test (full version in the kit doc):
 - Aggregate method rejection → **domain**
 - Service-level pre-check (`NotFound`, uniqueness) → **application** (move into the aggregate if the rule is intrinsic — see B37)
 - Use-case orchestrator rejection (cross-BC) → **application**
-- Translated infra failure → **application** or opaque `Infrastructure(hint)` catch-all
+- Translated infra failure → **application** (project-specific tightening — see "Infra translation rule" below)
+
+### Infra translation rule (project-specific tightening)
+
+The kit doc gives an OR for infra failures: "translated at the application boundary into either a meaningful application error OR an opaque variant." This project picks the **first option as the default**, with the opaque variant reserved for the rare cases where no meaningful BC-level name exists (e.g. a true panic caught at the Tauri boundary). Concrete rules for this codebase:
+
+1. **Each BC's `*ApplicationError` enum carries its own infra-class variant** (`DatabaseError`, and later `ExternalApiError`, `FileSystemError`, etc. as new infra dependencies appear in that BC). The variant is a unit variant — no payload, no `hint` field on the wire.
+2. **The shared `InfrastructureError` type does NOT appear on the FE wire surface** — it must not be a leaf in any `*Error` composite, must not be a Tauri command's return type, and must not be Specta-derived if retained at all. It may survive only as a backend-internal type (today: not even that — services translate `anyhow::Error` from the repo trait directly).
+3. **The application layer is the only place infra translation happens**, and it always does two things at the same site: (a) call `tracing::error!` to preserve the full diagnostic chain server-side, (b) return the typed `*ApplicationError::DatabaseError` variant. No `format!("{e:#}")` payload-building on the wire.
+4. **Aggregate members** (e.g. Holding, Transaction inside the Account aggregate) follow their parent aggregate's BC — a `holding_repo` or `transaction_repo` failure surfaces as `AccountApplicationError::DatabaseError`, not a member-specific variant.
+5. **Cross-BC infra failures** (e.g. an orchestrator calling `asset_service.get_asset_by_id()` which fails) propagate via the asset BC's translated variant (`AssetApplicationError::DatabaseError`) re-exported through the use-case composite via `#[from]`. The use case does not re-name the failure; its variants are reserved for cross-BC PRECONDITIONS the orchestrator itself enforces.
+
+**Layer flow:**
+
+```
+Infrastructure   →  Application                  →  Boundary       →  Frontend
+(repo trait)        (service / use case)            (Tauri cmd)
+─────────────       ─────────────────────────       ─────────────     ─────────────
+anyhow::Result   →  tracing::error!(...)         →  passes typed   →  { code:
+(opaque, raw       AccountApplicationError::         error through      "DatabaseError" }
+sqlx errors)       DatabaseError                    unchanged
+```
+
+**Why the shared `InfrastructureError` type is decorative today**: the repo trait returns `anyhow::Result<T>`, so the type info is already lost before the application layer sees the error. A shared `InfrastructureError` wrapper around `anyhow::Error` adds a layer of indirection without adding signal — the application layer can't pattern-match into it for finer-grained translation. Per-BC `*ApplicationError::DatabaseError` is the right granularity given this constraint, and is honestly named because each BC's repos are all SQLite-backed today.
+
+**Future** (out of scope for the error-model refactor): if the repository trait is later typed (e.g. `Result<T, RepositoryError>` with variants like `UniqueViolation`, `ConnectionLost`), the application layer's translation can become more discriminating (`UniqueViolation` → `NameAlreadyExists` retry path, etc.). The wire contract stays the same — per-BC `*ApplicationError::*` variants. The shared `RepositoryError` becomes a backend-internal typed contract; still never on the FE wire.
+
+**Migration discipline**: this rule is enforced PR-by-PR going forward. PR 5 still ships with `Infrastructure(InfrastructureError)` as a leaf in `AccountCrudError` (it predates this rule's ratification). PR 6+ migrates one BC at a time per the surgical update principle — no big-bang rewrite. The rule applies to every NEW typed surface added from this point on.
 
 ### Layering
 
