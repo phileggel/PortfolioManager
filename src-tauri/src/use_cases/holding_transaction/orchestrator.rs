@@ -436,4 +436,118 @@ mod tests {
         assert_eq!(holdings[0].quantity, micro(2));
         assert_eq!(holdings[0].average_price, micro(100));
     }
+
+    // -------------------------------------------------------------------------
+    // Holding-tx orchestrator coverage (PR 3 — typed Result delegation)
+    // -------------------------------------------------------------------------
+
+    // TRX-027 — buy_holding happy path through the orchestrator: typed Result
+    // flows from AccountService through the orchestrator unchanged.
+    #[tokio::test]
+    async fn buy_holding_orchestrator_happy_path() {
+        use crate::context::account::TransactionType;
+
+        let pool = setup_pool().await;
+        let (account_svc, asset_svc) = make_services(&pool);
+        let asset = asset_svc.create_asset(base_asset_dto()).await.unwrap();
+        let account = account_svc
+            .create(
+                "Acc".to_string(),
+                "EUR".to_string(),
+                UpdateFrequency::ManualMonth,
+            )
+            .await
+            .unwrap();
+        let uc = HoldingTransactionUseCase::new(Arc::clone(&account_svc), asset_svc);
+        // Seed cash through the orchestrator so ensure_cash_for has been exercised
+        // before the buy.
+        uc.record_deposit(&account.id, "2024-01-01".to_string(), micro(10_000), None)
+            .await
+            .unwrap();
+
+        let tx = uc
+            .buy_holding(
+                &account.id,
+                asset.id.clone(),
+                "2024-01-15".to_string(),
+                micro(2),
+                micro(100),
+                micro(1),
+                0,
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(tx.transaction_type, TransactionType::Purchase);
+        assert_eq!(tx.total_amount, micro(200));
+    }
+
+    // PR 3 contract — when the orchestrator's ensure_cash_for cross-BC step
+    // fails (here: account does not exist), the typed surface returns
+    // `HoldingTransactionError::Infrastructure(Unknown { hint })` with the
+    // underlying error embedded in the hint. By design `ensure_cash_for_typed`
+    // opaques the entire cross-BC chain — including AccountNotFound — so the
+    // service-layer `Application(AccountNotFound)` surface is NOT reached.
+    #[tokio::test]
+    async fn buy_holding_orchestrator_unknown_account_returns_infrastructure() {
+        let pool = setup_pool().await;
+        let (account_svc, asset_svc) = make_services(&pool);
+        let uc = HoldingTransactionUseCase::new(account_svc, asset_svc);
+
+        let err = uc
+            .buy_holding(
+                "nonexistent-account-id",
+                "irrelevant-asset".to_string(),
+                "2024-01-15".to_string(),
+                micro(1),
+                micro(100),
+                micro(1),
+                0,
+                None,
+            )
+            .await
+            .unwrap_err();
+
+        match err {
+            HoldingTransactionError::Infrastructure(InfrastructureError::Unknown { hint }) => {
+                assert!(
+                    hint.contains("ensure_cash_for (buy_holding)"),
+                    "hint should identify the failing op, got: {hint}"
+                );
+                assert!(
+                    hint.contains("Account not found"),
+                    "hint should embed the underlying AccountNotFound, got: {hint}"
+                );
+            }
+            other => panic!("expected Infrastructure(Unknown), got: {other:?}"),
+        }
+    }
+
+    // CSH-022 — record_deposit through the orchestrator: typed Result is
+    // returned end-to-end (no anyhow at this boundary).
+    #[tokio::test]
+    async fn record_deposit_orchestrator_happy_path() {
+        use crate::context::account::TransactionType;
+
+        let pool = setup_pool().await;
+        let (account_svc, asset_svc) = make_services(&pool);
+        let account = account_svc
+            .create(
+                "Acc".to_string(),
+                "EUR".to_string(),
+                UpdateFrequency::ManualMonth,
+            )
+            .await
+            .unwrap();
+        let uc = HoldingTransactionUseCase::new(account_svc, asset_svc);
+
+        let tx = uc
+            .record_deposit(&account.id, "2024-01-01".to_string(), micro(500), None)
+            .await
+            .unwrap();
+
+        assert_eq!(tx.transaction_type, TransactionType::Deposit);
+        assert_eq!(tx.total_amount, micro(500));
+    }
 }

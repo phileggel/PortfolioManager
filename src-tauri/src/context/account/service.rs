@@ -484,6 +484,44 @@ mod tests {
     #[error("simulated DB failure")]
     struct SimulatedSaveError;
 
+    // PR 3 — to_holding_tx_error is the anyhow→typed bridge for the four
+    // holding-tx aggregate methods (buy/sell/correct/cancel) that still return
+    // `anyhow::Result`. One global test covers the three branches: known
+    // domain leaves are routed to their typed variant; everything else opaques
+    // to `Infrastructure(Unknown)` with the underlying message in the hint.
+    #[test]
+    fn to_holding_tx_error_maps_every_branch() {
+        // AccountOperationError leaf → Operation
+        let op_err = AccountOperationError::Oversell {
+            available: 10,
+            requested: 99,
+        };
+        assert!(matches!(
+            to_holding_tx_error(anyhow::Error::new(op_err)),
+            HoldingTransactionError::Operation(AccountOperationError::Oversell {
+                available: 10,
+                requested: 99
+            })
+        ));
+
+        // TransactionDomainError leaf → Validation
+        assert!(matches!(
+            to_holding_tx_error(anyhow::Error::new(TransactionDomainError::DateInFuture)),
+            HoldingTransactionError::Validation(TransactionDomainError::DateInFuture)
+        ));
+
+        // Anything else → Infrastructure(Unknown) with the message in the hint
+        match to_holding_tx_error(anyhow::anyhow!("synthetic infra failure")) {
+            HoldingTransactionError::Infrastructure(InfrastructureError::Unknown { hint }) => {
+                assert!(
+                    hint.contains("synthetic infra failure"),
+                    "hint should embed the underlying error, got: {hint}"
+                );
+            }
+            other => panic!("expected Infrastructure(Unknown), got: {other:?}"),
+        }
+    }
+
     async fn setup(pool: &sqlx::Pool<sqlx::Sqlite>) -> (AccountService, String) {
         let svc = AccountService::new(
             Box::new(SqliteAccountRepository::new(pool.clone())),
