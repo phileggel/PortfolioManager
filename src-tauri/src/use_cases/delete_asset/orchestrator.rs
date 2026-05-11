@@ -1,15 +1,8 @@
+use super::error::{DeleteAssetApplicationError, DeleteAssetError};
 use crate::context::account::AccountService;
 use crate::context::asset::AssetService;
-use anyhow::Result;
+use std::result::Result as StdResult;
 use std::sync::Arc;
-
-/// Typed error for the DeleteAssetUseCase.
-#[derive(Debug, thiserror::Error)]
-pub enum DeleteAssetError {
-    /// At least one transaction references this asset; deletion would break history.
-    #[error("Cannot delete an asset with existing transactions")]
-    ExistingTransactions,
-}
 
 /// Guards and delegates asset hard-deletion across the asset and account bounded contexts.
 /// Blocks deletion if any transaction references the asset (preserves history integrity).
@@ -28,18 +21,16 @@ impl DeleteAssetUseCase {
     }
 
     /// Deletes an asset, rejecting the request if any transaction references it.
-    pub async fn delete_asset(&self, asset_id: &str) -> Result<()> {
+    pub async fn delete_asset(&self, asset_id: &str) -> StdResult<(), DeleteAssetError> {
         if self
             .account_service
             .has_holding_entries_for_asset(asset_id)
             .await?
         {
-            return Err(DeleteAssetError::ExistingTransactions.into());
+            return Err(DeleteAssetApplicationError::ExistingTransactions.into());
         }
-        self.asset_service
-            .delete_asset(asset_id)
-            .await
-            .map_err(Into::into)
+        self.asset_service.delete_asset(asset_id).await?;
+        Ok(())
     }
 }
 
@@ -138,10 +129,10 @@ mod tests {
         let err = uc.delete_asset(&asset.id).await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<DeleteAssetError>(),
-                Some(DeleteAssetError::ExistingTransactions)
+                err,
+                DeleteAssetError::Application(DeleteAssetApplicationError::ExistingTransactions)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 

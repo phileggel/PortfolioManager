@@ -210,14 +210,14 @@ describe("useAssets", () => {
   it("archiveAsset returns error code on failure", async () => {
     mockArchiveAsset.mockResolvedValue({
       status: "error",
-      error: { code: "HasActiveHoldings" },
+      error: { code: "ActiveHoldings" },
     });
     const { result } = renderHook(() => useAssets());
     let ret: { error: string | null } = { error: null };
     await act(async () => {
       ret = await result.current.archiveAsset("a1");
     });
-    expect(ret.error).toBe("error.HasActiveHoldings");
+    expect(ret.error).toBe("error.ActiveHoldings");
   });
 
   // ── unarchiveAsset ────────────────────────────────────────────────────────────
@@ -251,13 +251,13 @@ describe("useAssets", () => {
   it("deleteAsset returns error code on failure", async () => {
     mockDeleteAsset.mockResolvedValue({
       status: "error",
-      error: { code: "HasActiveHoldings" },
+      error: { code: "ExistingTransactions" },
     });
     const { result } = renderHook(() => useAssets());
     let ret: { error: string | null } = { error: null };
     await act(async () => {
       ret = await result.current.deleteAsset("a1");
     });
-    expect(ret.error).toBe("error.HasActiveHoldings");
+    expect(ret.error).toBe("error.ExistingTransactions");
   });
 });

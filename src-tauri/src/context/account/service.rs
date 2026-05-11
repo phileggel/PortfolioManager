@@ -5,6 +5,7 @@ use super::domain::{
 };
 use crate::core::{logger::BACKEND, Event, InfrastructureError, SideEffectEventBus};
 use crate::use_cases::holding_transaction::OpenHoldingError;
+use std::result::Result as StdResult;
 use std::sync::Arc;
 use tracing::info;
 
@@ -387,19 +388,37 @@ impl AccountService {
     // -------------------------------------------------------------------------
 
     /// Returns true if any account holds a non-zero quantity of the given asset.
-    /// Used by the archive_asset use case to enforce OQ-6.
-    pub async fn has_active_holdings_for_asset(&self, asset_id: &str) -> anyhow::Result<bool> {
+    /// Used by the archive_asset use case to enforce OQ-6. Translates raw
+    /// infra failure into `AccountApplicationError::DatabaseError` per the
+    /// gold infra-translation rule.
+    pub async fn has_active_holdings_for_asset(
+        &self,
+        asset_id: &str,
+    ) -> StdResult<bool, AccountApplicationError> {
         self.holding_repo
             .has_active_holdings_for_asset(asset_id)
             .await
+            .map_err(|e| {
+                tracing::error!(target: BACKEND, asset_id = %asset_id, err = ?e, "has_active_holdings_for_asset: repository failure");
+                AccountApplicationError::DatabaseError
+            })
     }
 
     /// Returns true if any transaction references the given asset.
-    /// Used by the delete_asset use case to block hard-deletion when history exists.
-    pub async fn has_holding_entries_for_asset(&self, asset_id: &str) -> anyhow::Result<bool> {
+    /// Used by the delete_asset use case to block hard-deletion when history
+    /// exists. Translates raw infra failure into
+    /// `AccountApplicationError::DatabaseError` per the gold infra-translation rule.
+    pub async fn has_holding_entries_for_asset(
+        &self,
+        asset_id: &str,
+    ) -> StdResult<bool, AccountApplicationError> {
         self.transaction_repo
             .has_transactions_for_asset(asset_id)
             .await
+            .map_err(|e| {
+                tracing::error!(target: BACKEND, asset_id = %asset_id, err = ?e, "has_holding_entries_for_asset: repository failure");
+                AccountApplicationError::DatabaseError
+            })
     }
 
     /// Returns the count of active holdings and total transactions for an account (ACC-020).

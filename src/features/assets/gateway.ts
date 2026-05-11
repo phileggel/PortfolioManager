@@ -1,12 +1,12 @@
 import {
-  type ArchiveAssetCommandError,
+  type ArchiveAssetError,
   type Asset,
   type AssetApplicationError,
   type AssetCrudError,
   type AssetLookupResult,
   type CreateAssetDTO,
   commands,
-  type DeleteAssetCommandError,
+  type DeleteAssetError,
   type Result,
   type UpdateAssetDTO,
   type WebLookupCommandError,
@@ -33,7 +33,7 @@ export const assetGateway = {
     return await commands.updateAsset(dto);
   },
 
-  async archiveAsset(id: string): Promise<Result<null, ArchiveAssetCommandError>> {
+  async archiveAsset(id: string): Promise<Result<null, ArchiveAssetError>> {
     return await commands.archiveAsset(id);
   },
 
@@ -41,7 +41,7 @@ export const assetGateway = {
     return await commands.unarchiveAsset(id);
   },
 
-  async deleteAsset(id: string): Promise<Result<null, DeleteAssetCommandError>> {
+  async deleteAsset(id: string): Promise<Result<null, DeleteAssetError>> {
     return await commands.deleteAsset(id);
   },
 
