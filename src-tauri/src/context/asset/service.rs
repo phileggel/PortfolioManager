@@ -11,6 +11,7 @@ use crate::{
     core::{Event, SideEffectEventBus, BACKEND},
 };
 use anyhow::Result;
+use std::result::Result as StdResult;
 use std::sync::Arc;
 
 /// Orchestrates business logic for assets, categories, and market prices.
@@ -48,7 +49,7 @@ impl AssetService {
     ///
     /// Read-only — only infrastructure failures can fire here, so the surface
     /// is the narrow `AssetApplicationError` (only `DatabaseError` reachable).
-    pub async fn get_all_assets(&self) -> std::result::Result<Vec<Asset>, AssetApplicationError> {
+    pub async fn get_all_assets(&self) -> StdResult<Vec<Asset>, AssetApplicationError> {
         self.asset_repo.get_all().await.map_err(|e| {
             tracing::error!(target: BACKEND, err = ?e, "get_all_assets: repository failure");
             AssetApplicationError::DatabaseError
@@ -58,7 +59,7 @@ impl AssetService {
     /// Retrieves all assets including archived ones.
     pub async fn get_all_assets_with_archived(
         &self,
-    ) -> std::result::Result<Vec<Asset>, AssetApplicationError> {
+    ) -> StdResult<Vec<Asset>, AssetApplicationError> {
         self.asset_repo
             .get_all_including_archived()
             .await
@@ -128,10 +129,7 @@ impl AssetService {
     }
 
     /// Creates a new asset and publishes an AssetUpdated event.
-    pub async fn create_asset(
-        &self,
-        dto: CreateAssetDTO,
-    ) -> std::result::Result<Asset, AssetCrudError> {
+    pub async fn create_asset(&self, dto: CreateAssetDTO) -> StdResult<Asset, AssetCrudError> {
         let category = find_category_for_asset_crud(&*self.category_repo, &dto.category_id).await?;
 
         let asset = Asset::new(
@@ -159,10 +157,7 @@ impl AssetService {
     /// Updates an existing asset. Rejects if the asset is the system Cash Asset
     /// (CSH-016) or archived (R6) — both invariants are enforced inside
     /// `Asset::update_from` on the loaded aggregate (single source of truth).
-    pub async fn update_asset(
-        &self,
-        dto: UpdateAssetDTO,
-    ) -> std::result::Result<Asset, AssetCrudError> {
+    pub async fn update_asset(&self, dto: UpdateAssetDTO) -> StdResult<Asset, AssetCrudError> {
         let existing = load_asset_for_crud(&*self.asset_repo, &dto.asset_id).await?;
         let category = find_category_for_asset_crud(&*self.category_repo, &dto.category_id).await?;
 
@@ -190,7 +185,7 @@ impl AssetService {
 
     /// Archives an asset (reversible — R6). The system-asset invariant
     /// (CSH-016) is enforced inside `Asset::archive`.
-    pub async fn archive_asset(&self, asset_id: &str) -> std::result::Result<(), AssetCrudError> {
+    pub async fn archive_asset(&self, asset_id: &str) -> StdResult<(), AssetCrudError> {
         let existing = load_asset_for_crud(&*self.asset_repo, asset_id).await?;
         // Aggregate enforces the invariant; the returned mutated Asset is
         // intentionally discarded — the column-update fast path
@@ -209,7 +204,7 @@ impl AssetService {
 
     /// Unarchives an asset (R18). The system-asset invariant (CSH-016) is
     /// enforced inside `Asset::unarchive`.
-    pub async fn unarchive_asset(&self, asset_id: &str) -> std::result::Result<(), AssetCrudError> {
+    pub async fn unarchive_asset(&self, asset_id: &str) -> StdResult<(), AssetCrudError> {
         let existing = load_asset_for_crud(&*self.asset_repo, asset_id).await?;
         // See `archive_asset` for the rationale on discarding the returned aggregate.
         existing.unarchive()?;
@@ -227,7 +222,7 @@ impl AssetService {
     /// Soft-deletes an asset and publishes an AssetUpdated event. The
     /// system-asset invariant (CSH-016) is enforced inside
     /// `Asset::ensure_user_managed` on the loaded aggregate.
-    pub async fn delete_asset(&self, asset_id: &str) -> std::result::Result<(), AssetCrudError> {
+    pub async fn delete_asset(&self, asset_id: &str) -> StdResult<(), AssetCrudError> {
         let existing = load_asset_for_crud(&*self.asset_repo, asset_id).await?;
         existing.ensure_user_managed()?;
         self.asset_repo.delete(asset_id).await.map_err(|e| {
@@ -251,7 +246,7 @@ impl AssetService {
     /// `tracing::error!` server-side.
     pub async fn get_all_categories(
         &self,
-    ) -> std::result::Result<Vec<AssetCategory>, CategoryApplicationError> {
+    ) -> StdResult<Vec<AssetCategory>, CategoryApplicationError> {
         self.category_repo.get_all().await.map_err(|e| {
             tracing::error!(target: BACKEND, err = ?e, "get_all_categories: repository failure");
             CategoryApplicationError::DatabaseError
@@ -272,7 +267,7 @@ impl AssetService {
     pub async fn create_category(
         &self,
         label: &str,
-    ) -> std::result::Result<AssetCategory, CategoryCrudError> {
+    ) -> StdResult<AssetCategory, CategoryCrudError> {
         if find_category_by_name(&*self.category_repo, label)
             .await?
             .is_some()
@@ -299,7 +294,7 @@ impl AssetService {
         &self,
         id: &str,
         label: &str,
-    ) -> std::result::Result<AssetCategory, CategoryCrudError> {
+    ) -> StdResult<AssetCategory, CategoryCrudError> {
         let existing = load_category_for_crud(&*self.category_repo, id).await?;
         let candidate = existing.update_from(label.to_string())?;
         if let Some(other) = find_category_by_name(&*self.category_repo, &candidate.name).await? {
@@ -320,10 +315,7 @@ impl AssetService {
     /// Reassigns assets to default category, then deletes the category. The
     /// system-category invariant (`SystemProtected`) is enforced inside
     /// `AssetCategory::ensure_deletable` on the loaded aggregate.
-    pub async fn delete_category(
-        &self,
-        category_id: &str,
-    ) -> std::result::Result<(), CategoryCrudError> {
+    pub async fn delete_category(&self, category_id: &str) -> StdResult<(), CategoryCrudError> {
         let existing = load_category_for_crud(&*self.category_repo, category_id).await?;
         existing.ensure_deletable()?;
         self.category_repo
@@ -355,7 +347,7 @@ impl AssetService {
         asset_id: &str,
         date: &str,
         price_f64: f64,
-    ) -> std::result::Result<(), AssetPriceError> {
+    ) -> StdResult<(), AssetPriceError> {
         // MKT-043 — reject unknown asset (cross-aggregate check)
         ensure_asset_exists_for_price(&*self.asset_repo, asset_id).await?;
         // MKT-024 — convert f64 decimal to i64 micros at the IPC boundary
@@ -390,7 +382,7 @@ impl AssetService {
     pub async fn get_asset_prices(
         &self,
         asset_id: &str,
-    ) -> std::result::Result<Vec<AssetPrice>, AssetPriceError> {
+    ) -> StdResult<Vec<AssetPrice>, AssetPriceError> {
         ensure_asset_exists_for_price(&*self.asset_repo, asset_id).await?;
         self.price_repo
             .get_all_for_asset(asset_id)
@@ -410,7 +402,7 @@ impl AssetService {
         original_date: &str,
         new_date: &str,
         price_f64: f64,
-    ) -> std::result::Result<(), AssetPriceError> {
+    ) -> StdResult<(), AssetPriceError> {
         // Input validation runs before the DB existence check (fail-fast on bad inputs, MKT-082).
         // MKT-082 — finite check before micro conversion
         if !price_f64.is_finite() {
@@ -450,7 +442,7 @@ impl AssetService {
         &self,
         asset_id: &str,
         date: &str,
-    ) -> std::result::Result<(), AssetPriceError> {
+    ) -> StdResult<(), AssetPriceError> {
         ensure_price_exists_for(&*self.price_repo, asset_id, date).await?;
         self.price_repo.delete(asset_id, date).await.map_err(|e| {
             tracing::error!(target: BACKEND, asset_id = %asset_id, date = %date, err = ?e, "delete_asset_price: repository failure");
@@ -482,7 +474,7 @@ impl AssetService {
 async fn load_category_for_crud(
     repo: &dyn AssetCategoryRepository,
     id: &str,
-) -> std::result::Result<AssetCategory, CategoryCrudError> {
+) -> StdResult<AssetCategory, CategoryCrudError> {
     match repo.get_by_id(id).await {
         Ok(Some(cat)) => Ok(cat),
         Ok(None) => Err(CategoryApplicationError::NotFound { id: id.to_string() }.into()),
@@ -503,7 +495,7 @@ async fn load_category_for_crud(
 async fn find_category_by_name(
     repo: &dyn AssetCategoryRepository,
     name: &str,
-) -> std::result::Result<Option<AssetCategory>, CategoryCrudError> {
+) -> StdResult<Option<AssetCategory>, CategoryCrudError> {
     repo.find_by_name(name).await.map_err(|e| {
         tracing::error!(target: BACKEND, name = %name, err = ?e, "find_category_by_name: repository failure");
         CategoryApplicationError::DatabaseError.into()
@@ -517,7 +509,7 @@ async fn find_category_by_name(
 async fn load_asset_for_crud(
     repo: &dyn AssetRepository,
     asset_id: &str,
-) -> std::result::Result<Asset, AssetCrudError> {
+) -> StdResult<Asset, AssetCrudError> {
     match repo.get_by_id(asset_id).await {
         Ok(Some(asset)) => Ok(asset),
         Ok(None) => Err(AssetApplicationError::NotFound {
@@ -541,7 +533,7 @@ async fn load_asset_for_crud(
 async fn ensure_asset_exists_for_price(
     repo: &dyn AssetRepository,
     asset_id: &str,
-) -> std::result::Result<(), AssetPriceError> {
+) -> StdResult<(), AssetPriceError> {
     match repo.get_by_id(asset_id).await {
         Ok(Some(_)) => Ok(()),
         Ok(None) => Err(AssetApplicationError::NotFound {
@@ -563,7 +555,7 @@ async fn ensure_price_exists_for(
     repo: &dyn AssetPriceRepository,
     asset_id: &str,
     date: &str,
-) -> std::result::Result<(), AssetPriceError> {
+) -> StdResult<(), AssetPriceError> {
     match repo.get_by_asset_and_date(asset_id, date).await {
         Ok(Some(_)) => Ok(()),
         Ok(None) => Err(AssetPriceApplicationError::PriceNotFound {
@@ -588,7 +580,7 @@ async fn ensure_price_exists_for(
 async fn find_category_for_asset_crud(
     repo: &dyn AssetCategoryRepository,
     category_id: &str,
-) -> std::result::Result<AssetCategory, AssetCrudError> {
+) -> StdResult<AssetCategory, AssetCrudError> {
     match repo.get_by_id(category_id).await {
         Ok(Some(cat)) => Ok(cat),
         Ok(None) => Err(CategoryApplicationError::NotFound {
