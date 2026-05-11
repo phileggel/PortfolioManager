@@ -381,10 +381,10 @@ async getAccountDeletionSummary(accountId: string) : Promise<Result<AccountDelet
  * 
  * Routing is transparent to the caller: 12-char alphanumeric queries are sent
  * to the ISIN mapping endpoint; all others to the keyword search endpoint
- * (WEB-014).  Any network or HTTP failure is returned as
- * `WebLookupCommandError::NetworkError` (WEB-025).
+ * (WEB-014). Network or HTTP failures surface as
+ * `WebLookupApplicationError::NetworkError` (WEB-025).
  */
-async lookupAsset(query: string) : Promise<Result<AssetLookupResult[], WebLookupCommandError>> {
+async lookupAsset(query: string) : Promise<Result<AssetLookupResult[], WebLookupApplicationError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("lookup_asset", { query }) };
 } catch (e) {
@@ -1888,12 +1888,13 @@ export type UpdateInfo = {
  */
 version: string }
 /**
- * Typed error for `lookup_asset` (WEB-025).
+ * Application-layer errors raised by the asset web-lookup use case.
  * 
  * Single variant — covers all failure modes: network unreachable, connection
- * timeout, and any non-2xx HTTP status (including rate-limiting responses).
+ * timeout, and any non-2xx HTTP status (including rate-limiting responses)
+ * from the OpenFIGI client (WEB-025).
  */
-export type WebLookupCommandError = 
+export type WebLookupApplicationError = 
 /**
  * All network or HTTP-level failures.
  */

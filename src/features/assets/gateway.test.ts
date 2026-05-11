@@ -12,7 +12,7 @@ import type {
   CreateAssetDTO,
   DeleteAssetApplicationError,
   UpdateAssetDTO,
-  WebLookupCommandError,
+  WebLookupApplicationError,
 } from "@/bindings";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -309,7 +309,7 @@ describe("asset gateway — lookupAsset", () => {
 
   // WEB-025 — NetworkError is surfaced as { status: "error", error: { code: "NetworkError" } }
   it("lookupAsset returns NetworkError on network failure", async () => {
-    const err: WebLookupCommandError = { code: "NetworkError" };
+    const err: WebLookupApplicationError = { code: "NetworkError" };
     // bindings.ts catches the rejection and returns { status: "error", error: e }
     mockInvoke.mockRejectedValue(err);
 
