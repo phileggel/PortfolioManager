@@ -35,7 +35,10 @@ impl ArchiveAssetUseCase {
         {
             return Err(ArchiveAssetError::ActiveHoldings.into());
         }
-        self.asset_service.archive_asset(asset_id).await
+        self.asset_service
+            .archive_asset(asset_id)
+            .await
+            .map_err(Into::into)
     }
 }
 

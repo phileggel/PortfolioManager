@@ -1,7 +1,8 @@
 // Allow unreachable lint as tauri::command and specta::specta macros generate false positives
 #![allow(clippy::unreachable)]
 
-use crate::context::asset::domain::error::{AssetDomainError, AssetPriceDomainError};
+use crate::context::asset::application::{AssetApplicationError, AssetCrudError};
+use crate::context::asset::domain::error::AssetPriceDomainError;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -50,66 +51,6 @@ pub struct UpdateAssetDTO {
 
 // --- Boundary errors ---
 
-/// Typed error returned to the frontend for asset CRUD commands.
-#[derive(Debug, Serialize, Type, thiserror::Error)]
-#[serde(tag = "code")]
-pub enum AssetCommandError {
-    /// Asset name is empty or whitespace-only.
-    #[error("Asset name cannot be empty")]
-    NameEmpty,
-    /// Asset reference (ticker/ISIN) is empty.
-    #[error("Asset reference cannot be empty")]
-    ReferenceEmpty,
-    /// Risk level is outside the 1–5 range.
-    #[error("Risk level must be between 1 and 5")]
-    InvalidRiskLevel,
-    /// Currency string is not a valid ISO 4217 code.
-    #[error("Invalid currency code")]
-    InvalidCurrency,
-    /// Asset is archived and cannot be edited.
-    #[error("Cannot edit an archived asset")]
-    Archived,
-    /// Target asset is a system Cash Asset and cannot be edited or unarchived (CSH-016).
-    #[error("Cannot edit a system Cash Asset")]
-    CashAssetNotEditable,
-    /// No asset exists with the requested ID.
-    #[error("Asset not found")]
-    NotFound,
-    /// The category referenced in the DTO does not exist.
-    #[error("Category not found")]
-    CategoryNotFound,
-    /// An unexpected server-side error occurred.
-    #[error("An unexpected error occurred")]
-    Unknown,
-}
-
-fn to_asset_error(e: anyhow::Error) -> AssetCommandError {
-    if let Some(err) = e.downcast_ref::<AssetDomainError>() {
-        return match err {
-            AssetDomainError::NameEmpty => AssetCommandError::NameEmpty,
-            AssetDomainError::ReferenceEmpty => AssetCommandError::ReferenceEmpty,
-            AssetDomainError::InvalidRiskLevel(_) => AssetCommandError::InvalidRiskLevel,
-            AssetDomainError::InvalidCurrency(_) => AssetCommandError::InvalidCurrency,
-            AssetDomainError::Archived => AssetCommandError::Archived,
-            AssetDomainError::CashAssetNotEditable => AssetCommandError::CashAssetNotEditable,
-            AssetDomainError::NotFound(_) => AssetCommandError::NotFound,
-        };
-    }
-    if let Some(err) = e.downcast_ref::<crate::context::asset::CategoryApplicationError>() {
-        return match err {
-            crate::context::asset::CategoryApplicationError::NotFound { .. } => {
-                AssetCommandError::CategoryNotFound
-            }
-            other => {
-                tracing::error!(err = ?other, "unexpected category error in asset command");
-                AssetCommandError::Unknown
-            }
-        };
-    }
-    tracing::error!(err = ?e, "unexpected error in asset command");
-    AssetCommandError::Unknown
-}
-
 /// Typed error returned to the frontend for the record_asset_price command.
 #[derive(Debug, Serialize, Type, thiserror::Error)]
 #[serde(tag = "code")]
@@ -132,8 +73,8 @@ pub enum AssetPriceCommandError {
 }
 
 fn to_asset_price_error(e: anyhow::Error) -> AssetPriceCommandError {
-    if let Some(err) = e.downcast_ref::<AssetDomainError>() {
-        if matches!(err, AssetDomainError::NotFound(_)) {
+    if let Some(err) = e.downcast_ref::<AssetApplicationError>() {
+        if matches!(err, AssetApplicationError::NotFound { .. }) {
             return AssetPriceCommandError::AssetNotFound;
         }
     }
@@ -213,12 +154,8 @@ fn to_delete_asset_price_error(e: anyhow::Error) -> DeleteAssetPriceCommandError
 /// Fetches all active (non-archived) assets.
 #[tauri::command]
 #[specta::specta]
-pub async fn get_assets(state: State<'_, AppState>) -> Result<Vec<Asset>, AssetCommandError> {
-    state
-        .asset_service
-        .get_all_assets()
-        .await
-        .map_err(to_asset_error)
+pub async fn get_assets(state: State<'_, AppState>) -> Result<Vec<Asset>, AssetApplicationError> {
+    state.asset_service.get_all_assets().await
 }
 
 /// Fetches all assets including archived ones.
@@ -226,12 +163,8 @@ pub async fn get_assets(state: State<'_, AppState>) -> Result<Vec<Asset>, AssetC
 #[specta::specta]
 pub async fn get_assets_with_archived(
     state: State<'_, AppState>,
-) -> Result<Vec<Asset>, AssetCommandError> {
-    state
-        .asset_service
-        .get_all_assets_with_archived()
-        .await
-        .map_err(to_asset_error)
+) -> Result<Vec<Asset>, AssetApplicationError> {
+    state.asset_service.get_all_assets_with_archived().await
 }
 
 /// Adds a new asset.
@@ -240,12 +173,8 @@ pub async fn get_assets_with_archived(
 pub async fn add_asset(
     state: State<'_, AppState>,
     dto: CreateAssetDTO,
-) -> Result<Asset, AssetCommandError> {
-    state
-        .asset_service
-        .create_asset(dto)
-        .await
-        .map_err(to_asset_error)
+) -> Result<Asset, AssetCrudError> {
+    state.asset_service.create_asset(dto).await
 }
 
 /// Updates an existing asset.
@@ -254,26 +183,15 @@ pub async fn add_asset(
 pub async fn update_asset(
     state: State<'_, AppState>,
     dto: UpdateAssetDTO,
-) -> Result<Asset, AssetCommandError> {
-    state
-        .asset_service
-        .update_asset(dto)
-        .await
-        .map_err(to_asset_error)
+) -> Result<Asset, AssetCrudError> {
+    state.asset_service.update_asset(dto).await
 }
 
 /// Unarchives an asset (R18).
 #[tauri::command]
 #[specta::specta]
-pub async fn unarchive_asset(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), AssetCommandError> {
-    state
-        .asset_service
-        .unarchive_asset(&id)
-        .await
-        .map_err(to_asset_error)
+pub async fn unarchive_asset(state: State<'_, AppState>, id: String) -> Result<(), AssetCrudError> {
+    state.asset_service.unarchive_asset(&id).await
 }
 
 // --- Categories ---
@@ -395,24 +313,15 @@ pub async fn delete_asset_price(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::asset::domain::error::{AssetDomainError, AssetPriceDomainError};
+    use crate::context::asset::domain::error::AssetPriceDomainError;
 
-    // CSH-016 — to_asset_error maps AssetDomainError::CashAssetNotEditable to AssetCommandError::CashAssetNotEditable
-    #[test]
-    fn to_asset_error_maps_cash_asset_not_editable() {
-        let domain_err = AssetDomainError::CashAssetNotEditable;
-        let cmd_err = to_asset_error(anyhow::anyhow!(domain_err));
-        assert!(
-            matches!(cmd_err, AssetCommandError::CashAssetNotEditable),
-            "got: {cmd_err:?}"
-        );
-    }
-
-    // MKT-043 — to_asset_price_error maps AssetDomainError::NotFound to AssetPriceCommandError::AssetNotFound
+    // MKT-043 — to_asset_price_error maps AssetApplicationError::NotFound to AssetPriceCommandError::AssetNotFound
     #[test]
     fn to_asset_price_error_maps_asset_not_found() {
-        let domain_err = AssetDomainError::NotFound("asset-xyz".to_string());
-        let cmd_err = to_asset_price_error(anyhow::anyhow!(domain_err));
+        let app_err = AssetApplicationError::NotFound {
+            id: "asset-xyz".to_string(),
+        };
+        let cmd_err = to_asset_price_error(anyhow::anyhow!(app_err));
         assert!(
             matches!(cmd_err, AssetPriceCommandError::AssetNotFound),
             "got: {cmd_err:?}"

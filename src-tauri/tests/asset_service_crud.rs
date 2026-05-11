@@ -123,13 +123,10 @@ async fn test_update_asset_rejected_when_archived() {
         .await
         .unwrap_err();
 
-    use vault_compass_lib::context::asset::AssetDomainError;
+    use vault_compass_lib::context::asset::{AssetCrudError, AssetDomainError};
     assert!(
-        matches!(
-            err.downcast_ref::<AssetDomainError>(),
-            Some(AssetDomainError::Archived)
-        ),
-        "expected Archived, got: {err}"
+        matches!(&err, AssetCrudError::Validation(AssetDomainError::Archived)),
+        "expected Archived, got: {err:?}"
     );
 }
 
@@ -153,13 +150,13 @@ async fn test_update_asset_rejected_when_category_not_found() {
         .await
         .unwrap_err();
 
-    use vault_compass_lib::context::asset::CategoryApplicationError;
+    use vault_compass_lib::context::asset::{AssetCrudError, CategoryApplicationError};
     assert!(
         matches!(
-            err.downcast_ref::<CategoryApplicationError>(),
-            Some(CategoryApplicationError::NotFound { .. })
+            &err,
+            AssetCrudError::CategoryApplication(CategoryApplicationError::NotFound { .. })
         ),
-        "expected CategoryApplicationError::NotFound, got: {err}"
+        "expected CategoryApplicationError::NotFound, got: {err:?}"
     );
 }
 

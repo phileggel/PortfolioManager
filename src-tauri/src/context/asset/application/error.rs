@@ -1,4 +1,4 @@
-use crate::context::asset::domain::CategoryDomainError;
+use crate::context::asset::domain::{AssetDomainError, CategoryDomainError};
 
 /// Application-layer rejections for the Category sub-aggregate of the Asset
 /// bounded context — concerns raised at the service layer rather than by an
@@ -40,6 +40,63 @@ pub enum CategoryApplicationError {
     /// at the translation site. FE shows the i18n key `error.DatabaseError`.
     #[error("An unexpected database error occurred")]
     DatabaseError,
+}
+
+/// Application-layer rejections for the Asset aggregate of the Asset BC —
+/// concerns raised at the service layer rather than by an aggregate method on
+/// its own loaded state.
+///
+/// Per the rejection-layer rule (`docs/ddd-reference.md` § Errors):
+/// - `NotFound` is born when `asset_repo.get_by_id` returns `Ok(None)` — a
+///   service-level translation, not an aggregate invariant. Carries the
+///   requested ID for FE diagnostic surfacing.
+/// - `DatabaseError` is the application-layer translation of any raw
+///   infrastructure failure from an asset-repo call. The diagnostic chain is
+///   preserved via `tracing::error!` at the same translation site; the
+///   variant carries no payload (per the project-specific infra-translation
+///   rule in `docs/plan/error-model-refactor.md`).
+#[derive(Debug, thiserror::Error, serde::Serialize, specta::Type, Clone)]
+#[serde(tag = "code")]
+pub enum AssetApplicationError {
+    /// No asset exists with the requested ID. Born at the service layer when
+    /// `asset_repo.get_by_id` returns `None`.
+    #[error("Asset not found: {id}")]
+    NotFound {
+        /// The ID the caller asked for.
+        id: String,
+    },
+    /// Application-layer translation of any infrastructure failure from an
+    /// asset-repo call. Unit variant — no `hint` payload on the wire; the full
+    /// diagnostic chain is preserved server-side via `tracing::error!` at the
+    /// translation site. FE shows the i18n key `error.DatabaseError`.
+    #[error("An unexpected database error occurred")]
+    DatabaseError,
+}
+
+/// Service-layer composite for the Asset CRUD failure surface — the write
+/// commands `add_asset`, `update_asset`, `unarchive_asset`, plus the
+/// service-internal `archive_asset` / `delete_asset` consumed by use cases.
+///
+/// Composes three leaves: `AssetApplicationError` (NotFound, DatabaseError),
+/// `AssetDomainError` (input validation + archive / cash / system-managed
+/// invariants), `CategoryApplicationError` (cross-aggregate category lookup
+/// in create/update). No `Infrastructure` leaf — infra failures translate at
+/// the application layer into `AssetApplicationError::DatabaseError` per the
+/// project's infra-translation rule (`docs/plan/error-model-refactor.md`).
+#[derive(Debug, thiserror::Error, serde::Serialize, specta::Type)]
+#[serde(untagged)]
+pub enum AssetCrudError {
+    /// Service-layer rejection (`NotFound`, `DatabaseError`).
+    #[error(transparent)]
+    Application(#[from] AssetApplicationError),
+    /// Aggregate-level domain rejection (input validation, archive / cash /
+    /// system-managed invariants on loaded state).
+    #[error(transparent)]
+    Validation(#[from] AssetDomainError),
+    /// Category-side application rejection — surfaces `NotFound { id }` from the
+    /// cross-aggregate category lookup in `create_asset` / `update_asset`.
+    #[error(transparent)]
+    CategoryApplication(#[from] CategoryApplicationError),
 }
 
 /// Service-layer composite for the **Category CRUD** failure surface — the

@@ -16,6 +16,11 @@ While coding:
 - Every changed line must trace directly to the user's request.
 - If you notice unrelated dead code, mention it — don't delete it.
 - If 200 lines could be 50, stop and rewrite. Ask: "Would a senior engineer say this is overcomplicated?"
+- **Surgical** — touch only what the task requires. Don't rewrite adjacent code "while you're here" beyond the bit-by-bit threshold (see § Gold Standards).
+- **Gold unless not possible** — apply the gold standards (backend layout, frontend layout, error model) for new code and small surgical updates. When applying gold would breach the bit-by-bit threshold, match the current project standard in the touched area and continue.
+- **Boyscout principle** — the touched area should leave a little better than you found it: collapse a duplicated helper, drop a now-redundant import, tighten a brittle pattern. Stay under the bit-by-bit threshold; if the cleanup balloons, defer it to its own PR.
+- **No transition comments** — don't add tombstones like `// X was migrated to Y in PR N`. Git history carries the trail. Doc comments describe what the code IS, not what it USED TO BE.
+- **Challenge reviewer findings** — reviewer agents (backend / frontend / arch / security) have false-positive rates. Before folding a finding, ask: is this a real issue in this codebase, or is it the reviewer applying a generic best-practice that doesn't fit the local context? Particularly applies to techdebt-class flags ("pre-existing tech debt", `[DECISION]` calls, suggestions to extract / generalise / add defensive code). Folding a genuinely-false-positive into `docs/techdebt.md` pollutes the backlog with non-issues that future `/whats-next` runs will surface as work. When unsure, push back in chat or ask the user before persisting.
 
 ## ⚠️ Workflow & Planning
 
