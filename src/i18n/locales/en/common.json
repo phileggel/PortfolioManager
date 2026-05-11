@@ -368,6 +368,8 @@
     "NotPositive": "Price must be strictly positive.",
     "NonFinite": "Price must be a finite number.",
     "DateInFuture": "Date cannot be in the future.",
+    "InvalidDateFormat": "Invalid date format — expected YYYY-MM-DD.",
+    "PriceNotFound": "The price record was not found.",
     "AccountNotFound": "Account not found.",
     "TransactionNotFound": "Transaction not found.",
     "AssetNotFound": "Asset not found.",

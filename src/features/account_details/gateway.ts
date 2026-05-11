@@ -2,15 +2,13 @@ import type {
   AccountDetailsCommandError,
   AccountDetailsResponse,
   AssetPrice,
-  AssetPriceCommandError,
-  DeleteAssetPriceCommandError,
+  AssetPriceError,
   DepositDTO,
   HoldingTransactionError,
   OpenHoldingDTO,
   OpenHoldingError,
   Result,
   Transaction,
-  UpdateAssetPriceCommandError,
   WithdrawalDTO,
 } from "@/bindings";
 import { commands, events } from "@/bindings";
@@ -26,11 +24,11 @@ export const accountDetailsGateway = {
     assetId: string,
     date: string,
     price: number,
-  ): Promise<Result<null, AssetPriceCommandError>> {
+  ): Promise<Result<null, AssetPriceError>> {
     return commands.recordAssetPrice(assetId, date, price);
   },
 
-  async getAssetPrices(assetId: string): Promise<Result<AssetPrice[], AssetPriceCommandError>> {
+  async getAssetPrices(assetId: string): Promise<Result<AssetPrice[], AssetPriceError>> {
     return commands.getAssetPrices(assetId);
   },
 
@@ -39,14 +37,11 @@ export const accountDetailsGateway = {
     originalDate: string,
     newDate: string,
     newPrice: number,
-  ): Promise<Result<null, UpdateAssetPriceCommandError>> {
+  ): Promise<Result<null, AssetPriceError>> {
     return commands.updateAssetPrice(assetId, originalDate, newDate, newPrice);
   },
 
-  async deleteAssetPrice(
-    assetId: string,
-    date: string,
-  ): Promise<Result<null, DeleteAssetPriceCommandError>> {
+  async deleteAssetPrice(assetId: string, date: string): Promise<Result<null, AssetPriceError>> {
     return commands.deleteAssetPrice(assetId, date);
   },
 

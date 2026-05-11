@@ -1,6 +1,7 @@
 use super::error::AssetPriceDomainError;
 use anyhow::Result;
 use async_trait::async_trait;
+
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -23,15 +24,19 @@ impl AssetPrice {
 
     /// Creates a new AssetPrice after validating price > 0 (MKT-021) and
     /// date is well-formed ISO 8601 and not in the future (MKT-022).
-    pub fn new(asset_id: String, date: String, price: i64) -> Result<Self> {
+    pub fn new(
+        asset_id: String,
+        date: String,
+        price: i64,
+    ) -> std::result::Result<Self, AssetPriceDomainError> {
         if price <= 0 {
-            return Err(AssetPriceDomainError::NotPositive.into());
+            return Err(AssetPriceDomainError::NotPositive);
         }
         let parsed = NaiveDate::parse_from_str(&date, "%Y-%m-%d")
-            .map_err(|_| anyhow::anyhow!("Invalid date format — expected YYYY-MM-DD"))?;
+            .map_err(|_| AssetPriceDomainError::InvalidDateFormat { date: date.clone() })?;
         let today = chrono::Local::now().date_naive();
         if parsed > today {
-            return Err(AssetPriceDomainError::DateInFuture.into());
+            return Err(AssetPriceDomainError::DateInFuture);
         }
         Ok(Self {
             asset_id,
@@ -83,30 +88,24 @@ mod tests {
     fn new_rejects_non_positive_price() {
         let err = AssetPrice::new("a".to_string(), "2026-01-01".to_string(), 0).unwrap_err();
         assert!(
-            matches!(
-                err.downcast_ref::<AssetPriceDomainError>(),
-                Some(AssetPriceDomainError::NotPositive)
-            ),
-            "got: {err}"
+            matches!(err, AssetPriceDomainError::NotPositive),
+            "got: {err:?}"
         );
         let err = AssetPrice::new("a".to_string(), "2026-01-01".to_string(), -1).unwrap_err();
         assert!(
-            matches!(
-                err.downcast_ref::<AssetPriceDomainError>(),
-                Some(AssetPriceDomainError::NotPositive)
-            ),
-            "got: {err}"
+            matches!(err, AssetPriceDomainError::NotPositive),
+            "got: {err:?}"
         );
     }
 
-    // MKT-022 — new() rejects a malformed date string
+    // MKT-022 — new() rejects a malformed date string with the offending input echoed back
     #[test]
     fn new_rejects_malformed_date() {
         let err =
             AssetPrice::new("a".to_string(), "not-a-date".to_string(), 1_000_000).unwrap_err();
         assert!(
-            err.to_string().contains("Invalid date format"),
-            "got: {err}"
+            matches!(&err, AssetPriceDomainError::InvalidDateFormat { date } if date == "not-a-date"),
+            "got: {err:?}"
         );
     }
 
@@ -116,11 +115,8 @@ mod tests {
         let err =
             AssetPrice::new("a".to_string(), "2099-12-31".to_string(), 1_000_000).unwrap_err();
         assert!(
-            matches!(
-                err.downcast_ref::<AssetPriceDomainError>(),
-                Some(AssetPriceDomainError::DateInFuture)
-            ),
-            "got: {err}"
+            matches!(err, AssetPriceDomainError::DateInFuture),
+            "got: {err:?}"
         );
     }
 

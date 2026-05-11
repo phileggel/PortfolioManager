@@ -20,9 +20,9 @@ pub fn create_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .typ::<asset::CategoryCrudError>()
         .typ::<asset::CategoryApplicationError>()
         .typ::<asset::AssetPrice>()
-        .typ::<asset::AssetPriceCommandError>()
-        .typ::<asset::UpdateAssetPriceCommandError>()
-        .typ::<asset::DeleteAssetPriceCommandError>()
+        .typ::<asset::AssetPriceDomainError>()
+        .typ::<asset::AssetPriceApplicationError>()
+        .typ::<asset::AssetPriceError>()
         // ----- account BC -----
         .typ::<account::Account>()
         .typ::<account::UpdateFrequency>()

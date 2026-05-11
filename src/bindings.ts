@@ -120,7 +120,7 @@ async deleteCategory(id: string) : Promise<Result<null, CategoryCrudError>> {
  * Records (or overwrites) a market price for an asset on a given date (MKT-024/025).
  * price is a human-readable decimal; the backend converts to i64 micros at this boundary (MKT-024).
  */
-async recordAssetPrice(assetId: string, date: string, price: number) : Promise<Result<null, AssetPriceCommandError>> {
+async recordAssetPrice(assetId: string, date: string, price: number) : Promise<Result<null, AssetPriceError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("record_asset_price", { assetId, date, price }) };
 } catch (e) {
@@ -131,7 +131,7 @@ async recordAssetPrice(assetId: string, date: string, price: number) : Promise<R
 /**
  * Returns all recorded prices for the given asset, sorted date descending (MKT-072).
  */
-async getAssetPrices(assetId: string) : Promise<Result<AssetPrice[], AssetPriceCommandError>> {
+async getAssetPrices(assetId: string) : Promise<Result<AssetPrice[], AssetPriceError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_asset_prices", { assetId }) };
 } catch (e) {
@@ -142,7 +142,7 @@ async getAssetPrices(assetId: string) : Promise<Result<AssetPrice[], AssetPriceC
 /**
  * Updates the date and/or price of an existing price record (MKT-083/084).
  */
-async updateAssetPrice(assetId: string, originalDate: string, newDate: string, newPrice: number) : Promise<Result<null, UpdateAssetPriceCommandError>> {
+async updateAssetPrice(assetId: string, originalDate: string, newDate: string, newPrice: number) : Promise<Result<null, AssetPriceError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_asset_price", { assetId, originalDate, newDate, newPrice }) };
 } catch (e) {
@@ -153,7 +153,7 @@ async updateAssetPrice(assetId: string, originalDate: string, newDate: string, n
 /**
  * Deletes a specific price record by (asset_id, date) (MKT-090).
  */
-async deleteAssetPrice(assetId: string, date: string) : Promise<Result<null, DeleteAssetPriceCommandError>> {
+async deleteAssetPrice(assetId: string, date: string) : Promise<Result<null, AssetPriceError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_asset_price", { assetId, date }) };
 } catch (e) {
@@ -914,19 +914,51 @@ date: string;
  */
 price: number }
 /**
- * Typed error returned to the frontend for the record_asset_price command.
+ * Application-layer rejections for the AssetPrice sub-aggregate of the Asset
+ * BC — concerns raised at the service layer rather than by an aggregate method
+ * on its own loaded state.
+ * 
+ * Per the rejection-layer rule (`docs/ddd-reference.md` § Errors):
+ * - `PriceNotFound` is born when `price_repo.get_by_asset_and_date` returns
+ * `Ok(None)` for an `(asset_id, date)` pair the service expected to exist
+ * (update / delete) — a service-level translation, not an aggregate
+ * invariant. Carries both keys for FE diagnostic surfacing.
+ * - `DatabaseError` is the application-layer translation of any raw infra
+ * failure from a price-repo call. The diagnostic chain is preserved via
+ * `tracing::error!` at the same translation site; the variant carries no
+ * payload (per the project-specific infra-translation rule in
+ * `docs/plan/error-model-refactor.md`).
  */
-export type AssetPriceCommandError = 
+export type AssetPriceApplicationError = 
 /**
- * The asset referenced in the command does not exist (MKT-043).
+ * No price record exists for the given (asset_id, date) pair (MKT-083 / MKT-090).
  */
-{ code: "AssetNotFound" } | 
+{ code: "PriceNotFound"; asset_id: string; date: string } | 
+/**
+ * Application-layer translation of any infrastructure failure from a
+ * price-repo call. Unit variant — no `hint` payload on the wire; the full
+ * diagnostic chain is preserved server-side via `tracing::error!` at the
+ * translation site. FE shows the i18n key `error.DatabaseError`.
+ */
+{ code: "DatabaseError" }
+/**
+ * Typed errors for asset price value-object validation. Only aggregate-method
+ * or value-object rejections live here per the rejection-layer rule
+ * (`docs/ddd-reference.md` § Errors); the "no record at this (asset_id, date)"
+ * rejection is service-level and lives in `AssetPriceApplicationError`.
+ * 
+ * Tagged with `#[serde(tag = "code")]` for exposure through the
+ * `AssetPriceError` untagged composite. Payload-bearing variants are
+ * struct-shaped (internally-tagged serde rejects tuple variants).
+ */
+export type AssetPriceDomainError = 
 /**
  * Price must be strictly positive.
  */
 { code: "NotPositive" } | 
 /**
- * Price value is not a finite number.
+ * Price value is not a finite floating-point number.
+ * Emitted by the service boundary before micro conversion; `AssetPrice::new()` never produces this.
  */
 { code: "NonFinite" } | 
 /**
@@ -934,9 +966,45 @@ export type AssetPriceCommandError =
  */
 { code: "DateInFuture" } | 
 /**
- * An unexpected server-side error occurred.
+ * The supplied date string is not parseable as ISO 8601 (`YYYY-MM-DD`).
  */
-{ code: "Unknown" }
+{ code: "InvalidDateFormat"; date: string }
+/**
+ * Service-layer composite for the **AssetPrice** failure surface — the write
+ * commands `record_asset_price` / `update_asset_price` / `delete_asset_price`
+ * and the read `get_asset_prices`.
+ * 
+ * Replaces the anyhow-era trio of boundary types
+ * (`AssetPriceCommandError`, `UpdateAssetPriceCommandError`,
+ * `DeleteAssetPriceCommandError`) with a single composite per the
+ * family-map (`docs/plan/error-model-refactor.md` § Failure-surface-family map
+ * → Asset price row). Continues the gold infra-translation rule (no shared
+ * `InfrastructureError` leaf — translated to per-BC `*ApplicationError::DatabaseError`).
+ * 
+ * Composes three leaves:
+ * - `AssetApplicationError` — cross-aggregate asset-existence check
+ * (`record_asset_price` and `get_asset_prices` reject when the asset row
+ * itself is missing — MKT-043).
+ * - `AssetPriceApplicationError` — price-row rejection (`PriceNotFound`,
+ * `DatabaseError`).
+ * - `AssetPriceDomainError` — value-object validation
+ * (`NotPositive` / `NonFinite` / `DateInFuture` / `InvalidDateFormat`).
+ */
+export type AssetPriceError = 
+/**
+ * Asset-row rejection (`NotFound`, `DatabaseError`) from the
+ * asset-existence check that gates write commands.
+ */
+AssetApplicationError | 
+/**
+ * Price-row rejection (`PriceNotFound`, `DatabaseError`).
+ */
+AssetPriceApplicationError | 
+/**
+ * Value-object validation (`NotPositive`, `NonFinite`, `DateInFuture`,
+ * `InvalidDateFormat`).
+ */
+AssetPriceDomainError
 /**
  * Parameters for recording a purchase of an asset into an account.
  */
@@ -1184,18 +1252,6 @@ export type DeleteAssetCommandError =
 { code: "CashAssetNotEditable" } | 
 /**
  * No asset exists with the requested ID.
- */
-{ code: "NotFound" } | 
-/**
- * An unexpected server-side error occurred.
- */
-{ code: "Unknown" }
-/**
- * Typed error returned to the frontend for the delete_asset_price command.
- */
-export type DeleteAssetPriceCommandError = 
-/**
- * No price record exists for the given (asset_id, date) (MKT-090).
  */
 { code: "NotFound" } | 
 /**
@@ -1750,30 +1806,6 @@ risk_level: number;
  * New category link.
  */
 category_id: string }
-/**
- * Typed error returned to the frontend for the update_asset_price command.
- */
-export type UpdateAssetPriceCommandError = 
-/**
- * No price record exists for the given (asset_id, original_date) (MKT-083).
- */
-{ code: "NotFound" } | 
-/**
- * Price must be strictly positive.
- */
-{ code: "NotPositive" } | 
-/**
- * Price value is not a finite number.
- */
-{ code: "NonFinite" } | 
-/**
- * Price date is in the future.
- */
-{ code: "DateInFuture" } | 
-/**
- * An unexpected server-side error occurred.
- */
-{ code: "Unknown" }
 /**
  * Defines how often an account's data should be updated.
  */

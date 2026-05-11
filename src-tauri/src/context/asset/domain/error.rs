@@ -34,8 +34,16 @@ pub enum AssetDomainError {
     CashAssetNotEditable,
 }
 
-/// Typed errors for asset price domain validation.
-#[derive(Debug, thiserror::Error)]
+/// Typed errors for asset price value-object validation. Only aggregate-method
+/// or value-object rejections live here per the rejection-layer rule
+/// (`docs/ddd-reference.md` § Errors); the "no record at this (asset_id, date)"
+/// rejection is service-level and lives in `AssetPriceApplicationError`.
+///
+/// Tagged with `#[serde(tag = "code")]` for exposure through the
+/// `AssetPriceError` untagged composite. Payload-bearing variants are
+/// struct-shaped (internally-tagged serde rejects tuple variants).
+#[derive(Debug, thiserror::Error, serde::Serialize, specta::Type, Clone)]
+#[serde(tag = "code")]
 pub enum AssetPriceDomainError {
     /// Price must be strictly positive.
     #[error("Price must be strictly positive")]
@@ -47,9 +55,12 @@ pub enum AssetPriceDomainError {
     /// Price date is in the future.
     #[error("Date cannot be in the future")]
     DateInFuture,
-    /// No price record exists for the given (asset_id, date) pair.
-    #[error("Asset price not found")]
-    NotFound,
+    /// The supplied date string is not parseable as ISO 8601 (`YYYY-MM-DD`).
+    #[error("Invalid date format — expected YYYY-MM-DD (received: {date})")]
+    InvalidDateFormat {
+        /// The offending date string the caller supplied.
+        date: String,
+    },
 }
 
 /// Typed errors for category domain validation.

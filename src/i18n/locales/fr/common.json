@@ -368,6 +368,8 @@
     "NotPositive": "Le prix doit être strictement positif.",
     "NonFinite": "Le prix doit être un nombre fini.",
     "DateInFuture": "La date ne peut pas être dans le futur.",
+    "InvalidDateFormat": "Format de date invalide — attendu AAAA-MM-JJ.",
+    "PriceNotFound": "L'enregistrement de prix est introuvable.",
     "AccountNotFound": "Compte introuvable.",
     "TransactionNotFound": "Transaction introuvable.",
     "AssetNotFound": "Actif introuvable.",
