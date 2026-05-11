@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  AccountApplicationError,
   AssetPriceApplicationError,
   BuyHoldingDTO,
   CorrectTransactionDTO,
   HoldingTransactionError,
-  InfrastructureError,
   SellHoldingDTO,
   Transaction,
 } from "@/bindings";
@@ -185,8 +185,8 @@ describe("transactionGateway", () => {
     });
   });
 
-  it("getAssetIdsForAccount returns error on failure", async () => {
-    const err: InfrastructureError = { code: "Unknown", hint: "synthetic" };
+  it("getAssetIdsForAccount surfaces DatabaseError on repo failure", async () => {
+    const err: AccountApplicationError = { code: "DatabaseError" };
     mockInvoke.mockRejectedValue(err);
     const result = await transactionGateway.getAssetIdsForAccount("acc-1");
     expect(result).toEqual({ status: "error", error: err });

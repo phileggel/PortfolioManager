@@ -19,10 +19,6 @@ pub mod cash;
 pub mod logger;
 pub use logger::{BACKEND, FRONTEND};
 
-/// Shared infrastructure-error type composed into every typed service composite.
-pub mod error;
-pub use error::InfrastructureError;
-
 /// Specta type serialization documentation.
 pub mod specta_types;
 

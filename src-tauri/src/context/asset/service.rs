@@ -70,13 +70,14 @@ impl AssetService {
     }
 
     /// Retrieves a single asset by ID.
-    ///
-    /// Kept on `anyhow::Result` for now — used by the holding-transaction
-    /// orchestrator (`use_cases/holding_transaction/orchestrator.rs`) which
-    /// has its own typed surface composing this method's return via anyhow.
-    /// Will be narrowed when that orchestrator is sweep-cleaned in a later PR.
-    pub async fn get_asset_by_id(&self, asset_id: &str) -> Result<Option<Asset>> {
-        self.asset_repo.get_by_id(asset_id).await
+    pub async fn get_asset_by_id(
+        &self,
+        asset_id: &str,
+    ) -> StdResult<Option<Asset>, AssetApplicationError> {
+        self.asset_repo.get_by_id(asset_id).await.map_err(|e| {
+            tracing::error!(target: BACKEND, asset_id = %asset_id, err = ?e, "get_asset_by_id: repository failure");
+            AssetApplicationError::DatabaseError
+        })
     }
 
     /// Idempotently seeds the system Cash Asset for `currency` and the system

@@ -7,7 +7,6 @@ import type {
   AccountDeletionSummary,
   AccountDomainError,
   CreateAccountDTO,
-  InfrastructureError,
   UpdateAccountDTO,
 } from "@/bindings";
 
@@ -35,8 +34,8 @@ describe("accountGateway", () => {
     expect(mockInvoke).toHaveBeenCalledWith("get_accounts");
   });
 
-  it("getAccounts surfaces Infrastructure(Unknown) on repo failure", async () => {
-    const err: InfrastructureError = { code: "Unknown", hint: "get_all: connection lost" };
+  it("getAccounts surfaces DatabaseError on repo failure", async () => {
+    const err: AccountApplicationError = { code: "DatabaseError" };
     mockInvoke.mockRejectedValue(err);
     const result = await accountGateway.getAccounts();
     expect(result).toEqual({ status: "error", error: err });
@@ -93,13 +92,13 @@ describe("accountGateway", () => {
     expect(result).toEqual({ status: "error", error: err });
   });
 
-  it("addAccount surfaces Infrastructure(Unknown) with hint payload", async () => {
+  it("addAccount surfaces DatabaseError on repo failure", async () => {
     const dto: CreateAccountDTO = {
       name: "Test",
       currency: "EUR",
       update_frequency: "ManualMonth",
     };
-    const err: InfrastructureError = { code: "Unknown", hint: "create: db timeout" };
+    const err: AccountApplicationError = { code: "DatabaseError" };
     mockInvoke.mockRejectedValue(err);
     const result = await accountGateway.addAccount(dto);
     expect(result).toEqual({ status: "error", error: err });
@@ -143,8 +142,8 @@ describe("accountGateway", () => {
     expect(mockInvoke).toHaveBeenCalledWith("delete_account", { id: "acc-1" });
   });
 
-  it("deleteAccount surfaces Infrastructure(Unknown) on repo failure", async () => {
-    const err: InfrastructureError = { code: "Unknown", hint: "delete: foreign key" };
+  it("deleteAccount surfaces DatabaseError on repo failure", async () => {
+    const err: AccountApplicationError = { code: "DatabaseError" };
     mockInvoke.mockRejectedValue(err);
     const result = await accountGateway.deleteAccount("acc-1");
     expect(result).toEqual({ status: "error", error: err });

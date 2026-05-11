@@ -4,7 +4,7 @@ use crate::context::account::{
     AccountApplicationError, AccountService, HoldingTransactionError, Transaction,
 };
 use crate::context::asset::{AssetClass, AssetService};
-use crate::core::{logger::BACKEND, InfrastructureError};
+use crate::core::logger::BACKEND;
 use std::sync::Arc;
 
 /// Single orchestrator for every operation that mutates a `Holding` through a `Transaction`:
@@ -33,10 +33,10 @@ impl HoldingTransactionUseCase {
     /// Cross-BC guard: rejects the request if the asset does not exist
     /// (TRX-056), is archived (TRX-050), or is a system Cash Asset (CSH-061).
     /// Delegates the account-side write to `AccountService::open_holding`.
-    /// Returns the typed `OpenHoldingError` composite — every leaf is in its
-    /// rightful layer: cross-BC checks raise `UseCase(OpenHoldingApplicationError)`;
-    /// asset-service repo failures opaque to `Infrastructure(Unknown)`; the
-    /// account-side slice flows through unchanged.
+    /// Returns the typed `OpenHoldingError` composite. Asset-side repo failures
+    /// from `get_asset_by_id` are translated to `AccountApplicationError::DatabaseError`
+    /// (matching the `ensure_cash_for` precedent) so the FE wire surface carries a
+    /// single `{ code: "DatabaseError" }` shape rather than two indistinguishable arms.
     pub async fn open_holding(
         &self,
         account_id: &str,
@@ -50,10 +50,8 @@ impl HoldingTransactionUseCase {
             .get_asset_by_id(&asset_id)
             .await
             .map_err(|e| {
-                tracing::error!(target: BACKEND, asset_id = %asset_id, err = ?e, "open_holding: get_asset_by_id failed");
-                InfrastructureError::Unknown {
-                    hint: format!("get_asset_by_id (open_holding): {e:#}"),
-                }
+                tracing::error!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, err = ?e, "open_holding: get_asset_by_id failed");
+                AccountApplicationError::DatabaseError
             })?;
         match asset {
             None => return Err(OpenHoldingApplicationError::AssetNotFound.into()),
@@ -180,10 +178,9 @@ impl HoldingTransactionUseCase {
     /// Records a Deposit into an account (CSH-022).
     /// Seeds the system Cash Asset (CSH-010) before delegating; the aggregate
     /// lazy-creates the Cash Holding (CSH-012) and persists the Transaction.
-    /// Returns a typed `HoldingTransactionError`: in-account failures
-    /// (`AccountNotFound`, `DatabaseError`) flow through as `Application(...)`;
-    /// cross-BC asset-side failures opaque to `Infrastructure(Unknown)` (see
-    /// `ensure_cash_for`).
+    /// Returns a typed `HoldingTransactionError`: in-account and cross-BC
+    /// asset-seed failures both surface through `Application(AccountApplicationError)`
+    /// (see `ensure_cash_for`).
     pub async fn record_deposit(
         &self,
         account_id: &str,
@@ -218,13 +215,12 @@ impl HoldingTransactionUseCase {
     /// cash-affecting command. Returns a typed `HoldingTransactionError` so
     /// callers can propagate via `?` and stay typed end-to-end.
     ///
-    /// Distinguishes the two error sources honestly:
-    /// - **In-account failures** propagate typed: `AccountNotFound { account_id }`
-    ///   when the row is missing, `DatabaseError` when the account-repo call
-    ///   fails — both flow through `HoldingTransactionError::Application(...)`.
-    /// - **Cross-BC asset-side failure** (repo failure on the asset query, or
-    ///   `ensure_cash_asset` failure) opaques to `Infrastructure(Unknown)` —
-    ///   asset-side errors are not part of the holding-transaction contract.
+    /// Both error sources flow through `HoldingTransactionError::Application(...)`:
+    /// - **In-account failures**: `AccountNotFound { account_id }` when the row
+    ///   is missing, `DatabaseError` when the account-repo call fails.
+    /// - **Cross-BC asset-side failure** (`ensure_cash_asset` failure):
+    ///   surfaced as `DatabaseError` after `tracing::error!` preserves the
+    ///   asset-side diagnostic chain server-side.
     async fn ensure_cash_for(
         &self,
         account_id: &str,
@@ -241,10 +237,7 @@ impl HoldingTransactionUseCase {
             .await
             .map_err(|e| {
                 tracing::error!(target: BACKEND, account_id = %account_id, op = %op, err = ?e, "ensure_cash_for: ensure_cash_asset failed");
-                InfrastructureError::Unknown {
-                    hint: format!("ensure_cash_asset ({op}): {e:#}"),
-                }
-                .into()
+                AccountApplicationError::DatabaseError.into()
             })
     }
 }
@@ -503,13 +496,10 @@ mod tests {
         assert_eq!(tx.total_amount, micro(200));
     }
 
-    // PR 3 contract — when `buy_holding` is called for a nonexistent account,
-    // the orchestrator's `ensure_cash_for` surfaces it as the typed
+    // When `buy_holding` is called for a nonexistent account, the
+    // orchestrator's `ensure_cash_for` surfaces it as the typed
     // `Application(AccountNotFound { account_id })` — same shape every other
-    // path raises for the same condition. Cross-BC asset-side failures still
-    // opaque to `Infrastructure(Unknown)`, but in-account NotFound flows
-    // through honestly so the FE sees one consistent typed shape regardless of
-    // which step rejected.
+    // path raises for the same condition.
     #[tokio::test]
     async fn buy_holding_orchestrator_unknown_account_returns_application() {
         let pool = setup_pool().await;

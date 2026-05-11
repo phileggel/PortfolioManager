@@ -1,9 +1,9 @@
 import type {
+  AccountApplicationError,
   AssetPriceError,
   BuyHoldingDTO,
   CorrectTransactionDTO,
   HoldingTransactionError,
-  InfrastructureError,
   SellHoldingDTO,
   Transaction,
 } from "../../bindings";
@@ -40,11 +40,13 @@ export const transactionGateway = {
   async getTransactions(
     accountId: string,
     assetId: string,
-  ): Promise<Result<Transaction[], InfrastructureError>> {
+  ): Promise<Result<Transaction[], AccountApplicationError>> {
     return await commands.getTransactions(accountId, assetId);
   },
 
-  async getAssetIdsForAccount(accountId: string): Promise<Result<string[], InfrastructureError>> {
+  async getAssetIdsForAccount(
+    accountId: string,
+  ): Promise<Result<string[], AccountApplicationError>> {
     return await commands.getAssetIdsForAccount(accountId);
   },
 

@@ -32,7 +32,6 @@ pub fn create_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .typ::<account::Transaction>()
         .typ::<account::TransactionType>()
         .typ::<account::HoldingTransactionError>()
-        .typ::<crate::core::InfrastructureError>()
         // ----- use cases -----
         .typ::<archive_asset::ArchiveAssetApplicationError>()
         .typ::<archive_asset::ArchiveAssetError>()

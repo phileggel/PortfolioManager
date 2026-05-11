@@ -183,9 +183,19 @@ Each follow-up PR migrates ONE family from anyhow-mapped boundary types to a typ
 - DELETES any boundary type / mapper that no longer adds work (the composite IS the FE contract)
 - Stays under ~600 LOC
 
-### PR final — `refactor: remove anyhow from service signatures` (cleanup)
+### PR final — `refactor: drop InfrastructureError from FE wire surface` (✅ done — branch `refactor/anyhow-drop-final`)
 
-When all services are migrated, a small final PR removes the last `use anyhow` lines from `service.rs`/`orchestrator.rs`, removes the redundant `*::Unknown` variants on per-command boundary types (replaced by shared `InfrastructureError`), and tightens the `reviewer-backend` agent / `backend-rules.md` to enforce the new shape going forward.
+The closing PR removed the last `anyhow::Result` returns reachable from the FE wire surface, deleted the shared `core::InfrastructureError` type entirely (the only remaining users were dead doc references after PRs 6–12 migrated every composite), and translated infra failures at the application layer into per-BC `*ApplicationError::DatabaseError` (typed, payload-free) with the diagnostic chain preserved server-side via `tracing::error!`.
+
+Specifically:
+
+- **Account BC** — `service::get_all` / `delete` / `get_asset_ids_for_account` / `get_transactions` now return `Result<_, AccountApplicationError>` (was `InfrastructureError` / `anyhow`); `get_holding_by_account_asset` / `get_transaction_by_id` typed (was `anyhow`); all `create` / `update` map_err sites translate to `DatabaseError`. `HoldingTransactionError` and `AccountCrudError` lost their `Infrastructure` leaf.
+- **Asset BC** — `service::get_asset_by_id` typed (was `anyhow`). `seed_cash_asset` kept on `anyhow` — mixed BC error sources (asset_repo + category_repo + domain validation) would either lose origin information under a single typed translation or require a composite that exists only for an internal seed path.
+- **Use cases** — `OpenHoldingError` gained `AssetApplication(#[from] AssetApplicationError)` so the orchestrator's `?` works cleanly with the now-typed `get_asset_by_id`; the orchestrator's `ensure_cash_for` translates to `AccountApplicationError::DatabaseError`.
+- **Specta** — `.typ::<InfrastructureError>()` removed from the builder; `src-tauri/src/core/error.rs` deleted; the `pub use error::InfrastructureError;` re-export removed from `core/mod.rs`.
+- **FE** — `src/bindings.ts` regenerated; `accountGateway.{getAccounts,deleteAccount}` and `transactionGateway.{getTransactions,getAssetIdsForAccount}` now return `AccountApplicationError`; gateway tests' `{ code: "Unknown", hint: ... }` fixtures replaced with `{ code: "DatabaseError" }`.
+
+Backend-rules tightening (the `B??` rule reviewer-backend should enforce going forward) remains as a follow-up — see `docs/techdebt.md`.
 
 ## Out of scope (deferred)
 

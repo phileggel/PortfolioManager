@@ -110,13 +110,6 @@ pub enum AssetPriceApplicationError {
 /// commands `record_asset_price` / `update_asset_price` / `delete_asset_price`
 /// and the read `get_asset_prices`.
 ///
-/// Replaces the anyhow-era trio of boundary types
-/// (`AssetPriceCommandError`, `UpdateAssetPriceCommandError`,
-/// `DeleteAssetPriceCommandError`) with a single composite per the
-/// family-map (`docs/plan/error-model-refactor.md` § Failure-surface-family map
-/// → Asset price row). Continues the gold infra-translation rule (no shared
-/// `InfrastructureError` leaf — translated to per-BC `*ApplicationError::DatabaseError`).
-///
 /// Composes three leaves:
 /// - `AssetApplicationError` — cross-aggregate asset-existence check
 ///   (`record_asset_price` and `get_asset_prices` reject when the asset row
@@ -148,9 +141,7 @@ pub enum AssetPriceError {
 /// Composes three leaves: `AssetApplicationError` (NotFound, DatabaseError),
 /// `AssetDomainError` (input validation + archive / cash / system-managed
 /// invariants), `CategoryApplicationError` (cross-aggregate category lookup
-/// in create/update). No `Infrastructure` leaf — infra failures translate at
-/// the application layer into `AssetApplicationError::DatabaseError` per the
-/// project's infra-translation rule (`docs/plan/error-model-refactor.md`).
+/// in create/update).
 #[derive(Debug, thiserror::Error, serde::Serialize, specta::Type)]
 #[serde(untagged)]
 pub enum AssetCrudError {
@@ -169,16 +160,8 @@ pub enum AssetCrudError {
 
 /// Service-layer composite for the **Category CRUD** failure surface — the
 /// write commands `add_category`, `update_category`, `delete_category`.
-///
-/// Replaces the anyhow-era `CategoryCommandError` boundary type. **First PR
-/// (6) enforcing the gold infra-translation rule**: this composite has NO
-/// shared `InfrastructureError` leaf — infra failures are translated at the
-/// application layer into `CategoryApplicationError::DatabaseError` (typed,
-/// payload-free) rather than passed through opaquely.
-///
-/// **This IS the FE-facing contract** for write commands. `get_categories`
-/// (read-only) returns the narrower `CategoryApplicationError` directly
-/// because it has no domain-rejection paths.
+/// `get_categories` (read-only) returns the narrower `CategoryApplicationError`
+/// directly because it has no domain-rejection paths.
 ///
 /// Each leaf lives in its rightful layer:
 /// - `CategoryApplicationError` — application layer (this module) — raises
@@ -186,9 +169,6 @@ pub enum AssetCrudError {
 /// - `CategoryDomainError` — domain layer (`asset/domain/`) — raises
 ///   `LabelEmpty` (value-object validation), `SystemReadonly` /
 ///   `SystemProtected` (aggregate-method invariants on loaded state).
-///
-/// `CategoryCrudError` itself owns no variants; it only enumerates which
-/// leaves the create/update/delete commands can produce.
 #[derive(Debug, thiserror::Error, serde::Serialize, specta::Type)]
 #[serde(untagged)]
 pub enum CategoryCrudError {
