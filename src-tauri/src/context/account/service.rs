@@ -431,12 +431,18 @@ impl AccountService {
     }
 
     /// Returns the count of active holdings and total transactions for an account (ACC-020).
-    pub async fn get_deletion_summary(&self, account_id: &str) -> anyhow::Result<(u32, u32)> {
-        let (holding_count, transaction_count) = tokio::try_join!(
+    pub async fn get_deletion_summary(
+        &self,
+        account_id: &str,
+    ) -> StdResult<(u32, u32), AccountApplicationError> {
+        tokio::try_join!(
             self.holding_repo.count_active_for_account(account_id),
             self.transaction_repo.count_by_account(account_id),
-        )?;
-        Ok((holding_count, transaction_count))
+        )
+        .map_err(|e| {
+            tracing::error!(target: BACKEND, account_id = %account_id, err = ?e, "get_deletion_summary: repository failure");
+            AccountApplicationError::DatabaseError
+        })
     }
 
     // -------------------------------------------------------------------------

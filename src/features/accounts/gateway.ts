@@ -1,7 +1,7 @@
 import {
   type Account,
+  type AccountApplicationError,
   type AccountCrudError,
-  type AccountDeletionCommandError,
   type AccountDeletionSummary,
   type CreateAccountDTO,
   commands,
@@ -33,7 +33,7 @@ export const accountGateway = {
 
   async getAccountDeletionSummary(
     accountId: string,
-  ): Promise<Result<AccountDeletionSummary, AccountDeletionCommandError>> {
+  ): Promise<Result<AccountDeletionSummary, AccountApplicationError>> {
     return await commands.getAccountDeletionSummary(accountId);
   },
 };

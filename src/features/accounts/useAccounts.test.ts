@@ -191,7 +191,7 @@ describe("useAccounts", () => {
   it("getAccountDeletionSummary returns error code on failure", async () => {
     mockGetSummary.mockResolvedValue({
       status: "error",
-      error: { code: "Unknown" },
+      error: { code: "DatabaseError" },
     });
     const { result } = renderHook(() => useAccounts());
     let ret: { data: AccountDeletionSummary | null; error: string | null } = {
@@ -201,6 +201,6 @@ describe("useAccounts", () => {
     await act(async () => {
       ret = await result.current.getAccountDeletionSummary("missing");
     });
-    expect(ret.error).toBe("error.Unknown");
+    expect(ret.error).toBe("error.DatabaseError");
   });
 });

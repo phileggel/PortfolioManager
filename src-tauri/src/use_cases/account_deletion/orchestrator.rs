@@ -1,7 +1,7 @@
-use crate::context::account::AccountService;
-use anyhow::Result;
+use crate::context::account::{AccountApplicationError, AccountService};
 use serde::Serialize;
 use specta::Type;
+use std::result::Result as StdResult;
 use std::sync::Arc;
 
 /// Pre-deletion counts for an account (ACC-020).
@@ -28,7 +28,10 @@ impl AccountDeletionUseCase {
     }
 
     /// Returns holding and transaction counts for the given account (ACC-020).
-    pub async fn get_summary(&self, account_id: &str) -> Result<AccountDeletionSummary> {
+    pub async fn get_summary(
+        &self,
+        account_id: &str,
+    ) -> StdResult<AccountDeletionSummary, AccountApplicationError> {
         let (holding_count, transaction_count) = self
             .account_service
             .get_deletion_summary(account_id)
@@ -224,5 +227,33 @@ mod tests {
         assert_eq!(summary.holding_count, 1);
         // 3 transactions: Deposit + Purchase + Sell.
         assert_eq!(summary.transaction_count, 3);
+    }
+
+    // get_summary translates raw repo failure to AccountApplicationError::DatabaseError.
+    #[tokio::test]
+    async fn get_summary_translates_repo_failure_to_database_error() {
+        use crate::context::account::{
+            MockAccountRepository, MockHoldingRepository, MockTransactionRepository,
+        };
+
+        let mut mock_hr = MockHoldingRepository::new();
+        mock_hr
+            .expect_count_active_for_account()
+            .returning(|_| Err(anyhow::anyhow!("simulated holding-repo failure")));
+        let mut mock_tr = MockTransactionRepository::new();
+        mock_tr
+            .expect_count_by_account()
+            .returning(|_| Err(anyhow::anyhow!("simulated transaction-repo failure")));
+        let svc = Arc::new(AccountService::new(
+            Box::new(MockAccountRepository::new()),
+            Box::new(mock_hr),
+            Box::new(mock_tr),
+        ));
+        let uc = AccountDeletionUseCase::new(svc);
+        let err = uc.get_summary("any-id").await.unwrap_err();
+        assert!(
+            matches!(err, AccountApplicationError::DatabaseError),
+            "got: {err:?}"
+        );
     }
 }
