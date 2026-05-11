@@ -49,7 +49,6 @@ pub fn create_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .typ::<account_details::HoldingDetail>()
         .typ::<account_details::ClosedHoldingDetail>()
         .typ::<account_details::AccountDetailsResponse>()
-        .typ::<account_details::AccountDetailsCommandError>()
         .typ::<account_deletion::AccountDeletionSummary>()
         .typ::<account_deletion::AccountDeletionCommandError>()
         .typ::<asset_web_lookup::AssetLookupResult>()

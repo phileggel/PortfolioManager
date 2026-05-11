@@ -1,5 +1,5 @@
 import type {
-  AccountDetailsCommandError,
+  AccountApplicationError,
   AccountDetailsResponse,
   AssetPrice,
   AssetPriceError,
@@ -16,7 +16,7 @@ import { commands, events } from "@/bindings";
 export const accountDetailsGateway = {
   async getAccountDetails(
     accountId: string,
-  ): Promise<Result<AccountDetailsResponse, AccountDetailsCommandError>> {
+  ): Promise<Result<AccountDetailsResponse, AccountApplicationError>> {
     return commands.getAccountDetails(accountId);
   },
 

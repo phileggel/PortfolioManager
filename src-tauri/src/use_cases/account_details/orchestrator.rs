@@ -1,9 +1,9 @@
-use crate::context::account::AccountService;
+use crate::context::account::{AccountApplicationError, AccountService};
 use crate::context::asset::AssetService;
-use crate::use_cases::account_details::error::AccountDetailsError;
-use anyhow::{anyhow, Result};
+use crate::core::logger::BACKEND;
 use serde::Serialize;
 use specta::Type;
+use std::result::Result as StdResult;
 use std::sync::Arc;
 
 /// Enriched view of a single active holding (quantity > 0) with asset metadata (ACD-020).
@@ -92,13 +92,18 @@ impl AccountDetailsUseCase {
     }
 
     /// Builds an AccountDetailsResponse for the given account (ACD-012 to ACD-050).
-    pub async fn get_account_details(&self, account_id: &str) -> Result<AccountDetailsResponse> {
+    pub async fn get_account_details(
+        &self,
+        account_id: &str,
+    ) -> StdResult<AccountDetailsResponse, AccountApplicationError> {
         // ACD-032 — fetch account; bail with not-found if missing (ACD-012)
         let account = self
             .account_service
             .get_by_id(account_id)
             .await?
-            .ok_or(AccountDetailsError::AccountNotFound)?;
+            .ok_or_else(|| AccountApplicationError::AccountNotFound {
+                account_id: account_id.to_string(),
+            })?;
 
         // ACD-034 — total count before quantity filter
         let all_holdings = self
@@ -125,8 +130,15 @@ impl AccountDetailsUseCase {
             let asset = self
                 .asset_service
                 .get_asset_by_id(&holding.asset_id)
-                .await?
-                .ok_or_else(|| anyhow!("Asset not found: {}", holding.asset_id))?;
+                .await
+                .map_err(|e| {
+                    tracing::error!(target: BACKEND, asset_id = %holding.asset_id, err = ?e, "get_account_details: get_asset_by_id failed");
+                    AccountApplicationError::DatabaseError
+                })?
+                .ok_or_else(|| {
+                    tracing::error!(target: BACKEND, asset_id = %holding.asset_id, "get_account_details: holding references missing asset");
+                    AccountApplicationError::DatabaseError
+                })?;
 
             let is_cash = asset.class == crate::context::asset::AssetClass::Cash;
 
@@ -231,8 +243,15 @@ impl AccountDetailsUseCase {
             let asset = self
                 .asset_service
                 .get_asset_by_id(&holding.asset_id)
-                .await?
-                .ok_or_else(|| anyhow!("Asset not found: {}", holding.asset_id))?;
+                .await
+                .map_err(|e| {
+                    tracing::error!(target: BACKEND, asset_id = %holding.asset_id, err = ?e, "get_account_details: get_asset_by_id failed (closed)");
+                    AccountApplicationError::DatabaseError
+                })?
+                .ok_or_else(|| {
+                    tracing::error!(target: BACKEND, asset_id = %holding.asset_id, "get_account_details: closed holding references missing asset");
+                    AccountApplicationError::DatabaseError
+                })?;
             closed_details.push(ClosedHoldingDetail {
                 asset_id: holding.asset_id,
                 asset_name: asset.name,
@@ -301,7 +320,7 @@ mod tests {
         pool
     }
 
-    // ACD-012 — unknown account returns error
+    // ACD-012 — unknown account returns AccountApplicationError::AccountNotFound with id payload
     #[tokio::test]
     async fn unknown_account_returns_error() {
         let pool = make_pool().await;
@@ -310,10 +329,11 @@ mod tests {
         let err = uc.get_account_details("nonexistent-id").await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AccountDetailsError>(),
-                Some(AccountDetailsError::AccountNotFound)
+                &err,
+                AccountApplicationError::AccountNotFound { account_id }
+                    if account_id == "nonexistent-id"
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -1527,6 +1547,193 @@ mod tests {
                 .iter()
                 .any(|h| h.asset_id.starts_with("system-cash-")),
             "cash row must be hidden when its quantity is 0 (CSH-097)"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Asset-side failure translation (gold rule coverage)
+    // -------------------------------------------------------------------------
+    //
+    // Each test seeds a real holding via the Sqlite-backed account_svc, then
+    // injects a failing asset_svc (mocked asset_repo) so the orchestrator hits
+    // the corresponding asset-lookup branch. Active-loop and closed-loop sites
+    // mirror each other but have separate coverage so both branches are exercised.
+
+    use crate::context::asset::{
+        MockAssetCategoryRepository, MockAssetPriceRepository, MockAssetRepository,
+    };
+
+    fn failing_asset_svc(ar_setup: impl FnOnce(&mut MockAssetRepository)) -> Arc<AssetService> {
+        let mut ar = MockAssetRepository::new();
+        ar_setup(&mut ar);
+        Arc::new(AssetService::new(
+            Box::new(ar),
+            Box::new(MockAssetCategoryRepository::new()),
+            Box::new(MockAssetPriceRepository::new()),
+        ))
+    }
+
+    async fn seed_account_with_active_holding(
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        account_svc: &Arc<AccountService>,
+        real_asset_svc: &Arc<AssetService>,
+    ) -> (String, String) {
+        let account = account_svc
+            .create(
+                "A".to_string(),
+                "EUR".to_string(),
+                UpdateFrequency::ManualMonth,
+            )
+            .await
+            .unwrap();
+        let asset = real_asset_svc
+            .create_asset(CreateAssetDTO {
+                name: "X".to_string(),
+                reference: "X".to_string(),
+                class: AssetClass::Stocks,
+                currency: "EUR".to_string(),
+                risk_level: 1,
+                category_id: SYSTEM_CATEGORY_ID.to_string(),
+            })
+            .await
+            .unwrap();
+        SqliteHoldingRepository::new(pool.clone())
+            .upsert(
+                Holding::new(
+                    account.id.clone(),
+                    asset.id.clone(),
+                    1_000_000,
+                    100_000_000,
+                    0,
+                    None,
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        (account.id, asset.id)
+    }
+
+    async fn seed_account_with_closed_holding(
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        account_svc: &Arc<AccountService>,
+        real_asset_svc: &Arc<AssetService>,
+    ) -> (String, String) {
+        let account = account_svc
+            .create(
+                "A".to_string(),
+                "EUR".to_string(),
+                UpdateFrequency::ManualMonth,
+            )
+            .await
+            .unwrap();
+        let asset = real_asset_svc
+            .create_asset(CreateAssetDTO {
+                name: "X".to_string(),
+                reference: "X".to_string(),
+                class: AssetClass::Stocks,
+                currency: "EUR".to_string(),
+                risk_level: 1,
+                category_id: SYSTEM_CATEGORY_ID.to_string(),
+            })
+            .await
+            .unwrap();
+        SqliteHoldingRepository::new(pool.clone())
+            .upsert(
+                Holding::new(
+                    account.id.clone(),
+                    asset.id.clone(),
+                    0,
+                    50_000_000,
+                    0,
+                    Some("2026-01-01".to_string()),
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        (account.id, asset.id)
+    }
+
+    // Active loop: asset-repo Err → DatabaseError
+    #[tokio::test]
+    async fn get_account_details_translates_active_loop_asset_repo_failure() {
+        let pool = make_pool().await;
+        let (account_svc, real_asset_svc) = setup(&pool).await;
+        let (account_id, _) =
+            seed_account_with_active_holding(&pool, &account_svc, &real_asset_svc).await;
+
+        let asset_svc = failing_asset_svc(|ar| {
+            ar.expect_get_by_id()
+                .returning(|_| Err(anyhow::anyhow!("simulated asset repo failure")));
+        });
+        let uc = AccountDetailsUseCase::new(account_svc, asset_svc);
+
+        let err = uc.get_account_details(&account_id).await.unwrap_err();
+        assert!(
+            matches!(err, AccountApplicationError::DatabaseError),
+            "got: {err:?}"
+        );
+    }
+
+    // Active loop: asset-repo Ok(None) (FK integrity violation) → DatabaseError
+    #[tokio::test]
+    async fn get_account_details_translates_active_loop_missing_asset() {
+        let pool = make_pool().await;
+        let (account_svc, real_asset_svc) = setup(&pool).await;
+        let (account_id, _) =
+            seed_account_with_active_holding(&pool, &account_svc, &real_asset_svc).await;
+
+        let asset_svc = failing_asset_svc(|ar| {
+            ar.expect_get_by_id().returning(|_| Ok(None));
+        });
+        let uc = AccountDetailsUseCase::new(account_svc, asset_svc);
+
+        let err = uc.get_account_details(&account_id).await.unwrap_err();
+        assert!(
+            matches!(err, AccountApplicationError::DatabaseError),
+            "got: {err:?}"
+        );
+    }
+
+    // Closed loop: asset-repo Err → DatabaseError
+    #[tokio::test]
+    async fn get_account_details_translates_closed_loop_asset_repo_failure() {
+        let pool = make_pool().await;
+        let (account_svc, real_asset_svc) = setup(&pool).await;
+        let (account_id, _) =
+            seed_account_with_closed_holding(&pool, &account_svc, &real_asset_svc).await;
+
+        let asset_svc = failing_asset_svc(|ar| {
+            ar.expect_get_by_id()
+                .returning(|_| Err(anyhow::anyhow!("simulated asset repo failure")));
+        });
+        let uc = AccountDetailsUseCase::new(account_svc, asset_svc);
+
+        let err = uc.get_account_details(&account_id).await.unwrap_err();
+        assert!(
+            matches!(err, AccountApplicationError::DatabaseError),
+            "got: {err:?}"
+        );
+    }
+
+    // Closed loop: asset-repo Ok(None) (FK integrity violation) → DatabaseError
+    #[tokio::test]
+    async fn get_account_details_translates_closed_loop_missing_asset() {
+        let pool = make_pool().await;
+        let (account_svc, real_asset_svc) = setup(&pool).await;
+        let (account_id, _) =
+            seed_account_with_closed_holding(&pool, &account_svc, &real_asset_svc).await;
+
+        let asset_svc = failing_asset_svc(|ar| {
+            ar.expect_get_by_id().returning(|_| Ok(None));
+        });
+        let uc = AccountDetailsUseCase::new(account_svc, asset_svc);
+
+        let err = uc.get_account_details(&account_id).await.unwrap_err();
+        assert!(
+            matches!(err, AccountApplicationError::DatabaseError),
+            "got: {err:?}"
         );
     }
 }

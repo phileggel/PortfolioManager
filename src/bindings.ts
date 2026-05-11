@@ -353,7 +353,7 @@ async recordWithdrawal(dto: WithdrawalDTO) : Promise<Result<Transaction, Holding
 /**
  * Returns the full account details view for the given account (ACD-012 to ACD-041).
  */
-async getAccountDetails(accountId: string) : Promise<Result<AccountDetailsResponse, AccountDetailsCommandError>> {
+async getAccountDetails(accountId: string) : Promise<Result<AccountDetailsResponse, AccountApplicationError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_account_details", { accountId }) };
 } catch (e) {
@@ -582,24 +582,6 @@ holding_count: number;
  * Total number of transactions associated with the account.
  */
 transaction_count: number }
-/**
- * Typed error returned to the frontend for the get_account_details command.
- */
-export type AccountDetailsCommandError = 
-/**
- * No account exists with the requested ID.
- * 
- * Intentionally a unit variant — unlike the write-path counterpart
- * `AccountApplicationError::AccountNotFound` which carries
- * `{ account_id: String }`, this is a read command: the caller already
- * supplied `account_id` as the query parameter, so echoing it back adds
- * no diagnostic value. Do not cargo-cult-add the field.
- */
-{ code: "AccountNotFound" } | 
-/**
- * An unexpected server-side error occurred.
- */
-{ code: "Unknown" }
 /**
  * Top-level response for the get_account_details command (ACD spec).
  */
