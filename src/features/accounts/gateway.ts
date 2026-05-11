@@ -5,7 +5,6 @@ import {
   type AccountDeletionSummary,
   type CreateAccountDTO,
   commands,
-  type InfrastructureError,
   type Result,
   type UpdateAccountDTO,
 } from "../../bindings";
@@ -15,7 +14,7 @@ import {
  * Centralizes all Tauri command calls for the Account feature.
  */
 export const accountGateway = {
-  async getAccounts(): Promise<Result<Account[], InfrastructureError>> {
+  async getAccounts(): Promise<Result<Account[], AccountApplicationError>> {
     return await commands.getAccounts();
   },
 
@@ -27,7 +26,7 @@ export const accountGateway = {
     return await commands.updateAccount(dto);
   },
 
-  async deleteAccount(id: string): Promise<Result<null, InfrastructureError>> {
+  async deleteAccount(id: string): Promise<Result<null, AccountApplicationError>> {
     return await commands.deleteAccount(id);
   },
 

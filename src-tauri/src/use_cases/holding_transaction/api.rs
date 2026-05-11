@@ -216,13 +216,6 @@ pub struct WithdrawalDTO {
 }
 
 /// Records a cash deposit into an account (CSH-022).
-///
-/// The Tauri command returns the typed `HoldingTransactionError` directly — no
-/// boundary type or mapper is needed because every leaf in the composite
-/// (`AccountApplicationError`, `AccountOperationError`, `TransactionDomainError`,
-/// shared `InfrastructureError`) already serializes with `#[serde(tag = "code")]`,
-/// and `HoldingTransactionError`'s `#[serde(untagged)]` flattens them into a
-/// single FE-visible union.
 #[tauri::command]
 #[specta::specta]
 pub async fn record_deposit(

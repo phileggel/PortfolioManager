@@ -3,7 +3,7 @@ use super::domain::{
     Account, AccountOperationError, AccountRepository, Holding, HoldingRepository, Transaction,
     TransactionDomainError, TransactionRepository, UpdateFrequency,
 };
-use crate::core::{logger::BACKEND, Event, InfrastructureError, SideEffectEventBus};
+use crate::core::{logger::BACKEND, Event, SideEffectEventBus};
 use crate::use_cases::holding_transaction::OpenHoldingError;
 use std::result::Result as StdResult;
 use std::sync::Arc;
@@ -42,14 +42,11 @@ impl AccountService {
     // Account CRUD
     // -------------------------------------------------------------------------
 
-    /// Retrieves all non-deleted accounts. Read-only — only infrastructure
-    /// failures can fire here, so the surface is the narrow `InfrastructureError`.
-    pub async fn get_all(&self) -> Result<Vec<Account>, InfrastructureError> {
+    /// Retrieves all non-deleted accounts.
+    pub async fn get_all(&self) -> StdResult<Vec<Account>, AccountApplicationError> {
         self.account_repo.get_all().await.map_err(|e| {
             tracing::error!(target: BACKEND, err = ?e, "get_all: repository failure");
-            InfrastructureError::Unknown {
-                hint: format!("get_all: {e:#}"),
-            }
+            AccountApplicationError::DatabaseError
         })
     }
 
@@ -78,9 +75,7 @@ impl AccountService {
         info!(target: BACKEND, account_id = %account.id, name = %account.name, "creating account");
         let created = self.account_repo.create(account).await.map_err(|e| {
             tracing::error!(target: BACKEND, err = ?e, "create: repository failure");
-            InfrastructureError::Unknown {
-                hint: format!("create: {e:#}"),
-            }
+            AccountApplicationError::DatabaseError
         })?;
         self.emit_account_updated();
         Ok(created)
@@ -103,23 +98,18 @@ impl AccountService {
         info!(target: BACKEND, account_id = %account.id, name = %account.name, "updating account");
         let updated = self.account_repo.update(account).await.map_err(|e| {
             tracing::error!(target: BACKEND, err = ?e, "update: repository failure");
-            InfrastructureError::Unknown {
-                hint: format!("update: {e:#}"),
-            }
+            AccountApplicationError::DatabaseError
         })?;
         self.emit_account_updated();
         Ok(updated)
     }
 
     /// Permanently deletes an account and cascades to its holdings (R5).
-    /// Pure infrastructure surface — no domain rejections (cascade is repo-level).
-    pub async fn delete(&self, id: &str) -> Result<(), InfrastructureError> {
+    pub async fn delete(&self, id: &str) -> StdResult<(), AccountApplicationError> {
         info!(target: BACKEND, account_id = %id, "deleting account");
         self.account_repo.delete(id).await.map_err(|e| {
             tracing::error!(target: BACKEND, account_id = %id, err = ?e, "delete: repository failure");
-            InfrastructureError::Unknown {
-                hint: format!("delete: {e:#}"),
-            }
+            AccountApplicationError::DatabaseError
         })?;
         self.emit_account_updated();
         Ok(())
@@ -145,10 +135,14 @@ impl AccountService {
         &self,
         account_id: &str,
         asset_id: &str,
-    ) -> anyhow::Result<Option<Holding>> {
+    ) -> StdResult<Option<Holding>, AccountApplicationError> {
         self.holding_repo
             .get_by_account_asset(account_id, asset_id)
             .await
+            .map_err(|e| {
+                tracing::error!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, err = ?e, "get_holding_by_account_asset: repository failure");
+                AccountApplicationError::DatabaseError
+            })
     }
 
     // -------------------------------------------------------------------------
@@ -156,8 +150,14 @@ impl AccountService {
     // -------------------------------------------------------------------------
 
     /// Retrieves a transaction by ID.
-    pub async fn get_transaction_by_id(&self, id: &str) -> anyhow::Result<Option<Transaction>> {
-        self.transaction_repo.get_by_id(id).await
+    pub async fn get_transaction_by_id(
+        &self,
+        id: &str,
+    ) -> StdResult<Option<Transaction>, AccountApplicationError> {
+        self.transaction_repo.get_by_id(id).await.map_err(|e| {
+            tracing::error!(target: BACKEND, transaction_id = %id, err = ?e, "get_transaction_by_id: repository failure");
+            AccountApplicationError::DatabaseError
+        })
     }
 
     /// Retrieves all transactions for an account/asset pair in chronological order (TRX-036).
@@ -165,26 +165,27 @@ impl AccountService {
         &self,
         account_id: &str,
         asset_id: &str,
-    ) -> anyhow::Result<Vec<Transaction>> {
+    ) -> StdResult<Vec<Transaction>, AccountApplicationError> {
         self.transaction_repo
             .get_by_account_asset(account_id, asset_id)
             .await
+            .map_err(|e| {
+                tracing::error!(target: BACKEND, account_id = %account_id, asset_id = %asset_id, err = ?e, "get_transactions: repository failure");
+                AccountApplicationError::DatabaseError
+            })
     }
 
     /// Returns distinct asset IDs that have transactions for the given account (TXL-013).
-    /// Read-only — only infrastructure failures can fire here.
     pub async fn get_asset_ids_for_account(
         &self,
         account_id: &str,
-    ) -> Result<Vec<String>, InfrastructureError> {
+    ) -> StdResult<Vec<String>, AccountApplicationError> {
         self.transaction_repo
             .get_asset_ids_for_account(account_id)
             .await
             .map_err(|e| {
                 tracing::error!(target: BACKEND, account_id = %account_id, err = ?e, "get_asset_ids_for_account: repository failure");
-                InfrastructureError::Unknown {
-                    hint: format!("get_asset_ids_for_account: {e:#}"),
-                }
+                AccountApplicationError::DatabaseError
             })
     }
 
@@ -312,10 +313,10 @@ impl AccountService {
     /// Asset existence and archived-status checks are the caller's responsibility
     /// (handled by `HoldingTransactionUseCase::open_holding` — TRX-050, TRX-056).
     /// Returns the use-case-owned `OpenHoldingError`; the service-internal slice
-    /// (load + aggregate + save) raises `Application(AccountNotFound)`,
-    /// `Validation(InvalidTotalCost)`, `TxValidation(...)`, or
-    /// `Infrastructure(Unknown)`. Cross-BC asset rejections never reach this
-    /// method — the orchestrator raises them before delegating.
+    /// (load + aggregate + save) raises `Application(AccountNotFound | DatabaseError)`,
+    /// `Validation(InvalidTotalCost)`, or `TxValidation(...)`. Cross-BC asset
+    /// rejections never reach this method — the orchestrator raises them before
+    /// delegating.
     pub async fn open_holding(
         &self,
         account_id: &str,
@@ -464,8 +465,8 @@ impl AccountService {
 
 /// Loads an Account aggregate (with holdings + transactions) for the
 /// holding-transaction family. Translates repository failures into typed
-/// `HoldingTransactionError` variants — `AccountNotFound` for `Ok(None)`,
-/// `Infrastructure` for any anyhow error (logged before being opaqued).
+/// `HoldingTransactionError::Application(...)` variants — `AccountNotFound` for
+/// `Ok(None)`, `DatabaseError` for any anyhow error (logged at the same site).
 async fn load_account(
     repo: &dyn AccountRepository,
     account_id: &str,
@@ -478,48 +479,39 @@ async fn load_account(
         .into()),
         Err(e) => {
             tracing::error!(target: BACKEND, account_id = %account_id, err = ?e, "load_account: repository failure");
-            Err(InfrastructureError::Unknown {
-                hint: format!("load_account: {e:#}"),
-            }
-            .into())
+            Err(AccountApplicationError::DatabaseError.into())
         }
     }
 }
 
 /// Persists an Account aggregate's pending changes for the holding-transaction
-/// family. Translates repository failures into the shared
-/// `InfrastructureError::Unknown { hint }` (composed into `HoldingTransactionError`
-/// via `#[from]`) after logging the underlying error.
+/// family. Translates repository failures into
+/// `AccountApplicationError::DatabaseError` (composed into
+/// `HoldingTransactionError` via `#[from]`) after logging the underlying error.
 async fn save_account(
     repo: &dyn AccountRepository,
     account: &mut Account,
 ) -> Result<(), HoldingTransactionError> {
     repo.save(account).await.map_err(|e| {
         tracing::error!(target: BACKEND, account_id = %account.id, err = ?e, "save_account: repository failure");
-        InfrastructureError::Unknown {
-            hint: format!("save_account: {e:#}"),
-        }
-        .into()
+        AccountApplicationError::DatabaseError.into()
     })
 }
 
 /// CRUD-family parallel to the load/save helpers above. Wraps the
 /// `find_by_name` uniqueness pre-check used by `create` and `update`,
-/// translating any repository failure into `AccountCrudError::Infrastructure`.
+/// translating any repository failure into
+/// `AccountApplicationError::DatabaseError`.
 ///
 /// Unlike `load_account`, `Ok(None)` is the **success** path here (the name
-/// is available); the caller decides what to do with `Some(existing)`. Only
-/// genuine repository errors map to `Infrastructure(Unknown)`.
+/// is available); the caller decides what to do with `Some(existing)`.
 async fn find_account_by_name(
     repo: &dyn AccountRepository,
     name: &str,
 ) -> Result<Option<Account>, AccountCrudError> {
     repo.find_by_name(name).await.map_err(|e| {
         tracing::error!(target: BACKEND, name = %name, err = ?e, "find_by_name: repository failure");
-        InfrastructureError::Unknown {
-            hint: format!("find_by_name: {e:#}"),
-        }
-        .into()
+        AccountApplicationError::DatabaseError.into()
     })
 }
 
@@ -536,10 +528,7 @@ async fn load_account_for_open_holding(
         .into()),
         Err(e) => {
             tracing::error!(target: BACKEND, account_id = %account_id, err = ?e, "load_account_for_open_holding: repository failure");
-            Err(InfrastructureError::Unknown {
-                hint: format!("load_account_for_open_holding: {e:#}"),
-            }
-            .into())
+            Err(AccountApplicationError::DatabaseError.into())
         }
     }
 }
@@ -551,10 +540,7 @@ async fn save_account_for_open_holding(
 ) -> Result<(), OpenHoldingError> {
     repo.save(account).await.map_err(|e| {
         tracing::error!(target: BACKEND, account_id = %account.id, err = ?e, "save_account_for_open_holding: repository failure");
-        InfrastructureError::Unknown {
-            hint: format!("save_account_for_open_holding: {e:#}"),
-        }
-        .into()
+        AccountApplicationError::DatabaseError.into()
     })
 }
 
@@ -566,8 +552,8 @@ async fn save_account_for_open_holding(
 /// service boundary by downcasting.
 ///
 /// Errors that don't downcast to a known leaf are logged and surfaced as
-/// `InfrastructureError::Unknown` — the same opaque catch-all used by the
-/// helpers above.
+/// `AccountApplicationError::DatabaseError` — the same translation target as
+/// the load/save helpers above.
 fn to_holding_tx_error(e: anyhow::Error) -> HoldingTransactionError {
     let e = match e.downcast::<AccountOperationError>() {
         Ok(err) => return err.into(),
@@ -578,10 +564,7 @@ fn to_holding_tx_error(e: anyhow::Error) -> HoldingTransactionError {
         Err(e) => e,
     };
     tracing::error!(target: BACKEND, err = ?e, "unexpected error in holding-tx service method");
-    InfrastructureError::Unknown {
-        hint: format!("holding-tx aggregate: {e:#}"),
-    }
-    .into()
+    AccountApplicationError::DatabaseError.into()
 }
 
 /// Bridge for the open_holding aggregate method, which still returns
@@ -598,10 +581,7 @@ fn to_open_holding_error(e: anyhow::Error) -> OpenHoldingError {
         Err(e) => e,
     };
     tracing::error!(target: BACKEND, err = ?e, "unexpected error in open_holding service method");
-    InfrastructureError::Unknown {
-        hint: format!("open_holding aggregate: {e:#}"),
-    }
-    .into()
+    AccountApplicationError::DatabaseError.into()
 }
 
 #[cfg(test)]
@@ -622,11 +602,11 @@ mod tests {
     #[error("simulated DB failure")]
     struct SimulatedSaveError;
 
-    // PR 3 — to_holding_tx_error is the anyhow→typed bridge for the four
+    // to_holding_tx_error is the anyhow→typed bridge for the four
     // holding-tx aggregate methods (buy/sell/correct/cancel) that still return
     // `anyhow::Result`. One global test covers the three branches: known
-    // domain leaves are routed to their typed variant; everything else opaques
-    // to `Infrastructure(Unknown)` with the underlying message in the hint.
+    // domain leaves route to their typed variant; everything else translates
+    // to Application(DatabaseError).
     #[test]
     fn to_holding_tx_error_maps_every_branch() {
         // AccountOperationError leaf → Operation
@@ -648,24 +628,17 @@ mod tests {
             HoldingTransactionError::Validation(TransactionDomainError::DateInFuture)
         ));
 
-        // Anything else → Infrastructure(Unknown) with the message in the hint
-        match to_holding_tx_error(anyhow::anyhow!("synthetic infra failure")) {
-            HoldingTransactionError::Infrastructure(InfrastructureError::Unknown { hint }) => {
-                assert!(
-                    hint.contains("synthetic infra failure"),
-                    "hint should embed the underlying error, got: {hint}"
-                );
-            }
-            other => panic!("expected Infrastructure(Unknown), got: {other:?}"),
-        }
+        // Anything else → Application(DatabaseError) (the catch-all path)
+        assert!(matches!(
+            to_holding_tx_error(anyhow::anyhow!("synthetic infra failure")),
+            HoldingTransactionError::Application(AccountApplicationError::DatabaseError)
+        ));
     }
 
-    // PR 4 — to_open_holding_error is the anyhow→typed bridge for
-    // `Account::open_holding` (which still returns `anyhow::Result`). One
-    // global test covers the three branches: known domain leaves
-    // (OpeningBalanceDomainError, TransactionDomainError) route to their
-    // typed variants; unrecognized errors opaque to Infrastructure(Unknown)
-    // with the underlying message in the hint.
+    // to_open_holding_error is the anyhow→typed bridge for `Account::open_holding`
+    // (which still returns `anyhow::Result`). One global test covers the three
+    // branches: known domain leaves route to their typed variants; unrecognized
+    // errors translate to Application(DatabaseError).
     #[test]
     fn to_open_holding_error_maps_every_branch() {
         use crate::context::account::OpeningBalanceDomainError;
@@ -687,16 +660,11 @@ mod tests {
             OpenHoldingError::TxValidation(TransactionDomainError::QuantityNotPositive)
         ));
 
-        // Anything else → Infrastructure(Unknown) with the message in the hint
-        match to_open_holding_error(anyhow::anyhow!("synthetic infra failure")) {
-            OpenHoldingError::Infrastructure(InfrastructureError::Unknown { hint }) => {
-                assert!(
-                    hint.contains("synthetic infra failure"),
-                    "hint should embed the underlying error, got: {hint}"
-                );
-            }
-            other => panic!("expected Infrastructure(Unknown), got: {other:?}"),
-        }
+        // Anything else → Application(DatabaseError) (the catch-all path)
+        assert!(matches!(
+            to_open_holding_error(anyhow::anyhow!("synthetic infra failure")),
+            OpenHoldingError::Application(AccountApplicationError::DatabaseError)
+        ));
     }
 
     async fn setup(pool: &sqlx::Pool<sqlx::Sqlite>) -> (AccountService, String) {
@@ -1154,16 +1122,14 @@ mod tests {
 
         let err = result.unwrap_err();
         // The repo save error is opaqued at the service boundary — translated
-        // to InfrastructureError::Unknown with a hint that includes the
-        // underlying error string. Assert the variant + that the hint carries
-        // the SimulatedSaveError display.
+        // to AccountApplicationError::DatabaseError; the hint is preserved
+        // server-side via tracing::error! at the same site.
         assert!(
             matches!(
-                &err,
-                HoldingTransactionError::Infrastructure(InfrastructureError::Unknown { hint })
-                    if hint.contains("simulated DB failure")
+                err,
+                HoldingTransactionError::Application(AccountApplicationError::DatabaseError)
             ),
-            "buy_holding must surface save failures as Infrastructure(Unknown), got: {err:?}"
+            "buy_holding must surface save failures as Application(DatabaseError), got: {err:?}"
         );
     }
 
@@ -1171,12 +1137,11 @@ mod tests {
     // open_holding service tests (TRX-042 through TRX-056)
     // -------------------------------------------------------------------------
 
-    // PR 4 — open_holding propagates save failure as Infrastructure(Unknown)
-    // with the underlying error in the hint. Mirrors
-    // test_buy_holding_returns_error_when_save_fails for the open_holding
-    // typed-Result path (save_account_for_open_holding Err branch).
+    // open_holding propagates save failure as Application(DatabaseError) — mirrors
+    // test_buy_holding_returns_error_when_save_fails for the typed-Result path
+    // (save_account_for_open_holding Err branch).
     #[tokio::test]
-    async fn test_open_holding_returns_infrastructure_when_save_fails() {
+    async fn test_open_holding_returns_database_error_when_save_fails() {
         let mut mock_ar = MockAccountRepository::new();
         mock_ar
             .expect_get_with_holdings_and_transactions()
@@ -1215,21 +1180,19 @@ mod tests {
         use crate::use_cases::holding_transaction::OpenHoldingError;
         assert!(
             matches!(
-                &err,
-                OpenHoldingError::Infrastructure(InfrastructureError::Unknown { hint })
-                    if hint.contains("simulated DB failure")
-                        && hint.contains("save_account_for_open_holding")
+                err,
+                OpenHoldingError::Application(AccountApplicationError::DatabaseError)
             ),
-            "open_holding must surface save failures as Infrastructure(Unknown), got: {err:?}"
+            "open_holding must surface save failures as Application(DatabaseError), got: {err:?}"
         );
     }
 
-    // PR 4 — open_holding propagates repo load failure as Infrastructure(Unknown).
+    // open_holding propagates repo load failure as Application(DatabaseError).
     // Distinct from test_open_holding_returns_account_not_found (which exercises
     // Ok(None) → Application(AccountNotFound)). This covers the Err branch of
     // load_account_for_open_holding.
     #[tokio::test]
-    async fn test_open_holding_returns_infrastructure_when_load_fails() {
+    async fn test_open_holding_returns_database_error_when_load_fails() {
         let mut mock_ar = MockAccountRepository::new();
         mock_ar
             .expect_get_with_holdings_and_transactions()
@@ -1256,12 +1219,10 @@ mod tests {
         use crate::use_cases::holding_transaction::OpenHoldingError;
         assert!(
             matches!(
-                &err,
-                OpenHoldingError::Infrastructure(InfrastructureError::Unknown { hint })
-                    if hint.contains("simulated DB failure")
-                        && hint.contains("load_account_for_open_holding")
+                err,
+                OpenHoldingError::Application(AccountApplicationError::DatabaseError)
             ),
-            "open_holding must surface load failures as Infrastructure(Unknown), got: {err:?}"
+            "open_holding must surface load failures as Application(DatabaseError), got: {err:?}"
         );
     }
 
@@ -1698,7 +1659,7 @@ mod tests {
         }
     }
 
-    // load_account translates a repo Err → HoldingTransactionError::Infrastructure(InfrastructureError).
+    // load_account translates a repo Err → HoldingTransactionError::Application(AccountApplicationError::DatabaseError).
     #[tokio::test]
     async fn record_deposit_returns_infrastructure_when_load_fails() {
         let mut mock_ar = MockAccountRepository::new();
@@ -1712,12 +1673,15 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(err, HoldingTransactionError::Infrastructure(_)),
+            matches!(
+                err,
+                HoldingTransactionError::Application(AccountApplicationError::DatabaseError)
+            ),
             "got: {err:?}"
         );
     }
 
-    // save_account translates a repo Err → HoldingTransactionError::Infrastructure(InfrastructureError).
+    // save_account translates a repo Err → HoldingTransactionError::Application(AccountApplicationError::DatabaseError).
     #[tokio::test]
     async fn record_deposit_returns_infrastructure_when_save_fails() {
         let mut mock_ar = MockAccountRepository::new();
@@ -1743,7 +1707,10 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(err, HoldingTransactionError::Infrastructure(_)),
+            matches!(
+                err,
+                HoldingTransactionError::Application(AccountApplicationError::DatabaseError)
+            ),
             "got: {err:?}"
         );
     }
@@ -1803,7 +1770,7 @@ mod tests {
         }
     }
 
-    // load_account translates a repo Err → HoldingTransactionError::Infrastructure(InfrastructureError).
+    // load_account translates a repo Err → HoldingTransactionError::Application(AccountApplicationError::DatabaseError).
     #[tokio::test]
     async fn record_withdrawal_returns_infrastructure_when_load_fails() {
         let mut mock_ar = MockAccountRepository::new();
@@ -1817,12 +1784,15 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(err, HoldingTransactionError::Infrastructure(_)),
+            matches!(
+                err,
+                HoldingTransactionError::Application(AccountApplicationError::DatabaseError)
+            ),
             "got: {err:?}"
         );
     }
 
-    // save_account translates a repo Err → HoldingTransactionError::Infrastructure(InfrastructureError).
+    // save_account translates a repo Err → HoldingTransactionError::Application(AccountApplicationError::DatabaseError).
     #[tokio::test]
     async fn record_withdrawal_returns_infrastructure_when_save_fails() {
         let mut mock_ar = MockAccountRepository::new();
@@ -1882,7 +1852,10 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(err, HoldingTransactionError::Infrastructure(_)),
+            matches!(
+                err,
+                HoldingTransactionError::Application(AccountApplicationError::DatabaseError)
+            ),
             "got: {err:?}"
         );
     }
@@ -1891,11 +1864,9 @@ mod tests {
     // Account CRUD typed-error coverage (PR 5)
     // -------------------------------------------------------------------------
 
-    // PR 5 — create surfaces find_by_name repo failure as Infrastructure(Unknown)
-    // with the helper name + underlying message in the hint. Exercises the
-    // typed-error contract for the uniqueness pre-check failure path.
+    // create surfaces find_by_name repo failure as Application(DatabaseError).
     #[tokio::test]
-    async fn test_create_returns_infrastructure_when_find_by_name_fails() {
+    async fn test_create_returns_database_error_when_find_by_name_fails() {
         let mut mock_ar = MockAccountRepository::new();
         mock_ar
             .expect_find_by_name()
@@ -1916,19 +1887,17 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                &err,
-                AccountCrudError::Infrastructure(InfrastructureError::Unknown { hint })
-                    if hint.contains("simulated DB failure")
-                        && hint.contains("find_by_name")
+                err,
+                AccountCrudError::Application(AccountApplicationError::DatabaseError)
             ),
             "got: {err:?}"
         );
     }
 
-    // PR 5 — create surfaces repo.create failure (after passing the uniqueness
-    // pre-check) as Infrastructure(Unknown). Distinct path from find_by_name.
+    // create surfaces repo.create failure (after passing the uniqueness
+    // pre-check) as Application(DatabaseError).
     #[tokio::test]
-    async fn test_create_returns_infrastructure_when_repo_create_fails() {
+    async fn test_create_returns_database_error_when_repo_create_fails() {
         let mut mock_ar = MockAccountRepository::new();
         mock_ar.expect_find_by_name().once().returning(|_| Ok(None));
         mock_ar
@@ -1950,20 +1919,16 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                &err,
-                AccountCrudError::Infrastructure(InfrastructureError::Unknown { hint })
-                    if hint.contains("simulated DB failure") && hint.contains("create")
+                err,
+                AccountCrudError::Application(AccountApplicationError::DatabaseError)
             ),
             "got: {err:?}"
         );
     }
 
-    // PR 5 — delete surfaces repo failure as Infrastructure(Unknown). The
-    // delete surface is intentionally narrower than create/update (no domain
-    // rejections — cascade is repo-level), so this is the only failure path
-    // worth exercising.
+    // delete surfaces repo failure as AccountApplicationError::DatabaseError.
     #[tokio::test]
-    async fn test_delete_returns_infrastructure_when_repo_fails() {
+    async fn test_delete_returns_database_error_when_repo_fails() {
         let mut mock_ar = MockAccountRepository::new();
         mock_ar
             .expect_delete()
@@ -1976,11 +1941,7 @@ mod tests {
         );
         let err = svc.delete("any-id").await.unwrap_err();
         assert!(
-            matches!(
-                &err,
-                InfrastructureError::Unknown { hint }
-                    if hint.contains("simulated DB failure") && hint.contains("delete")
-            ),
+            matches!(err, AccountApplicationError::DatabaseError),
             "got: {err:?}"
         );
     }

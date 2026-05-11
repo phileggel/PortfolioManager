@@ -128,8 +128,7 @@ describe("accountDetailsGateway — openHolding", () => {
     expect(result).toEqual({ status: "error", error: err });
   });
 
-  // Infrastructure(Unknown) — opaque catch-all preserves the hint payload
-  it("openHolding returns Infrastructure(Unknown) on unexpected backend failure", async () => {
+  it("openHolding returns DatabaseError on unexpected backend failure", async () => {
     const dto: OpenHoldingDTO = {
       account_id: "account-1",
       asset_id: "asset-1",
@@ -137,10 +136,7 @@ describe("accountDetailsGateway — openHolding", () => {
       quantity: 1_000_000,
       total_cost: 100_000_000,
     };
-    const err: OpenHoldingError = {
-      code: "Unknown",
-      hint: "load_account_for_open_holding: db connection lost",
-    };
+    const err: OpenHoldingError = { code: "DatabaseError" };
     mockInvoke.mockRejectedValue(err);
 
     const result = await accountDetailsGateway.openHolding(dto);

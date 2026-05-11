@@ -163,11 +163,8 @@ async deleteAssetPrice(assetId: string, date: string) : Promise<Result<null, Ass
 },
 /**
  * Retrieves all accounts.
- * 
- * Read-only — only infrastructure failures (DB / repository) can fire here,
- * so the surface is the narrow shared `InfrastructureError`.
  */
-async getAccounts() : Promise<Result<Account[], InfrastructureError>> {
+async getAccounts() : Promise<Result<Account[], AccountApplicationError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_accounts") };
 } catch (e) {
@@ -177,12 +174,6 @@ async getAccounts() : Promise<Result<Account[], InfrastructureError>> {
 },
 /**
  * Adds a new account.
- * 
- * Returns the typed `AccountCrudError` directly — no boundary type or mapper
- * is needed because every leaf in the composite (`AccountApplicationError`,
- * `AccountDomainError`, shared `InfrastructureError`) already serializes with
- * `#[serde(tag = "code")]`, and `AccountCrudError`'s `#[serde(untagged)]`
- * flattens them into a single FE-visible union.
  */
 async addAccount(dto: CreateAccountDTO) : Promise<Result<Account, AccountCrudError>> {
     try {
@@ -204,11 +195,9 @@ async updateAccount(dto: UpdateAccountDTO) : Promise<Result<Account, AccountCrud
 }
 },
 /**
- * Deletes an account.
- * 
- * Pure infrastructure surface — no domain rejections (cascade is repo-level).
+ * Deletes an account (R5 — cascades to its holdings at the repo level).
  */
-async deleteAccount(id: string) : Promise<Result<null, InfrastructureError>> {
+async deleteAccount(id: string) : Promise<Result<null, AccountApplicationError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_account", { id }) };
 } catch (e) {
@@ -218,10 +207,8 @@ async deleteAccount(id: string) : Promise<Result<null, InfrastructureError>> {
 },
 /**
  * Returns the distinct asset IDs that have transactions for the given account (TXL-013).
- * 
- * Read-only — only infrastructure failures can fire here.
  */
-async getAssetIdsForAccount(accountId: string) : Promise<Result<string[], InfrastructureError>> {
+async getAssetIdsForAccount(accountId: string) : Promise<Result<string[], AccountApplicationError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_asset_ids_for_account", { accountId }) };
 } catch (e) {
@@ -231,12 +218,8 @@ async getAssetIdsForAccount(accountId: string) : Promise<Result<string[], Infras
 },
 /**
  * Retrieves all transactions for an account/asset pair (TRX-036).
- * 
- * Read-only — only infrastructure failures (DB / repository) can fire here,
- * so the surface is a single `InfrastructureError`. The wider
- * `HoldingTransactionError` composite is reserved for write commands.
  */
-async getTransactions(accountId: string, assetId: string) : Promise<Result<Transaction[], InfrastructureError>> {
+async getTransactions(accountId: string, assetId: string) : Promise<Result<Transaction[], AccountApplicationError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_transactions", { accountId, assetId }) };
 } catch (e) {
@@ -323,13 +306,6 @@ async cancelTransaction(id: string, accountId: string) : Promise<Result<null, Ho
 },
 /**
  * Records a cash deposit into an account (CSH-022).
- * 
- * The Tauri command returns the typed `HoldingTransactionError` directly — no
- * boundary type or mapper is needed because every leaf in the composite
- * (`AccountApplicationError`, `AccountOperationError`, `TransactionDomainError`,
- * shared `InfrastructureError`) already serializes with `#[serde(tag = "code")]`,
- * and `HoldingTransactionError`'s `#[serde(untagged)]` flattens them into a
- * single FE-visible union.
  */
 async recordDeposit(dto: DepositDTO) : Promise<Result<Transaction, HoldingTransactionError>> {
     try {
@@ -488,31 +464,18 @@ currency: string;
  */
 update_frequency: UpdateFrequency }
 /**
- * Application-layer errors raised by the Account bounded context — concerns
- * that belong to use-case orchestration rather than aggregate invariants.
- * 
- * Per Rule B' (`docs/plan/error-model-refactor.md`): an error is **domain**
- * only if raised by an aggregate method on its own loaded state. Anything
- * raised at the service/use-case layer — `NotFound` lookups, cross-aggregate
- * preconditions, infrastructure translations — is **application**.
+ * Application-layer errors raised by the Account bounded context.
  * 
  * Tagged with `#[serde(tag = "code")]` so it serializes verbatim across the
- * Tauri boundary into a flat `{ code: "...", ... }` shape, identical to
- * existing domain error enums.
+ * Tauri boundary into a flat `{ code: "...", ... }` shape.
  */
 export type AccountApplicationError = 
 /**
- * No account exists with the requested ID. Born at the service layer
- * when a repository lookup returns `None`; never raised by an aggregate.
- * `account_id` mirrors the (deprecated) `AccountDomainError::AccountNotFound`
- * payload so the diagnostic chain doesn't lose the requested ID.
+ * No account exists with the requested ID.
  */
 { code: "AccountNotFound"; account_id: string } | 
 /**
- * Account name (case-insensitive) collides with an existing one. Born at
- * the service layer from a `find_by_name` uniqueness pre-check before the
- * repository write — a cross-aggregate invariant, not a single-aggregate
- * state rule, so application-class per Rule B'.
+ * Account name (case-insensitive) collides with an existing one.
  */
 { code: "NameAlreadyExists" } | 
 /**
@@ -520,48 +483,29 @@ export type AccountApplicationError =
  * account-side repository call. Unit variant — no `hint` payload on the
  * wire; the full diagnostic chain is preserved server-side via
  * `tracing::error!` at the translation site. FE shows the i18n key
- * `error.DatabaseError`. Per the project-specific infra-translation rule
- * (`docs/plan/error-model-refactor.md`).
+ * `error.DatabaseError`.
  */
 { code: "DatabaseError" }
 /**
  * Service-layer composite for the **Account CRUD** failure surface — the
- * write commands `add_account` and `update_account`. Replaces the anyhow-era
- * `AccountCommandError` boundary type per the rejection-layer rule
- * (`docs/ddd-reference.md` § Errors): each leaf retains its single, typed
- * failure source in its proper layer; `#[serde(untagged)]` flattens them
- * into a single FE-visible union of `{ code: "..." }` discriminated variants.
- * 
- * **This IS the FE-facing contract** for `add_account` / `update_account`.
- * No separate boundary type / mapper is needed. `delete_account`,
- * `get_accounts`, and `get_asset_ids_for_account` use the narrower shared
- * `InfrastructureError` directly because they have no domain-rejection paths.
+ * write commands `add_account` and `update_account`.
  * 
  * Each leaf lives in its rightful layer:
  * - `AccountApplicationError` — application layer (this module) — raises
- * `NameAlreadyExists` from the service-layer uniqueness pre-check.
+ * `NameAlreadyExists` and `DatabaseError`.
  * - `AccountDomainError` — domain layer (`account/domain/`) — raises
  * `NameEmpty` / `InvalidCurrency` from the `Account::new` /
  * `Account::with_id` constructors on their own input.
- * - `InfrastructureError` — shared catch-all (`core/`) — opaques repository
- * failures.
- * 
- * `AccountCrudError` itself owns no variants; it only enumerates which
- * leaves the create/update commands can produce.
  */
 export type AccountCrudError = 
 /**
- * Service-layer rejection (`NameAlreadyExists`).
+ * Service-layer rejection (`NameAlreadyExists`, `DatabaseError`).
  */
 AccountApplicationError | 
 /**
  * Aggregate-constructor rejection (`NameEmpty`, `InvalidCurrency`).
  */
-AccountDomainError | 
-/**
- * Opaque catch-all for repository failures.
- */
-InfrastructureError
+AccountDomainError
 /**
  * Pre-deletion counts for an account (ACC-020).
  */
@@ -833,9 +777,7 @@ export type AssetClass =
  * Composes three leaves: `AssetApplicationError` (NotFound, DatabaseError),
  * `AssetDomainError` (input validation + archive / cash / system-managed
  * invariants), `CategoryApplicationError` (cross-aggregate category lookup
- * in create/update). No `Infrastructure` leaf — infra failures translate at
- * the application layer into `AssetApplicationError::DatabaseError` per the
- * project's infra-translation rule (`docs/plan/error-model-refactor.md`).
+ * in create/update).
  */
 export type AssetCrudError = 
 /**
@@ -990,13 +932,6 @@ export type AssetPriceDomainError =
  * commands `record_asset_price` / `update_asset_price` / `delete_asset_price`
  * and the read `get_asset_prices`.
  * 
- * Replaces the anyhow-era trio of boundary types
- * (`AssetPriceCommandError`, `UpdateAssetPriceCommandError`,
- * `DeleteAssetPriceCommandError`) with a single composite per the
- * family-map (`docs/plan/error-model-refactor.md` § Failure-surface-family map
- * → Asset price row). Continues the gold infra-translation rule (no shared
- * `InfrastructureError` leaf — translated to per-BC `*ApplicationError::DatabaseError`).
- * 
  * Composes three leaves:
  * - `AssetApplicationError` — cross-aggregate asset-existence check
  * (`record_asset_price` and `get_asset_prices` reject when the asset row
@@ -1100,16 +1035,8 @@ export type CategoryApplicationError =
 /**
  * Service-layer composite for the **Category CRUD** failure surface — the
  * write commands `add_category`, `update_category`, `delete_category`.
- * 
- * Replaces the anyhow-era `CategoryCommandError` boundary type. **First PR
- * (6) enforcing the gold infra-translation rule**: this composite has NO
- * shared `InfrastructureError` leaf — infra failures are translated at the
- * application layer into `CategoryApplicationError::DatabaseError` (typed,
- * payload-free) rather than passed through opaquely.
- * 
- * **This IS the FE-facing contract** for write commands. `get_categories`
- * (read-only) returns the narrower `CategoryApplicationError` directly
- * because it has no domain-rejection paths.
+ * `get_categories` (read-only) returns the narrower `CategoryApplicationError`
+ * directly because it has no domain-rejection paths.
  * 
  * Each leaf lives in its rightful layer:
  * - `CategoryApplicationError` — application layer (this module) — raises
@@ -1117,9 +1044,6 @@ export type CategoryApplicationError =
  * - `CategoryDomainError` — domain layer (`asset/domain/`) — raises
  * `LabelEmpty` (value-object validation), `SystemReadonly` /
  * `SystemProtected` (aggregate-method invariants on loaded state).
- * 
- * `CategoryCrudError` itself owns no variants; it only enumerates which
- * leaves the create/update/delete commands can produce.
  */
 export type CategoryCrudError = 
 /**
@@ -1449,34 +1373,14 @@ performance_pct: number | null }
  * `record_deposit`, `record_withdrawal`, `buy_holding`, `sell_holding`,
  * `correct_transaction`, `cancel_transaction`.
  * 
- * Cash deposit / withdrawal are the special case where the holding IS the
- * System Cash Asset (CSH-014); mechanically they share the same aggregate,
- * the same replay invariants, and therefore the same failure surface. So
- * they share the composite — one FE-facing type covers all six commands.
- * 
- * Replaces the deleted domain-layer `CashOperationError` and the anyhow-era
- * `TransactionCommandError` boundary type per Rule B' — composition belongs
- * in the application layer; each leaf retains its single, typed failure
- * source in its proper layer.
- * 
- * **This IS the FE-facing contract** for holding-transaction Tauri commands.
- * No separate boundary type / mapper is needed: the four leaf enums below
- * each derive `Serialize` + `specta::Type` with `#[serde(tag = "code")]`, and
- * `#[serde(untagged)]` here flattens them into a single FE-visible union of
- * `{ code: "...", ... }` discriminated variants.
- * 
  * Each leaf lives in its rightful layer:
- * - `AccountApplicationError` — application layer (`account/application/`)
+ * - `AccountApplicationError` — application layer (this module)
  * - `AccountOperationError` — domain layer (`account/domain/`)
  * - `TransactionDomainError` — domain layer (`account/domain/`)
- * - `InfrastructureError` — shared catch-all (`core/`)
- * 
- * `HoldingTransactionError` itself owns no variants; it only enumerates which
- * leaves any holding-transaction command can produce.
  */
 export type HoldingTransactionError = 
 /**
- * Application-layer rejection (`AccountNotFound`).
+ * Application-layer rejection (`AccountNotFound`, `DatabaseError`).
  */
 AccountApplicationError | 
 /**
@@ -1488,49 +1392,11 @@ AccountOperationError |
  * Transaction-factory validation rejection (invalid date, negative
  * quantity, `AmountNotPositive` from cash factories, etc.).
  */
-TransactionDomainError | 
-/**
- * Opaque catch-all for repository / cross-BC infrastructure failures.
- * Wire shape: `{ code: "Unknown", hint: "..." }`. The `hint` mirrors the
- * corresponding `tracing::error!` log; FE shows `error.Unknown`.
- */
-InfrastructureError
-/**
- * Shared application-wide infrastructure-error type.
- * 
- * Composed into every typed service composite (e.g. `HoldingTransactionError`)
- * via `#[from]` so any layer can translate an opaque infrastructure failure
- * (repository crash, file-system error, network failure, deserialization
- * error, cross-BC infra step) into a typed leaf without re-defining the same
- * `Unknown { hint }` shape per bounded context.
- * 
- * Per `docs/ddd-reference.md` § Errors travel rule: raw infrastructure
- * failures must be translated at the application boundary into either a
- * meaningful application error OR an opaque variant. This is the latter —
- * the `hint` is developer-only diagnostic mirroring the corresponding
- * `tracing::error!` log; the FE displays the i18n key `error.Unknown` and
- * forwards `hint` to the JS console via `logger.error`.
- * 
- * Tagged with `#[serde(tag = "code")]` so the wire shape is
- * `{ code: "Unknown", hint: "..." }` — identical across every command that
- * surfaces it through any composite.
- */
-export type InfrastructureError = 
-/**
- * Opaque catch-all for any infrastructure failure with no domain meaning.
- * Construct via `InfrastructureError::Unknown { hint: format!("...") }`
- * or via `?` from any composite that has `#[from] InfrastructureError`.
- */
-{ code: "Unknown"; hint: string }
+TransactionDomainError
 /**
  * Application-layer rejections specific to the `open_holding` use case —
  * cross-BC asset checks performed by the orchestrator before delegating to
  * `AccountService::open_holding`.
- * 
- * Per Rule B' (`docs/plan/error-model-refactor.md`): an error is **domain**
- * only if raised by an aggregate method on its own loaded state. These three
- * rejections are use-case orchestration concerns (the orchestrator queries
- * the asset service and decides whether to proceed) — application-class.
  * 
  * Tagged with `#[serde(tag = "code")]` so it serializes verbatim across the
  * Tauri boundary into a flat `{ code: "..." }` shape.
@@ -1578,20 +1444,15 @@ quantity: number;
 total_cost: number }
 /**
  * Use-case composite for the **open holding** failure surface — the single
- * command `open_holding` (TRX-042) and its full chain of rejections. Replaces
- * the anyhow-era `OpenHoldingCommandError` boundary type per Rule B' —
- * composition belongs in the use-case layer; each leaf retains its single,
- * typed failure source in its proper layer.
- * 
- * **This IS the FE-facing contract** for the `open_holding` Tauri command.
- * No separate boundary type / mapper is needed: each leaf below derives
- * `Serialize` + `specta::Type` with `#[serde(tag = "code")]`, and
- * `#[serde(untagged)]` here flattens them into a single FE-visible union of
- * `{ code: "...", ... }` discriminated variants.
+ * command `open_holding` (TRX-042) and its full chain of rejections.
  * 
  * Each leaf lives in its rightful layer:
  * - `AccountApplicationError` — application layer (`account/application/`),
- * raises `AccountNotFound { account_id }` from the service-layer load.
+ * raises `AccountNotFound { account_id }` and `DatabaseError` from
+ * account-side service operations. Asset-side `DatabaseError` from the
+ * cross-BC `get_asset_by_id` lookup is also tunnelled through this leaf
+ * (the orchestrator translates at the call site) so the FE wire surface
+ * carries a single `{ code: "DatabaseError" }` shape.
  * - `OpenHoldingApplicationError` — use-case-owned (this file), raises the
  * 3 cross-BC rejections (`AssetNotFound`, `ArchivedAsset`,
  * `OpeningBalanceOnCashAsset`).
@@ -1599,15 +1460,10 @@ total_cost: number }
  * `InvalidTotalCost` from `Account::open_holding` on its own input.
  * - `TransactionDomainError` — domain layer (`account/domain/`), raises
  * the date / quantity invariants enforced by `Transaction::new`.
- * - `InfrastructureError` — shared catch-all (`core/`), opaques repository /
- * cross-BC asset-service infrastructure failures.
- * 
- * `OpenHoldingError` itself owns no variants; it only enumerates which
- * leaves the open_holding command can produce.
  */
 export type OpenHoldingError = 
 /**
- * Service-layer rejection (`AccountNotFound`).
+ * Account-side rejection (`AccountNotFound`, `DatabaseError`).
  */
 AccountApplicationError | 
 /**
@@ -1622,13 +1478,7 @@ OpeningBalanceDomainError |
  * Transaction-factory validation rejection (invalid date, negative
  * quantity, etc. — subset of variants reachable from `open_holding`).
  */
-TransactionDomainError | 
-/**
- * Opaque catch-all for repository / cross-BC asset-service failures.
- * Wire shape: `{ code: "Unknown", hint: "..." }`. The `hint` mirrors the
- * corresponding `tracing::error!` log; FE shows `error.Unknown`.
- */
-InfrastructureError
+TransactionDomainError
 /**
  * Aggregate-level domain rejection raised by `Account::open_holding` on its
  * own input — currently only the `total_cost > 0` invariant (TRX-045).
