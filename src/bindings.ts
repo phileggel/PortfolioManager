@@ -367,7 +367,7 @@ async getAccountDetails(accountId: string) : Promise<Result<AccountDetailsRespon
  * Used by the frontend to decide whether to show the standard or reinforced
  * delete confirmation dialog (ACC-018 vs ACC-019).
  */
-async getAccountDeletionSummary(accountId: string) : Promise<Result<AccountDeletionSummary, AccountDeletionCommandError>> {
+async getAccountDeletionSummary(accountId: string) : Promise<Result<AccountDeletionSummary, AccountApplicationError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_account_deletion_summary", { accountId }) };
 } catch (e) {
@@ -562,14 +562,6 @@ AccountDomainError |
  * Opaque catch-all for repository failures.
  */
 InfrastructureError
-/**
- * Typed error returned to the frontend for the get_account_deletion_summary command.
- */
-export type AccountDeletionCommandError = 
-/**
- * An unexpected server-side error occurred.
- */
-{ code: "Unknown" }
 /**
  * Pre-deletion counts for an account (ACC-020).
  */

@@ -2,8 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Account,
+  AccountApplicationError,
   AccountCrudError,
-  AccountDeletionCommandError,
   AccountDeletionSummary,
   AccountDomainError,
   CreateAccountDTO,
@@ -165,8 +165,8 @@ describe("accountGateway", () => {
     });
   });
 
-  it("getAccountDeletionSummary returns error on failure", async () => {
-    const err: AccountDeletionCommandError = { code: "Unknown" };
+  it("getAccountDeletionSummary surfaces DatabaseError on repo failure", async () => {
+    const err: AccountApplicationError = { code: "DatabaseError" };
     mockInvoke.mockRejectedValue(err);
     const result = await accountGateway.getAccountDeletionSummary("missing");
     expect(result).toEqual({ status: "error", error: err });
