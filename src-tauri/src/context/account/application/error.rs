@@ -32,6 +32,14 @@ pub enum AccountApplicationError {
     /// state rule, so application-class per Rule B'.
     #[error("Account name already exists")]
     NameAlreadyExists,
+    /// Application-layer translation of any infrastructure failure from an
+    /// account-side repository call. Unit variant — no `hint` payload on the
+    /// wire; the full diagnostic chain is preserved server-side via
+    /// `tracing::error!` at the translation site. FE shows the i18n key
+    /// `error.DatabaseError`. Per the project-specific infra-translation rule
+    /// (`docs/plan/error-model-refactor.md`).
+    #[error("An unexpected database error occurred")]
+    DatabaseError,
 }
 
 /// Service-layer composite for the **holding-transaction** failure surface —

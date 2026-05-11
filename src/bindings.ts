@@ -247,7 +247,7 @@ async getTransactions(accountId: string, assetId: string) : Promise<Result<Trans
 /**
  * Archives an asset, guarded against active holdings (OQ-6).
  */
-async archiveAsset(id: string) : Promise<Result<null, ArchiveAssetCommandError>> {
+async archiveAsset(id: string) : Promise<Result<null, ArchiveAssetError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("archive_asset", { id }) };
 } catch (e) {
@@ -258,7 +258,7 @@ async archiveAsset(id: string) : Promise<Result<null, ArchiveAssetCommandError>>
 /**
  * Deletes an asset, guarded against existing transactions.
  */
-async deleteAsset(id: string) : Promise<Result<null, DeleteAssetCommandError>> {
+async deleteAsset(id: string) : Promise<Result<null, DeleteAssetError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_asset", { id }) };
 } catch (e) {
@@ -514,7 +514,16 @@ export type AccountApplicationError =
  * repository write — a cross-aggregate invariant, not a single-aggregate
  * state rule, so application-class per Rule B'.
  */
-{ code: "NameAlreadyExists" }
+{ code: "NameAlreadyExists" } | 
+/**
+ * Application-layer translation of any infrastructure failure from an
+ * account-side repository call. Unit variant — no `hint` payload on the
+ * wire; the full diagnostic chain is preserved server-side via
+ * `tracing::error!` at the translation site. FE shows the i18n key
+ * `error.DatabaseError`. Per the project-specific infra-translation rule
+ * (`docs/plan/error-model-refactor.md`).
+ */
+{ code: "DatabaseError" }
 /**
  * Service-layer composite for the **Account CRUD** failure surface — the
  * write commands `add_account` and `update_account`. Replaces the anyhow-era
@@ -678,25 +687,58 @@ export type AccountOperationError =
  */
 { code: "InsufficientCash"; current_balance_micros: number; currency: string }
 /**
- * Typed error returned to the frontend for the archive_asset command.
+ * Application-layer rejection specific to the `archive_asset` use case —
+ * the cross-BC active-holdings check performed by the orchestrator before
+ * delegating to `AssetService::archive_asset`.
+ * 
+ * Per the rejection-layer rule (`docs/ddd-reference.md` § Errors): this
+ * rejection is born at the orchestrator (it queries the account service and
+ * decides whether to proceed), not by an aggregate method on its own loaded
+ * state — application-class.
+ * 
+ * Tagged with `#[serde(tag = "code")]` so it serializes verbatim across the
+ * Tauri boundary into a flat `{ code: "..." }` shape through the
+ * `ArchiveAssetError` untagged composite.
  */
-export type ArchiveAssetCommandError = 
+export type ArchiveAssetApplicationError = 
 /**
- * Asset still has non-zero holdings in at least one account.
+ * Asset still has non-zero holdings in at least one account (OQ-6).
  */
-{ code: "ActiveHoldings" } | 
+{ code: "ActiveHoldings" }
 /**
- * Target asset is a system Cash Asset and cannot be archived (CSH-016).
+ * Use-case composite for the **archive asset** failure surface — the single
+ * command `archive_asset` (OQ-6) and its full chain of rejections.
+ * 
+ * Replaces the anyhow-era `ArchiveAssetCommandError` boundary type. This IS
+ * the FE-facing contract for the `archive_asset` Tauri command — each leaf
+ * already serializes with `#[serde(tag = "code")]`, and `#[serde(untagged)]`
+ * here flattens them into a single FE-visible union.
+ * 
+ * Each leaf lives in its rightful layer:
+ * - `AssetCrudError` — asset BC composite (`asset/application/`), carries
+ * `AssetApplicationError::NotFound` and
+ * `AssetDomainError::CashAssetNotEditable` propagated verbatim per the
+ * composition-over-redefinition rule.
+ * - `AccountApplicationError` — account BC (`account/application/`), surfaces
+ * `DatabaseError` from the cross-BC active-holdings check.
+ * - `ArchiveAssetApplicationError` — use-case-owned (this file), raises
+ * `ActiveHoldings` from the orchestrator.
  */
-{ code: "CashAssetNotEditable" } | 
+export type ArchiveAssetError = 
 /**
- * No asset exists with the requested ID.
+ * Asset BC rejection (`NotFound`, `CashAssetNotEditable`, propagated
+ * `DatabaseError`).
  */
-{ code: "NotFound" } | 
+AssetCrudError | 
 /**
- * An unexpected server-side error occurred.
+ * Account BC rejection (`DatabaseError` from the cross-BC
+ * active-holdings check).
  */
-{ code: "Unknown" }
+AccountApplicationError | 
+/**
+ * Use-case orchestration rejection (`ActiveHoldings`).
+ */
+ArchiveAssetApplicationError
 /**
  * A financial instrument or resource held by a user.
  */
@@ -1239,25 +1281,58 @@ risk_level: number;
  */
 category_id: string }
 /**
- * Typed error returned to the frontend for the delete_asset command.
+ * Application-layer rejection specific to the `delete_asset` use case —
+ * the cross-BC transaction-history check performed by the orchestrator
+ * before delegating to `AssetService::delete_asset`.
+ * 
+ * Per the rejection-layer rule (`docs/ddd-reference.md` § Errors): this
+ * rejection is born at the orchestrator (it queries the account service and
+ * decides whether to proceed), not by an aggregate method on its own loaded
+ * state — application-class.
+ * 
+ * Tagged with `#[serde(tag = "code")]` so it serializes verbatim across the
+ * Tauri boundary into a flat `{ code: "..." }` shape through the
+ * `DeleteAssetError` untagged composite.
  */
-export type DeleteAssetCommandError = 
+export type DeleteAssetApplicationError = 
 /**
- * At least one transaction references this asset.
+ * At least one transaction references this asset; deletion would break history.
  */
-{ code: "ExistingTransactions" } | 
+{ code: "ExistingTransactions" }
 /**
- * Target asset is a system Cash Asset and cannot be deleted (CSH-016).
+ * Use-case composite for the **delete asset** failure surface — the single
+ * command `delete_asset` and its full chain of rejections.
+ * 
+ * Replaces the anyhow-era `DeleteAssetCommandError` boundary type. This IS
+ * the FE-facing contract for the `delete_asset` Tauri command — each leaf
+ * already serializes with `#[serde(tag = "code")]`, and `#[serde(untagged)]`
+ * here flattens them into a single FE-visible union.
+ * 
+ * Each leaf lives in its rightful layer:
+ * - `AssetCrudError` — asset BC composite (`asset/application/`), carries
+ * `AssetApplicationError::NotFound` and
+ * `AssetDomainError::CashAssetNotEditable` propagated verbatim per the
+ * composition-over-redefinition rule.
+ * - `AccountApplicationError` — account BC (`account/application/`), surfaces
+ * `DatabaseError` from the cross-BC transaction-history check.
+ * - `DeleteAssetApplicationError` — use-case-owned (this file), raises
+ * `ExistingTransactions` from the orchestrator.
  */
-{ code: "CashAssetNotEditable" } | 
+export type DeleteAssetError = 
 /**
- * No asset exists with the requested ID.
+ * Asset BC rejection (`NotFound`, `CashAssetNotEditable`, propagated
+ * `DatabaseError`).
  */
-{ code: "NotFound" } | 
+AssetCrudError | 
 /**
- * An unexpected server-side error occurred.
+ * Account BC rejection (`DatabaseError` from the cross-BC
+ * transaction-history check).
  */
-{ code: "Unknown" }
+AccountApplicationError | 
+/**
+ * Use-case orchestration rejection (`ExistingTransactions`).
+ */
+DeleteAssetApplicationError
 /**
  * Parameters for recording a cash deposit (CSH-020).
  */

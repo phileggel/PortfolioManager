@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  AccountApplicationError,
+  ArchiveAssetApplicationError,
   Asset,
   AssetApplicationError,
   AssetCrudError,
@@ -8,6 +10,7 @@ import type {
   AssetLookupResult,
   CategoryApplicationError,
   CreateAssetDTO,
+  DeleteAssetApplicationError,
   UpdateAssetDTO,
   WebLookupCommandError,
 } from "@/bindings";
@@ -182,6 +185,59 @@ describe("asset gateway — CRUD", () => {
     const err: AssetCrudError = { code: "NotFound", id: "missing" };
     mockInvoke.mockRejectedValue(err);
     const result = await assetGateway.unarchiveAsset("missing");
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  // ── archiveAsset ──────────────────────────────────────────────────────────
+
+  it("archiveAsset returns null on success", async () => {
+    mockInvoke.mockResolvedValue(null);
+    const result = await assetGateway.archiveAsset("asset-1");
+    expect(result).toEqual({ status: "ok", data: null });
+    expect(mockInvoke).toHaveBeenCalledWith("archive_asset", { id: "asset-1" });
+  });
+
+  it("archiveAsset surfaces ActiveHoldings via Application leaf", async () => {
+    const err: ArchiveAssetApplicationError = { code: "ActiveHoldings" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.archiveAsset("asset-1");
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("archiveAsset surfaces NotFound propagated through Asset leaf", async () => {
+    const err: AssetCrudError = { code: "NotFound", id: "missing" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.archiveAsset("missing");
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("archiveAsset surfaces DatabaseError from cross-BC Account leaf", async () => {
+    const err: AccountApplicationError = { code: "DatabaseError" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.archiveAsset("asset-1");
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  // ── deleteAsset ───────────────────────────────────────────────────────────
+
+  it("deleteAsset returns null on success", async () => {
+    mockInvoke.mockResolvedValue(null);
+    const result = await assetGateway.deleteAsset("asset-1");
+    expect(result).toEqual({ status: "ok", data: null });
+    expect(mockInvoke).toHaveBeenCalledWith("delete_asset", { id: "asset-1" });
+  });
+
+  it("deleteAsset surfaces ExistingTransactions via Application leaf", async () => {
+    const err: DeleteAssetApplicationError = { code: "ExistingTransactions" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.deleteAsset("asset-1");
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("deleteAsset surfaces CashAssetNotEditable propagated through Asset leaf", async () => {
+    const err: AssetCrudError = { code: "CashAssetNotEditable" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.deleteAsset("system-cash-eur");
     expect(result).toEqual({ status: "error", error: err });
   });
 });

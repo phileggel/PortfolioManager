@@ -1,15 +1,8 @@
+use super::error::{ArchiveAssetApplicationError, ArchiveAssetError};
 use crate::context::account::AccountService;
 use crate::context::asset::AssetService;
-use anyhow::Result;
+use std::result::Result as StdResult;
 use std::sync::Arc;
-
-/// Typed error for the ArchiveAssetUseCase.
-#[derive(Debug, thiserror::Error)]
-pub enum ArchiveAssetError {
-    /// Asset still has non-zero holdings in at least one account (OQ-6).
-    #[error("Cannot archive an asset with active holdings")]
-    ActiveHoldings,
-}
 
 /// Guards and delegates asset archiving across the asset and account bounded contexts (OQ-6).
 pub struct ArchiveAssetUseCase {
@@ -27,18 +20,16 @@ impl ArchiveAssetUseCase {
     }
 
     /// Archives an asset, rejecting the request if any account holds an active position (OQ-6).
-    pub async fn archive_asset(&self, asset_id: &str) -> Result<()> {
+    pub async fn archive_asset(&self, asset_id: &str) -> StdResult<(), ArchiveAssetError> {
         if self
             .account_service
             .has_active_holdings_for_asset(asset_id)
             .await?
         {
-            return Err(ArchiveAssetError::ActiveHoldings.into());
+            return Err(ArchiveAssetApplicationError::ActiveHoldings.into());
         }
-        self.asset_service
-            .archive_asset(asset_id)
-            .await
-            .map_err(Into::into)
+        self.asset_service.archive_asset(asset_id).await?;
+        Ok(())
     }
 }
 
@@ -137,10 +128,10 @@ mod tests {
         let err = uc.archive_asset(&asset.id).await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<ArchiveAssetError>(),
-                Some(ArchiveAssetError::ActiveHoldings)
+                err,
+                ArchiveAssetError::Application(ArchiveAssetApplicationError::ActiveHoldings)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
