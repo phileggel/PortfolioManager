@@ -9,7 +9,7 @@ import {
   type DeleteAssetError,
   type Result,
   type UpdateAssetDTO,
-  type WebLookupCommandError,
+  type WebLookupApplicationError,
 } from "../../bindings";
 
 /**
@@ -45,7 +45,9 @@ export const assetGateway = {
     return await commands.deleteAsset(id);
   },
 
-  async lookupAsset(query: string): Promise<Result<AssetLookupResult[], WebLookupCommandError>> {
+  async lookupAsset(
+    query: string,
+  ): Promise<Result<AssetLookupResult[], WebLookupApplicationError>> {
     return await commands.lookupAsset(query);
   },
 };

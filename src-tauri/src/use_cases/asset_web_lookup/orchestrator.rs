@@ -5,9 +5,12 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
+use std::result::Result as StdResult;
 use std::sync::Arc;
 
+use super::error::WebLookupApplicationError;
 use super::primary_listing_processor::{self, AssetLookupResult, QueryContext, RawFigiHit};
+use crate::core::logger::BACKEND;
 
 // ---------------------------------------------------------------------------
 // OpenFigiClient trait (allows test mocking per B26)
@@ -57,9 +60,13 @@ impl AssetWebLookupUseCase {
     /// listings, so primary venues missing from `/v3/search` (notably Euronext
     /// Paris for European stocks) are surfaced.
     ///
-    /// Any client error is surfaced as `anyhow::Err` (WEB-025); the API layer
-    /// maps that to [`WebLookupCommandError::NetworkError`].
-    pub async fn search(&self, query: String) -> Result<Vec<AssetLookupResult>> {
+    /// Any client error is surfaced as `WebLookupApplicationError::NetworkError`
+    /// (WEB-025); the full diagnostic chain is preserved server-side via
+    /// `tracing::warn!` at the translation site.
+    pub async fn search(
+        &self,
+        query: String,
+    ) -> StdResult<Vec<AssetLookupResult>, WebLookupApplicationError> {
         let trimmed = query.trim();
         let is_isin = trimmed.len() == 12 && trimmed.chars().all(|c| c.is_ascii_alphanumeric());
 
@@ -72,14 +79,12 @@ impl AssetWebLookupUseCase {
         };
 
         let raw_hits = if is_isin {
-            self.client
-                .map_isin(trimmed)
-                .await
-                .with_context(|| format!("ISIN lookup failed for: {trimmed}"))?
+            self.client.map_isin(trimmed).await.map_err(|e| {
+                tracing::warn!(target: BACKEND, query = %trimmed, err = ?e, "search: ISIN lookup failed (WEB-025)");
+                WebLookupApplicationError::NetworkError
+            })?
         } else {
-            self.collect_keyword_hits(trimmed)
-                .await
-                .with_context(|| format!("keyword lookup failed for: {trimmed}"))?
+            self.collect_keyword_hits(trimmed).await?
         };
 
         let mut results = primary_listing_processor::process_hits(raw_hits, &ctx);
@@ -93,12 +98,14 @@ impl AssetWebLookupUseCase {
     /// initial keyword hits for each share class (mapping is the authoritative
     /// list of all venues for a share class). Hits with a null share class
     /// pass through to the processor, which drops them.
-    async fn collect_keyword_hits(&self, query: &str) -> Result<Vec<RawFigiHit>> {
-        let initial = self
-            .client
-            .search_keyword(query)
-            .await
-            .context("OpenFIGI keyword search failed")?;
+    async fn collect_keyword_hits(
+        &self,
+        query: &str,
+    ) -> StdResult<Vec<RawFigiHit>, WebLookupApplicationError> {
+        let initial = self.client.search_keyword(query).await.map_err(|e| {
+            tracing::warn!(target: BACKEND, query = %query, err = ?e, "collect_keyword_hits: search_keyword failed (WEB-025)");
+            WebLookupApplicationError::NetworkError
+        })?;
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let mut share_class_ids: Vec<String> = Vec::new();
         for hit in &initial {
@@ -115,7 +122,10 @@ impl AssetWebLookupUseCase {
             .client
             .map_share_classes(&share_class_ids)
             .await
-            .context("OpenFIGI share-class enrichment failed")?;
+            .map_err(|e| {
+                tracing::warn!(target: BACKEND, query = %query, err = ?e, "collect_keyword_hits: map_share_classes failed (WEB-025)");
+                WebLookupApplicationError::NetworkError
+            })?;
         Ok(enriched.into_iter().flatten().collect())
     }
 }
@@ -624,18 +634,22 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[tokio::test]
-    async fn propagates_search_keyword_error_as_anyhow() {
+    async fn search_keyword_failure_translates_to_network_error() {
         let mut mock = MockOpenFigiClient::new();
         mock.expect_search_keyword()
             .times(1)
             .returning(|_| Err(anyhow::anyhow!("connection refused")));
 
         let uc = AssetWebLookupUseCase::new(Arc::new(mock));
-        assert!(uc.search("AAPL".to_string()).await.is_err());
+        let err = uc.search("AAPL".to_string()).await.unwrap_err();
+        assert!(
+            matches!(err, WebLookupApplicationError::NetworkError),
+            "got: {err:?}"
+        );
     }
 
     #[tokio::test]
-    async fn propagates_map_share_classes_error_as_anyhow() {
+    async fn map_share_classes_failure_translates_to_network_error() {
         let initial = vec![raw_hit(
             "X",
             Some("UV"),
@@ -653,17 +667,25 @@ mod tests {
             .returning(|_| Err(anyhow::anyhow!("rate limited")));
 
         let uc = AssetWebLookupUseCase::new(Arc::new(mock));
-        assert!(uc.search("anything".to_string()).await.is_err());
+        let err = uc.search("anything".to_string()).await.unwrap_err();
+        assert!(
+            matches!(err, WebLookupApplicationError::NetworkError),
+            "got: {err:?}"
+        );
     }
 
     #[tokio::test]
-    async fn propagates_map_isin_error_as_anyhow() {
+    async fn map_isin_failure_translates_to_network_error() {
         let mut mock = MockOpenFigiClient::new();
         mock.expect_map_isin()
             .times(1)
             .returning(|_| Err(anyhow::anyhow!("HTTP 500")));
 
         let uc = AssetWebLookupUseCase::new(Arc::new(mock));
-        assert!(uc.search("FR0000120073".to_string()).await.is_err());
+        let err = uc.search("FR0000120073".to_string()).await.unwrap_err();
+        assert!(
+            matches!(err, WebLookupApplicationError::NetworkError),
+            "got: {err:?}"
+        );
     }
 }
