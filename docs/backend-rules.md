@@ -201,9 +201,9 @@ tracing::info!(target: BACKEND, field = value, "message");
 
 ## General
 
-**B31** — MUST use `anyhow::Result<T>` for error handling.
+> Errors: see [`docs/error-model.md`](error-model.md) for the full how-to (rules, decision tree, recipes, anti-patterns). Conceptual framing in [`docs/ddd-reference.md`](ddd-reference.md) § Errors.
 
-- Exception: Tauri command responses use `Result<T, String>`.
+**B31** — _STALE — superseded by [`docs/error-model.md`](error-model.md)._ The current model: application services return typed `Result<T, *Error>` enums (composites at the boundary, tagged leaves underneath); repositories use `anyhow::Error`; the application layer translates infra failures to per-BC `*ApplicationError::DatabaseError`.
 
 **B32** — MAY use `#[allow(clippy::too_many_arguments)]` on domain factory methods and production constructors (e.g. orchestrator or service new() with many injected dependencies). MUST NOT use on test helpers — use a builder struct instead.
 

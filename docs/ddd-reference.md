@@ -185,6 +185,8 @@ Infrastructure types (`sqlx::Pool`, concrete repos) must never appear in Applica
 
 ## Errors
 
+> **Project-specific reference**: see [`docs/error-model.md`](error-model.md) for the directive how-to (rules, decision tree, recipes, anti-patterns). This section gives the conceptual framing only.
+
 ### Three categories of errors
 
 - **Domain error** — a violation of a business rule or invariant. Belongs to the domain layer. Expressed in ubiquitous language. Examples: `OrderNotPaid`, `InsufficientStock`, `CannotCancelShippedOrder`.
