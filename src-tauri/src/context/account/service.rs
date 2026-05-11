@@ -54,8 +54,11 @@ impl AccountService {
     }
 
     /// Retrieves an account by ID.
-    pub async fn get_by_id(&self, id: &str) -> anyhow::Result<Option<Account>> {
-        self.account_repo.get_by_id(id).await
+    pub async fn get_by_id(&self, id: &str) -> StdResult<Option<Account>, AccountApplicationError> {
+        self.account_repo.get_by_id(id).await.map_err(|e| {
+            tracing::error!(target: BACKEND, account_id = %id, err = ?e, "get_by_id: repository failure");
+            AccountApplicationError::DatabaseError
+        })
     }
 
     /// Creates a new account.
@@ -127,8 +130,14 @@ impl AccountService {
     // -------------------------------------------------------------------------
 
     /// Retrieves all holdings for a given account (ACD-022, ADR-004).
-    pub async fn get_holdings_for_account(&self, account_id: &str) -> anyhow::Result<Vec<Holding>> {
-        self.holding_repo.get_by_account(account_id).await
+    pub async fn get_holdings_for_account(
+        &self,
+        account_id: &str,
+    ) -> StdResult<Vec<Holding>, AccountApplicationError> {
+        self.holding_repo.get_by_account(account_id).await.map_err(|e| {
+            tracing::error!(target: BACKEND, account_id = %account_id, err = ?e, "get_holdings_for_account: repository failure");
+            AccountApplicationError::DatabaseError
+        })
     }
 
     /// Retrieves a single holding by account/asset pair, or None (B19).
@@ -1966,6 +1975,46 @@ mod tests {
                 InfrastructureError::Unknown { hint }
                     if hint.contains("simulated DB failure") && hint.contains("delete")
             ),
+            "got: {err:?}"
+        );
+    }
+
+    // get_by_id translates raw repo failure to AccountApplicationError::DatabaseError.
+    #[tokio::test]
+    async fn get_by_id_translates_repo_failure_to_database_error() {
+        let mut mock_ar = MockAccountRepository::new();
+        mock_ar
+            .expect_get_by_id()
+            .once()
+            .returning(|_| Err(SimulatedSaveError.into()));
+        let svc = AccountService::new(
+            Box::new(mock_ar),
+            Box::new(MockHoldingRepository::new()),
+            Box::new(MockTransactionRepository::new()),
+        );
+        let err = svc.get_by_id("any-id").await.unwrap_err();
+        assert!(
+            matches!(err, AccountApplicationError::DatabaseError),
+            "got: {err:?}"
+        );
+    }
+
+    // get_holdings_for_account translates raw repo failure to AccountApplicationError::DatabaseError.
+    #[tokio::test]
+    async fn get_holdings_for_account_translates_repo_failure_to_database_error() {
+        let mut mock_hr = MockHoldingRepository::new();
+        mock_hr
+            .expect_get_by_account()
+            .once()
+            .returning(|_| Err(SimulatedSaveError.into()));
+        let svc = AccountService::new(
+            Box::new(MockAccountRepository::new()),
+            Box::new(mock_hr),
+            Box::new(MockTransactionRepository::new()),
+        );
+        let err = svc.get_holdings_for_account("any-id").await.unwrap_err();
+        assert!(
+            matches!(err, AccountApplicationError::DatabaseError),
             "got: {err:?}"
         );
     }

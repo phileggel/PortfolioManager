@@ -180,9 +180,10 @@ impl HoldingTransactionUseCase {
     /// Records a Deposit into an account (CSH-022).
     /// Seeds the system Cash Asset (CSH-010) before delegating; the aggregate
     /// lazy-creates the Cash Holding (CSH-012) and persists the Transaction.
-    /// Returns a typed `HoldingTransactionError`: in-account NotFound flows
-    /// through as `Application(AccountNotFound)`; cross-BC asset-side failures
-    /// opaque to `Infrastructure(Unknown)` (see `ensure_cash_for`).
+    /// Returns a typed `HoldingTransactionError`: in-account failures
+    /// (`AccountNotFound`, `DatabaseError`) flow through as `Application(...)`;
+    /// cross-BC asset-side failures opaque to `Infrastructure(Unknown)` (see
+    /// `ensure_cash_for`).
     pub async fn record_deposit(
         &self,
         account_id: &str,
@@ -218,10 +219,9 @@ impl HoldingTransactionUseCase {
     /// callers can propagate via `?` and stay typed end-to-end.
     ///
     /// Distinguishes the two error sources honestly:
-    /// - **In-account NotFound** (the account doesn't exist) propagates as
-    ///   `HoldingTransactionError::Application(AccountNotFound { account_id })`
-    ///   — the same surface every other caller of `load_account` returns, so
-    ///   the FE sees a single typed shape regardless of which step rejected.
+    /// - **In-account failures** propagate typed: `AccountNotFound { account_id }`
+    ///   when the row is missing, `DatabaseError` when the account-repo call
+    ///   fails — both flow through `HoldingTransactionError::Application(...)`.
     /// - **Cross-BC asset-side failure** (repo failure on the asset query, or
     ///   `ensure_cash_asset` failure) opaques to `Infrastructure(Unknown)` —
     ///   asset-side errors are not part of the holding-transaction contract.
@@ -233,17 +233,7 @@ impl HoldingTransactionUseCase {
         let account = self
             .account_service
             .get_by_id(account_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(target: BACKEND, account_id = %account_id, op = %op, err = ?e, "ensure_cash_for: get_by_id failed");
-                // Returns InfrastructureError; the trailing `?` drives
-                // From<InfrastructureError> for HoldingTransactionError. Adding
-                // an explicit `.into()` here would force inference between two
-                // valid From paths and fail to compile.
-                InfrastructureError::Unknown {
-                    hint: format!("get_by_id ({op}): {e:#}"),
-                }
-            })?
+            .await?
             .ok_or_else(|| AccountApplicationError::AccountNotFound {
                 account_id: account_id.to_string(),
             })?;
