@@ -11,7 +11,8 @@ mod service;
 
 pub use api::*;
 pub use application::{
-    AssetApplicationError, AssetCrudError, CategoryApplicationError, CategoryCrudError,
+    AssetApplicationError, AssetCrudError, AssetPriceApplicationError, AssetPriceError,
+    CategoryApplicationError, CategoryCrudError,
 };
 pub use domain::*;
 pub use repository::*;

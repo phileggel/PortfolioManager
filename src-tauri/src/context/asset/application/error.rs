@@ -1,4 +1,4 @@
-use crate::context::asset::domain::{AssetDomainError, CategoryDomainError};
+use crate::context::asset::domain::{AssetDomainError, AssetPriceDomainError, CategoryDomainError};
 
 /// Application-layer rejections for the Category sub-aggregate of the Asset
 /// bounded context — concerns raised at the service layer rather than by an
@@ -71,6 +71,74 @@ pub enum AssetApplicationError {
     /// translation site. FE shows the i18n key `error.DatabaseError`.
     #[error("An unexpected database error occurred")]
     DatabaseError,
+}
+
+/// Application-layer rejections for the AssetPrice sub-aggregate of the Asset
+/// BC — concerns raised at the service layer rather than by an aggregate method
+/// on its own loaded state.
+///
+/// Per the rejection-layer rule (`docs/ddd-reference.md` § Errors):
+/// - `PriceNotFound` is born when `price_repo.get_by_asset_and_date` returns
+///   `Ok(None)` for an `(asset_id, date)` pair the service expected to exist
+///   (update / delete) — a service-level translation, not an aggregate
+///   invariant. Carries both keys for FE diagnostic surfacing.
+/// - `DatabaseError` is the application-layer translation of any raw infra
+///   failure from a price-repo call. The diagnostic chain is preserved via
+///   `tracing::error!` at the same translation site; the variant carries no
+///   payload (per the project-specific infra-translation rule in
+///   `docs/plan/error-model-refactor.md`).
+#[derive(Debug, thiserror::Error, serde::Serialize, specta::Type, Clone)]
+#[serde(tag = "code")]
+pub enum AssetPriceApplicationError {
+    /// No price record exists for the given (asset_id, date) pair (MKT-083 / MKT-090).
+    #[error("Asset price not found for {asset_id} on {date}")]
+    PriceNotFound {
+        /// Asset whose price was being addressed.
+        asset_id: String,
+        /// Date the caller asked to update or delete.
+        date: String,
+    },
+    /// Application-layer translation of any infrastructure failure from a
+    /// price-repo call. Unit variant — no `hint` payload on the wire; the full
+    /// diagnostic chain is preserved server-side via `tracing::error!` at the
+    /// translation site. FE shows the i18n key `error.DatabaseError`.
+    #[error("An unexpected database error occurred")]
+    DatabaseError,
+}
+
+/// Service-layer composite for the **AssetPrice** failure surface — the write
+/// commands `record_asset_price` / `update_asset_price` / `delete_asset_price`
+/// and the read `get_asset_prices`.
+///
+/// Replaces the anyhow-era trio of boundary types
+/// (`AssetPriceCommandError`, `UpdateAssetPriceCommandError`,
+/// `DeleteAssetPriceCommandError`) with a single composite per the
+/// family-map (`docs/plan/error-model-refactor.md` § Failure-surface-family map
+/// → Asset price row). Continues the gold infra-translation rule (no shared
+/// `InfrastructureError` leaf — translated to per-BC `*ApplicationError::DatabaseError`).
+///
+/// Composes three leaves:
+/// - `AssetApplicationError` — cross-aggregate asset-existence check
+///   (`record_asset_price` and `get_asset_prices` reject when the asset row
+///   itself is missing — MKT-043).
+/// - `AssetPriceApplicationError` — price-row rejection (`PriceNotFound`,
+///   `DatabaseError`).
+/// - `AssetPriceDomainError` — value-object validation
+///   (`NotPositive` / `NonFinite` / `DateInFuture` / `InvalidDateFormat`).
+#[derive(Debug, thiserror::Error, serde::Serialize, specta::Type)]
+#[serde(untagged)]
+pub enum AssetPriceError {
+    /// Asset-row rejection (`NotFound`, `DatabaseError`) from the
+    /// asset-existence check that gates write commands.
+    #[error(transparent)]
+    AssetApplication(#[from] AssetApplicationError),
+    /// Price-row rejection (`PriceNotFound`, `DatabaseError`).
+    #[error(transparent)]
+    Application(#[from] AssetPriceApplicationError),
+    /// Value-object validation (`NotPositive`, `NonFinite`, `DateInFuture`,
+    /// `InvalidDateFormat`).
+    #[error(transparent)]
+    Validation(#[from] AssetPriceDomainError),
 }
 
 /// Service-layer composite for the Asset CRUD failure surface — the write

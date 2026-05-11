@@ -7,5 +7,6 @@
 pub mod error;
 
 pub use error::{
-    AssetApplicationError, AssetCrudError, CategoryApplicationError, CategoryCrudError,
+    AssetApplicationError, AssetCrudError, AssetPriceApplicationError, AssetPriceError,
+    CategoryApplicationError, CategoryCrudError,
 };

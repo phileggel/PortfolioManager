@@ -178,7 +178,10 @@ describe("useEditPrice", () => {
   it("calls onSuccess and clears error on successful submit", async () => {
     // Prime with a prior error so we can verify it gets cleared.
     mockUpdateAssetPrice
-      .mockResolvedValueOnce({ status: "error", error: { code: "NotFound" } })
+      .mockResolvedValueOnce({
+        status: "error",
+        error: { code: "PriceNotFound", asset_id: "asset-1", date: "2026-04-01" },
+      })
       .mockResolvedValueOnce({ status: "ok", data: null });
 
     const onSuccess = vi.fn();
@@ -190,7 +193,7 @@ describe("useEditPrice", () => {
     await act(async () => {
       await result.current.handleSubmit();
     });
-    expect(result.current.error).toBe("NotFound");
+    expect(result.current.error).toBe("PriceNotFound");
     expect(onSuccess).not.toHaveBeenCalled();
 
     // Second call → success

@@ -62,7 +62,7 @@ describe("usePriceHistory", () => {
   it("surfaces fetchError when gateway returns an error", async () => {
     mockGetAssetPrices.mockResolvedValue({
       status: "error",
-      error: { code: "AssetNotFound" },
+      error: { code: "NotFound", id: "asset-unknown" },
     });
 
     const { result } = renderHook(() => usePriceHistory({ assetId: "asset-unknown" }));
@@ -70,7 +70,7 @@ describe("usePriceHistory", () => {
     await act(async () => {});
 
     expect(result.current.prices).toEqual([]);
-    expect(result.current.fetchError).toBe("AssetNotFound");
+    expect(result.current.fetchError).toBe("NotFound");
     expect(result.current.isLoading).toBe(false);
     expect(mockGetAssetPrices).toHaveBeenCalledWith("asset-unknown");
   });
@@ -146,7 +146,7 @@ describe("usePriceHistory", () => {
     mockGetAssetPrices.mockResolvedValue({ status: "ok", data: rows });
     mockDeleteAssetPrice.mockResolvedValue({
       status: "error",
-      error: { code: "NotFound" },
+      error: { code: "PriceNotFound", asset_id: "asset-1", date: "2026-04-01" },
     });
 
     const { result } = renderHook(() => usePriceHistory({ assetId: "asset-1" }));
@@ -158,7 +158,7 @@ describe("usePriceHistory", () => {
 
     // Entry must still be present
     expect(result.current.prices).toEqual(rows);
-    expect(result.current.deleteError).toBe("NotFound");
+    expect(result.current.deleteError).toBe("PriceNotFound");
     expect(result.current.deletingDate).toBeNull();
   });
 
@@ -169,7 +169,7 @@ describe("usePriceHistory", () => {
 
     // First call fails, second succeeds
     mockDeleteAssetPrice
-      .mockResolvedValueOnce({ status: "error", error: { code: "Unknown" } })
+      .mockResolvedValueOnce({ status: "error", error: { code: "DatabaseError" } })
       .mockResolvedValueOnce({ status: "ok", data: null });
 
     // Second getAssetPrices call (after successful delete) returns empty
@@ -182,7 +182,7 @@ describe("usePriceHistory", () => {
     await act(async () => {
       await result.current.confirmDelete("2026-04-01");
     });
-    expect(result.current.deleteError).toBe("Unknown");
+    expect(result.current.deleteError).toBe("DatabaseError");
 
     // Trigger a succeeding delete — deleteError should be cleared
     await act(async () => {

@@ -1,5 +1,6 @@
 use super::application::{
-    AssetApplicationError, AssetCrudError, CategoryApplicationError, CategoryCrudError,
+    AssetApplicationError, AssetCrudError, AssetPriceApplicationError, AssetPriceError,
+    CategoryApplicationError, CategoryCrudError,
 };
 use super::domain::{
     Asset, AssetCategory, AssetCategoryRepository, AssetClass, AssetPrice, AssetPriceDomainError,
@@ -354,14 +355,9 @@ impl AssetService {
         asset_id: &str,
         date: &str,
         price_f64: f64,
-    ) -> Result<()> {
-        // MKT-043 — reject unknown asset
-        if self.asset_repo.get_by_id(asset_id).await?.is_none() {
-            return Err(AssetApplicationError::NotFound {
-                id: asset_id.to_string(),
-            }
-            .into());
-        }
+    ) -> std::result::Result<(), AssetPriceError> {
+        // MKT-043 — reject unknown asset (cross-aggregate check)
+        ensure_asset_exists_for_price(&*self.asset_repo, asset_id).await?;
         // MKT-024 — convert f64 decimal to i64 micros at the IPC boundary
         if !price_f64.is_finite() {
             return Err(AssetPriceDomainError::NonFinite.into());
@@ -370,7 +366,10 @@ impl AssetService {
         // MKT-021, MKT-022 — validate via domain entity factory
         let price = AssetPrice::new(asset_id.to_string(), date.to_string(), price_micros)?;
         // MKT-025 — upsert
-        self.price_repo.upsert(price).await?;
+        self.price_repo.upsert(price).await.map_err(|e| {
+            tracing::error!(target: BACKEND, asset_id = %asset_id, date = %date, err = ?e, "record_asset_price: upsert failure");
+            AssetPriceApplicationError::DatabaseError
+        })?;
         tracing::info!(target: BACKEND, asset_id = %asset_id, date = %date, "Asset price recorded");
         // MKT-026 — publish bare signal event
         if let Some(bus) = &self.event_bus {
@@ -387,15 +386,19 @@ impl AssetService {
     }
 
     /// Returns all recorded market prices for the given asset, sorted date descending (MKT-072).
-    /// Rejects with AssetNotFound if the asset does not exist.
-    pub async fn get_asset_prices(&self, asset_id: &str) -> Result<Vec<AssetPrice>> {
-        if self.asset_repo.get_by_id(asset_id).await?.is_none() {
-            return Err(AssetApplicationError::NotFound {
-                id: asset_id.to_string(),
-            }
-            .into());
-        }
-        self.price_repo.get_all_for_asset(asset_id).await
+    /// Rejects with `AssetApplicationError::NotFound` if the asset does not exist.
+    pub async fn get_asset_prices(
+        &self,
+        asset_id: &str,
+    ) -> std::result::Result<Vec<AssetPrice>, AssetPriceError> {
+        ensure_asset_exists_for_price(&*self.asset_repo, asset_id).await?;
+        self.price_repo
+            .get_all_for_asset(asset_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(target: BACKEND, asset_id = %asset_id, err = ?e, "get_asset_prices: repository failure");
+                AssetPriceApplicationError::DatabaseError.into()
+            })
     }
 
     /// Updates the date and/or price of an existing price record (MKT-083/084).
@@ -407,31 +410,31 @@ impl AssetService {
         original_date: &str,
         new_date: &str,
         price_f64: f64,
-    ) -> Result<()> {
+    ) -> std::result::Result<(), AssetPriceError> {
         // Input validation runs before the DB existence check (fail-fast on bad inputs, MKT-082).
         // MKT-082 — finite check before micro conversion
         if !price_f64.is_finite() {
             return Err(AssetPriceDomainError::NonFinite.into());
         }
         let price_micros = Self::f64_to_micros(price_f64);
-        // MKT-082 — validate via domain factory (NotPositive, DateInFuture)
+        // MKT-082 — validate via domain factory (NotPositive, DateInFuture, InvalidDateFormat)
         let new_price = AssetPrice::new(asset_id.to_string(), new_date.to_string(), price_micros)?;
         // MKT-083 — reject if original record absent
-        if self
-            .price_repo
-            .get_by_asset_and_date(asset_id, original_date)
-            .await?
-            .is_none()
-        {
-            return Err(AssetPriceDomainError::NotFound.into());
-        }
+        ensure_price_exists_for(&*self.price_repo, asset_id, original_date).await?;
         if original_date == new_date {
             // Same date: in-place upsert is atomic by primary key; replace_atomic not needed.
-            self.price_repo.upsert(new_price).await?;
+            self.price_repo.upsert(new_price).await.map_err(|e| {
+                tracing::error!(target: BACKEND, asset_id = %asset_id, date = %new_date, err = ?e, "update_asset_price: upsert failure");
+                AssetPriceApplicationError::DatabaseError
+            })?;
         } else {
             self.price_repo
                 .replace_atomic(asset_id, original_date, new_price)
-                .await?;
+                .await
+                .map_err(|e| {
+                    tracing::error!(target: BACKEND, asset_id = %asset_id, from = %original_date, to = %new_date, err = ?e, "update_asset_price: replace_atomic failure");
+                    AssetPriceApplicationError::DatabaseError
+                })?;
         }
         tracing::info!(target: BACKEND, asset_id = %asset_id, from = %original_date, to = %new_date, "Asset price updated");
         if let Some(bus) = &self.event_bus {
@@ -441,18 +444,18 @@ impl AssetService {
     }
 
     /// Deletes a specific price record by (asset_id, date) (MKT-090).
-    /// Returns NotFound if the record does not exist.
+    /// Returns `AssetPriceApplicationError::PriceNotFound` if the record does not exist.
     /// Publishes AssetPriceUpdated on success (MKT-091).
-    pub async fn delete_asset_price(&self, asset_id: &str, date: &str) -> Result<()> {
-        if self
-            .price_repo
-            .get_by_asset_and_date(asset_id, date)
-            .await?
-            .is_none()
-        {
-            return Err(AssetPriceDomainError::NotFound.into());
-        }
-        self.price_repo.delete(asset_id, date).await?;
+    pub async fn delete_asset_price(
+        &self,
+        asset_id: &str,
+        date: &str,
+    ) -> std::result::Result<(), AssetPriceError> {
+        ensure_price_exists_for(&*self.price_repo, asset_id, date).await?;
+        self.price_repo.delete(asset_id, date).await.map_err(|e| {
+            tracing::error!(target: BACKEND, asset_id = %asset_id, date = %date, err = ?e, "delete_asset_price: repository failure");
+            AssetPriceApplicationError::DatabaseError
+        })?;
         tracing::info!(target: BACKEND, asset_id = %asset_id, date = %date, "Asset price deleted");
         if let Some(bus) = &self.event_bus {
             bus.publish(Event::AssetPriceUpdated);
@@ -528,6 +531,53 @@ async fn load_asset_for_crud(
     }
 }
 
+/// Cross-aggregate asset-existence check used by the AssetPrice family
+/// (`record_asset_price`, `get_asset_prices`). Translates `Ok(None)` into
+/// `AssetApplicationError::NotFound { id }` and any repository error into
+/// `AssetApplicationError::DatabaseError` after preserving the diagnostic chain
+/// via `tracing::error!`. Both propagate verbatim through
+/// `AssetPriceError::AssetApplication(#[from] AssetApplicationError)` per the
+/// composition-over-redefinition rule.
+async fn ensure_asset_exists_for_price(
+    repo: &dyn AssetRepository,
+    asset_id: &str,
+) -> std::result::Result<(), AssetPriceError> {
+    match repo.get_by_id(asset_id).await {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(AssetApplicationError::NotFound {
+            id: asset_id.to_string(),
+        }
+        .into()),
+        Err(e) => {
+            tracing::error!(target: BACKEND, asset_id = %asset_id, err = ?e, "ensure_asset_exists_for_price: repository failure");
+            Err(AssetApplicationError::DatabaseError.into())
+        }
+    }
+}
+
+/// Price-row existence check used by `update_asset_price` and
+/// `delete_asset_price`. Translates `Ok(None)` into
+/// `AssetPriceApplicationError::PriceNotFound { asset_id, date }` and any
+/// repository error into `AssetPriceApplicationError::DatabaseError`.
+async fn ensure_price_exists_for(
+    repo: &dyn AssetPriceRepository,
+    asset_id: &str,
+    date: &str,
+) -> std::result::Result<(), AssetPriceError> {
+    match repo.get_by_asset_and_date(asset_id, date).await {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(AssetPriceApplicationError::PriceNotFound {
+            asset_id: asset_id.to_string(),
+            date: date.to_string(),
+        }
+        .into()),
+        Err(e) => {
+            tracing::error!(target: BACKEND, asset_id = %asset_id, date = %date, err = ?e, "ensure_price_exists_for: repository failure");
+            Err(AssetPriceApplicationError::DatabaseError.into())
+        }
+    }
+}
+
 /// Looks up a category for the asset CRUD path (cross-aggregate dependency in
 /// `create_asset` / `update_asset`). Translates `Ok(None)` into
 /// `CategoryApplicationError::NotFound { id }` and any repo error into
@@ -556,8 +606,9 @@ async fn find_category_for_asset_crud(
 mod tests {
     use super::*;
     use crate::context::asset::{
-        AssetClass, AssetDomainError, CategoryDomainError, CreateAssetDTO,
-        MockAssetCategoryRepository, MockAssetPriceRepository, MockAssetRepository,
+        AssetClass, AssetDomainError, AssetPriceApplicationError, AssetPriceError,
+        CategoryDomainError, CreateAssetDTO, MockAssetCategoryRepository, MockAssetPriceRepository,
+        MockAssetRepository,
     };
     use std::sync::Arc;
     use std::time::Duration;
@@ -1051,10 +1102,11 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetApplicationError>(),
-                Some(AssetApplicationError::NotFound { .. })
+                &err,
+                AssetPriceError::AssetApplication(AssetApplicationError::NotFound { id })
+                    if id == "nonexistent-id"
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -1076,10 +1128,10 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetPriceDomainError>(),
-                Some(AssetPriceDomainError::NotPositive)
+                err,
+                AssetPriceError::Validation(AssetPriceDomainError::NotPositive)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -1101,10 +1153,10 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetPriceDomainError>(),
-                Some(AssetPriceDomainError::DateInFuture)
+                err,
+                AssetPriceError::Validation(AssetPriceDomainError::DateInFuture)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -1200,10 +1252,11 @@ mod tests {
         let err = svc.get_asset_prices("nonexistent-id").await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetApplicationError>(),
-                Some(AssetApplicationError::NotFound { .. })
+                &err,
+                AssetPriceError::AssetApplication(AssetApplicationError::NotFound { id })
+                    if id == "nonexistent-id"
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -1286,10 +1339,10 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetPriceDomainError>(),
-                Some(AssetPriceDomainError::NotPositive)
+                err,
+                AssetPriceError::Validation(AssetPriceDomainError::NotPositive)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -1307,10 +1360,10 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetPriceDomainError>(),
-                Some(AssetPriceDomainError::NonFinite)
+                err,
+                AssetPriceError::Validation(AssetPriceDomainError::NonFinite)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -1328,10 +1381,10 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetPriceDomainError>(),
-                Some(AssetPriceDomainError::DateInFuture)
+                err,
+                AssetPriceError::Validation(AssetPriceDomainError::DateInFuture)
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -1353,10 +1406,11 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetPriceDomainError>(),
-                Some(AssetPriceDomainError::NotFound)
+                &err,
+                AssetPriceError::Application(AssetPriceApplicationError::PriceNotFound { asset_id, date })
+                    if asset_id == "asset-id" && date == "2026-01-01"
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -1481,10 +1535,11 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetPriceDomainError>(),
-                Some(AssetPriceDomainError::NotFound)
+                &err,
+                AssetPriceError::Application(AssetPriceApplicationError::PriceNotFound { asset_id, date })
+                    if asset_id == "asset-id" && date == "2026-01-01"
             ),
-            "got: {err}"
+            "got: {err:?}"
         );
     }
 
@@ -1535,10 +1590,162 @@ mod tests {
         assert_eq!(*rx.borrow(), Event::AssetPriceUpdated);
     }
 
-    // MKT-043 — record_asset_price command returns AssetNotFound for an unknown asset_id.
-    // This is covered by the existing record_asset_price_rejects_unknown_asset service test above.
-    // The command-layer mapping is exercised by the api.rs tests below that verify
-    // to_asset_price_error maps AssetDomainError::NotFound → AssetPriceCommandError::AssetNotFound.
+    // -------------------------------------------------------------------------
+    // Asset price — infra-translation coverage (gold rule)
+    // -------------------------------------------------------------------------
+
+    fn db_err() -> anyhow::Error {
+        anyhow::anyhow!("simulated database failure")
+    }
+
+    // record_asset_price translates raw asset_repo failure → DatabaseError on the asset leaf
+    #[tokio::test]
+    async fn record_asset_price_translates_asset_repo_failure_to_database_error() {
+        let mut ar = MockAssetRepository::new();
+        ar.expect_get_by_id()
+            .times(1)
+            .return_once(|_| Err(db_err()));
+        let svc = make_svc(
+            ar,
+            MockAssetCategoryRepository::new(),
+            MockAssetPriceRepository::new(),
+        );
+        let err = svc
+            .record_asset_price("asset-id", "2026-01-01", 100.0)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AssetPriceError::AssetApplication(AssetApplicationError::DatabaseError)
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // record_asset_price translates raw price_repo upsert failure → DatabaseError on the price leaf
+    #[tokio::test]
+    async fn record_asset_price_translates_price_repo_failure_to_database_error() {
+        let mut ar = MockAssetRepository::new();
+        ar.expect_get_by_id()
+            .times(1)
+            .return_once(|_| Ok(Some(make_asset("asset-id", false))));
+        let mut pr = MockAssetPriceRepository::new();
+        pr.expect_upsert().times(1).return_once(|_| Err(db_err()));
+        let svc = make_svc(ar, MockAssetCategoryRepository::new(), pr);
+        let err = svc
+            .record_asset_price("asset-id", "2026-01-01", 150.0)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AssetPriceError::Application(AssetPriceApplicationError::DatabaseError)
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // get_asset_prices translates raw price_repo get_all failure → DatabaseError
+    #[tokio::test]
+    async fn get_asset_prices_translates_price_repo_failure_to_database_error() {
+        let mut ar = MockAssetRepository::new();
+        ar.expect_get_by_id()
+            .times(1)
+            .return_once(|_| Ok(Some(make_asset("asset-id", false))));
+        let mut pr = MockAssetPriceRepository::new();
+        pr.expect_get_all_for_asset()
+            .times(1)
+            .return_once(|_| Err(db_err()));
+        let svc = make_svc(ar, MockAssetCategoryRepository::new(), pr);
+        let err = svc.get_asset_prices("asset-id").await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AssetPriceError::Application(AssetPriceApplicationError::DatabaseError)
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // update_asset_price (different dates) translates raw replace_atomic failure → DatabaseError
+    #[tokio::test]
+    async fn update_asset_price_translates_replace_atomic_failure_to_database_error() {
+        let mut pr = MockAssetPriceRepository::new();
+        pr.expect_get_by_asset_and_date()
+            .times(1)
+            .return_once(|_, _| Ok(Some(make_price("asset-id", "2026-01-01", 100_000_000))));
+        pr.expect_replace_atomic()
+            .times(1)
+            .return_once(|_, _, _| Err(db_err()));
+        let svc = make_svc(
+            MockAssetRepository::new(),
+            MockAssetCategoryRepository::new(),
+            pr,
+        );
+        let err = svc
+            .update_asset_price("asset-id", "2026-01-01", "2026-01-02", 110.0)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AssetPriceError::Application(AssetPriceApplicationError::DatabaseError)
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // delete_asset_price translates raw price_repo delete failure → DatabaseError
+    #[tokio::test]
+    async fn delete_asset_price_translates_repo_failure_to_database_error() {
+        let mut pr = MockAssetPriceRepository::new();
+        pr.expect_get_by_asset_and_date()
+            .times(1)
+            .return_once(|_, _| Ok(Some(make_price("asset-id", "2026-01-01", 100_000_000))));
+        pr.expect_delete()
+            .times(1)
+            .return_once(|_, _| Err(db_err()));
+        let svc = make_svc(
+            MockAssetRepository::new(),
+            MockAssetCategoryRepository::new(),
+            pr,
+        );
+        let err = svc
+            .delete_asset_price("asset-id", "2026-01-01")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AssetPriceError::Application(AssetPriceApplicationError::DatabaseError)
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // update_asset_price surfaces InvalidDateFormat for a malformed new_date,
+    // echoing the offending input on the wire (boyscout: previously surfaced as opaque Unknown).
+    #[tokio::test]
+    async fn update_asset_price_surfaces_invalid_date_format() {
+        let svc = make_svc(
+            MockAssetRepository::new(),
+            MockAssetCategoryRepository::new(),
+            MockAssetPriceRepository::new(),
+        );
+        let err = svc
+            .update_asset_price("asset-id", "2026-01-01", "not-a-date", 100.0)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                AssetPriceError::Validation(AssetPriceDomainError::InvalidDateFormat { date })
+                    if date == "not-a-date"
+            ),
+            "got: {err:?}"
+        );
+    }
 
     // ── Mock-based unit tests for event bus branches and error paths ──────────
 
