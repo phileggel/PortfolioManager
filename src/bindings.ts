@@ -11,7 +11,7 @@ export const commands = {
 /**
  * Fetches all active (non-archived) assets.
  */
-async getAssets() : Promise<Result<Asset[], AssetCommandError>> {
+async getAssets() : Promise<Result<Asset[], AssetApplicationError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_assets") };
 } catch (e) {
@@ -22,7 +22,7 @@ async getAssets() : Promise<Result<Asset[], AssetCommandError>> {
 /**
  * Fetches all assets including archived ones.
  */
-async getAssetsWithArchived() : Promise<Result<Asset[], AssetCommandError>> {
+async getAssetsWithArchived() : Promise<Result<Asset[], AssetApplicationError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_assets_with_archived") };
 } catch (e) {
@@ -33,7 +33,7 @@ async getAssetsWithArchived() : Promise<Result<Asset[], AssetCommandError>> {
 /**
  * Adds a new asset.
  */
-async addAsset(dto: CreateAssetDTO) : Promise<Result<Asset, AssetCommandError>> {
+async addAsset(dto: CreateAssetDTO) : Promise<Result<Asset, AssetCrudError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("add_asset", { dto }) };
 } catch (e) {
@@ -44,7 +44,7 @@ async addAsset(dto: CreateAssetDTO) : Promise<Result<Asset, AssetCommandError>> 
 /**
  * Updates an existing asset.
  */
-async updateAsset(dto: UpdateAssetDTO) : Promise<Result<Asset, AssetCommandError>> {
+async updateAsset(dto: UpdateAssetDTO) : Promise<Result<Asset, AssetCrudError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_asset", { dto }) };
 } catch (e) {
@@ -55,7 +55,7 @@ async updateAsset(dto: UpdateAssetDTO) : Promise<Result<Asset, AssetCommandError
 /**
  * Unarchives an asset (R18).
  */
-async unarchiveAsset(id: string) : Promise<Result<null, AssetCommandError>> {
+async unarchiveAsset(id: string) : Promise<Result<null, AssetCrudError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("unarchive_asset", { id }) };
 } catch (e) {
@@ -734,6 +734,34 @@ reference: string;
  */
 is_archived: boolean }
 /**
+ * Application-layer rejections for the Asset aggregate of the Asset BC —
+ * concerns raised at the service layer rather than by an aggregate method on
+ * its own loaded state.
+ * 
+ * Per the rejection-layer rule (`docs/ddd-reference.md` § Errors):
+ * - `NotFound` is born when `asset_repo.get_by_id` returns `Ok(None)` — a
+ * service-level translation, not an aggregate invariant. Carries the
+ * requested ID for FE diagnostic surfacing.
+ * - `DatabaseError` is the application-layer translation of any raw
+ * infrastructure failure from an asset-repo call. The diagnostic chain is
+ * preserved via `tracing::error!` at the same translation site; the
+ * variant carries no payload (per the project-specific infra-translation
+ * rule in `docs/plan/error-model-refactor.md`).
+ */
+export type AssetApplicationError = 
+/**
+ * No asset exists with the requested ID. Born at the service layer when
+ * `asset_repo.get_by_id` returns `None`.
+ */
+{ code: "NotFound"; id: string } | 
+/**
+ * Application-layer translation of any infrastructure failure from an
+ * asset-repo call. Unit variant — no `hint` payload on the wire; the full
+ * diagnostic chain is preserved server-side via `tracing::error!` at the
+ * translation site. FE shows the i18n key `error.DatabaseError`.
+ */
+{ code: "DatabaseError" }
+/**
  * A user-defined grouping for assets.
  */
 export type AssetCategory = { 
@@ -782,45 +810,66 @@ export type AssetClass =
  */
 "Derivatives"
 /**
- * Typed error returned to the frontend for asset CRUD commands.
+ * Service-layer composite for the Asset CRUD failure surface — the write
+ * commands `add_asset`, `update_asset`, `unarchive_asset`, plus the
+ * service-internal `archive_asset` / `delete_asset` consumed by use cases.
+ * 
+ * Composes three leaves: `AssetApplicationError` (NotFound, DatabaseError),
+ * `AssetDomainError` (input validation + archive / cash / system-managed
+ * invariants), `CategoryApplicationError` (cross-aggregate category lookup
+ * in create/update). No `Infrastructure` leaf — infra failures translate at
+ * the application layer into `AssetApplicationError::DatabaseError` per the
+ * project's infra-translation rule (`docs/plan/error-model-refactor.md`).
  */
-export type AssetCommandError = 
+export type AssetCrudError = 
+/**
+ * Service-layer rejection (`NotFound`, `DatabaseError`).
+ */
+AssetApplicationError | 
+/**
+ * Aggregate-level domain rejection (input validation, archive / cash /
+ * system-managed invariants on loaded state).
+ */
+AssetDomainError | 
+/**
+ * Category-side application rejection — surfaces `NotFound { id }` from the
+ * cross-aggregate category lookup in `create_asset` / `update_asset`.
+ */
+CategoryApplicationError
+/**
+ * Typed errors for asset domain validation. Only aggregate-method or
+ * value-object rejections live here per the rejection-layer rule
+ * (`docs/ddd-reference.md` § Errors).
+ * 
+ * Tagged with `#[serde(tag = "code")]` for exposure through the
+ * `AssetCrudError` untagged composite. Payload-bearing variants are
+ * struct-shaped (internally-tagged serde rejects tuple variants).
+ */
+export type AssetDomainError = 
 /**
  * Asset name is empty or whitespace-only.
  */
 { code: "NameEmpty" } | 
 /**
- * Asset reference (ticker/ISIN) is empty.
+ * Asset reference (ticker/ISIN) is empty or whitespace-only.
  */
 { code: "ReferenceEmpty" } | 
 /**
  * Risk level is outside the 1–5 range.
  */
-{ code: "InvalidRiskLevel" } | 
+{ code: "InvalidRiskLevel"; received: number } | 
 /**
- * Currency string is not a valid ISO 4217 code.
+ * The currency string is not a valid ISO 4217 code.
  */
-{ code: "InvalidCurrency" } | 
+{ code: "InvalidCurrency"; currency: string } | 
 /**
- * Asset is archived and cannot be edited.
+ * The asset is archived and cannot be edited.
  */
 { code: "Archived" } | 
 /**
- * Target asset is a system Cash Asset and cannot be edited or unarchived (CSH-016).
+ * The asset is a system Cash Asset and cannot be edited, archived, unarchived, or deleted (CSH-016).
  */
-{ code: "CashAssetNotEditable" } | 
-/**
- * No asset exists with the requested ID.
- */
-{ code: "NotFound" } | 
-/**
- * The category referenced in the DTO does not exist.
- */
-{ code: "CategoryNotFound" } | 
-/**
- * An unexpected server-side error occurred.
- */
-{ code: "Unknown" }
+{ code: "CashAssetNotEditable" }
 /**
  * Transient value object returned by the orchestrator's `search` method.
  * Mirrors the shape exposed at the Tauri boundary.

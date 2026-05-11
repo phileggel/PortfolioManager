@@ -2,7 +2,8 @@
 #![allow(clippy::unreachable)]
 
 use super::{DeleteAssetError, DeleteAssetUseCase};
-use crate::context::asset::AssetDomainError;
+use crate::context::asset::{AssetApplicationError, AssetCrudError, AssetDomainError};
+use crate::core::logger::BACKEND;
 use serde::Serialize;
 use specta::Type;
 use tauri::State;
@@ -31,17 +32,21 @@ fn to_delete_error(e: anyhow::Error) -> DeleteAssetCommandError {
             DeleteAssetError::ExistingTransactions => DeleteAssetCommandError::ExistingTransactions,
         };
     }
-    if let Some(err) = e.downcast_ref::<AssetDomainError>() {
+    if let Some(err) = e.downcast_ref::<AssetCrudError>() {
         return match err {
-            AssetDomainError::NotFound(_) => DeleteAssetCommandError::NotFound,
-            AssetDomainError::CashAssetNotEditable => DeleteAssetCommandError::CashAssetNotEditable,
+            AssetCrudError::Application(AssetApplicationError::NotFound { .. }) => {
+                DeleteAssetCommandError::NotFound
+            }
+            AssetCrudError::Validation(AssetDomainError::CashAssetNotEditable) => {
+                DeleteAssetCommandError::CashAssetNotEditable
+            }
             other => {
-                tracing::error!(err = ?other, "unexpected asset error in delete_asset command");
+                tracing::error!(target: BACKEND, err = ?other, "unexpected asset error in delete_asset command");
                 DeleteAssetCommandError::Unknown
             }
         };
     }
-    tracing::error!(err = ?e, "unexpected error in delete_asset command");
+    tracing::error!(target: BACKEND, err = ?e, "unexpected error in delete_asset command");
     DeleteAssetCommandError::Unknown
 }
 
@@ -59,13 +64,27 @@ pub async fn delete_asset(
 mod tests {
     use super::*;
 
-    // CSH-016 — to_delete_error maps AssetDomainError::CashAssetNotEditable
+    // CSH-016 — to_delete_error maps AssetCrudError(Validation(CashAssetNotEditable))
     #[test]
     fn to_delete_error_maps_cash_asset_not_editable() {
-        let domain_err = AssetDomainError::CashAssetNotEditable;
-        let cmd_err = to_delete_error(anyhow::anyhow!(domain_err));
+        let crud_err: AssetCrudError = AssetDomainError::CashAssetNotEditable.into();
+        let cmd_err = to_delete_error(anyhow::anyhow!(crud_err));
         assert!(
             matches!(cmd_err, DeleteAssetCommandError::CashAssetNotEditable),
+            "got: {cmd_err:?}"
+        );
+    }
+
+    // to_delete_error maps AssetCrudError(Application(NotFound)) → NotFound
+    #[test]
+    fn to_delete_error_maps_not_found() {
+        let crud_err: AssetCrudError = AssetApplicationError::NotFound {
+            id: "missing".into(),
+        }
+        .into();
+        let cmd_err = to_delete_error(anyhow::anyhow!(crud_err));
+        assert!(
+            matches!(cmd_err, DeleteAssetCommandError::NotFound),
             "got: {cmd_err:?}"
         );
     }

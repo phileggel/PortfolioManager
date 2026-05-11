@@ -161,7 +161,7 @@ async fn delete_asset_price_removes_record_leaves_others_and_publishes_event() {
 /// when the asset_id does not exist in the database.
 #[tokio::test]
 async fn get_asset_prices_returns_asset_not_found_for_unknown_asset() {
-    use vault_compass_lib::context::asset::AssetDomainError;
+    use vault_compass_lib::context::asset::AssetApplicationError;
 
     let (svc, _bus) = setup().await;
 
@@ -169,9 +169,9 @@ async fn get_asset_prices_returns_asset_not_found_for_unknown_asset() {
 
     assert!(
         matches!(
-            err.downcast_ref::<AssetDomainError>(),
-            Some(AssetDomainError::NotFound(_))
+            err.downcast_ref::<AssetApplicationError>(),
+            Some(AssetApplicationError::NotFound { .. })
         ),
-        "expected AssetDomainError::NotFound, got: {err}"
+        "expected AssetApplicationError::NotFound, got: {err}"
     );
 }

@@ -356,6 +356,7 @@
     "ReferenceEmpty": "La référence (ticker/ISIN) ne peut pas être vide.",
     "InvalidRiskLevel": "Le niveau de risque doit être compris entre 1 et 5.",
     "Archived": "Cet actif est archivé et ne peut pas être modifié.",
+    "CashAssetNotEditable": "L'actif Cash système ne peut être ni modifié, ni archivé, ni supprimé.",
     "NotFound": "L'élément demandé est introuvable.",
     "ActiveHoldings": "Impossible d'archiver un actif qui possède encore des positions actives.",
     "ExistingTransactions": "Impossible de supprimer un actif qui possède des transactions.",

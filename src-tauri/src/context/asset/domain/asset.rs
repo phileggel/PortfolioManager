@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use iso_currency::Currency;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::result::Result as StdResult;
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -88,7 +89,7 @@ impl Asset {
         currency: String,
         risk_level: u8,
         reference: String,
-    ) -> Result<Self> {
+    ) -> StdResult<Self, AssetDomainError> {
         Self::validate(&name, risk_level, &currency, &reference)?;
 
         let reference = reference.trim().to_uppercase();
@@ -116,7 +117,7 @@ impl Asset {
         risk_level: u8,
         reference: String,
         is_archived: bool,
-    ) -> Result<Self> {
+    ) -> StdResult<Self, AssetDomainError> {
         Self::validate(&name, risk_level, &currency, &reference)?;
 
         let reference = reference.trim().to_uppercase();
@@ -133,18 +134,27 @@ impl Asset {
         })
     }
 
-    fn validate(name: &str, risk_level: u8, currency: &str, reference: &str) -> Result<()> {
+    fn validate(
+        name: &str,
+        risk_level: u8,
+        currency: &str,
+        reference: &str,
+    ) -> StdResult<(), AssetDomainError> {
         if name.trim().is_empty() {
-            return Err(AssetDomainError::NameEmpty.into());
+            return Err(AssetDomainError::NameEmpty);
         }
         if reference.trim().is_empty() {
-            return Err(AssetDomainError::ReferenceEmpty.into());
+            return Err(AssetDomainError::ReferenceEmpty);
         }
         if !(1..=5).contains(&risk_level) {
-            return Err(AssetDomainError::InvalidRiskLevel(risk_level).into());
+            return Err(AssetDomainError::InvalidRiskLevel {
+                received: risk_level,
+            });
         }
         if Currency::from_str(currency).is_err() {
-            return Err(AssetDomainError::InvalidCurrency(currency.to_string()).into());
+            return Err(AssetDomainError::InvalidCurrency {
+                currency: currency.to_string(),
+            });
         }
         Ok(())
     }
@@ -215,7 +225,7 @@ impl Asset {
     ) -> Result<Self, AssetDomainError> {
         self.ensure_user_managed()?;
         self.ensure_not_archived()?;
-        Self::validate_typed(&name, risk_level, &currency, &reference)?;
+        Self::validate(&name, risk_level, &currency, &reference)?;
         let reference = reference.trim().to_uppercase();
         Ok(Self {
             id: self.id,
@@ -247,32 +257,6 @@ impl Asset {
             is_archived: false,
             ..self
         })
-    }
-
-    /// Typed-error variant of [`Asset::validate`] used by the new aggregate
-    /// root methods. Returns the leaf [`AssetDomainError`] directly so callers
-    /// can compose with `?`. The legacy `validate` (anyhow-wrapped) is kept
-    /// in place for the existing `new`/`with_id` factories pending the
-    /// service-layer typed-Result migration.
-    fn validate_typed(
-        name: &str,
-        risk_level: u8,
-        currency: &str,
-        reference: &str,
-    ) -> Result<(), AssetDomainError> {
-        if name.trim().is_empty() {
-            return Err(AssetDomainError::NameEmpty);
-        }
-        if reference.trim().is_empty() {
-            return Err(AssetDomainError::ReferenceEmpty);
-        }
-        if !(1..=5).contains(&risk_level) {
-            return Err(AssetDomainError::InvalidRiskLevel(risk_level));
-        }
-        if Currency::from_str(currency).is_err() {
-            return Err(AssetDomainError::InvalidCurrency(currency.to_string()));
-        }
-        Ok(())
     }
 }
 

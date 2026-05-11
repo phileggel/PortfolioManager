@@ -1,6 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AssetLookupResult, WebLookupCommandError } from "@/bindings";
+import type {
+  Asset,
+  AssetApplicationError,
+  AssetCrudError,
+  AssetDomainError,
+  AssetLookupResult,
+  CategoryApplicationError,
+  CreateAssetDTO,
+  UpdateAssetDTO,
+  WebLookupCommandError,
+} from "@/bindings";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -8,6 +18,173 @@ const mockInvoke = vi.mocked(invoke);
 
 // Import after mock is registered so bindings.ts picks up the mock
 const { assetGateway } = await import("./gateway");
+
+const makeAsset = (): Asset => ({
+  id: "asset-1",
+  name: "Apple Inc.",
+  reference: "AAPL",
+  class: "Stocks",
+  category: { id: "cat-1", name: "Equities" },
+  currency: "USD",
+  risk_level: 3,
+  is_archived: false,
+});
+
+const baseCreateDto: CreateAssetDTO = {
+  name: "Apple Inc.",
+  reference: "AAPL",
+  class: "Stocks",
+  currency: "USD",
+  risk_level: 3,
+  category_id: "cat-1",
+};
+
+const baseUpdateDto: UpdateAssetDTO = {
+  asset_id: "asset-1",
+  name: "Apple Inc.",
+  reference: "AAPL",
+  class: "Stocks",
+  currency: "USD",
+  risk_level: 3,
+  category_id: "cat-1",
+};
+
+describe("asset gateway — CRUD", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // ── getAssets / getAssetsWithArchived ──────────────────────────────────────
+
+  it("getAssets returns list on success", async () => {
+    const assets = [makeAsset()];
+    mockInvoke.mockResolvedValue(assets);
+    const result = await assetGateway.getAssets();
+    expect(result).toEqual({ status: "ok", data: assets });
+    expect(mockInvoke).toHaveBeenCalledWith("get_assets");
+  });
+
+  it("getAssets surfaces DatabaseError on repo failure", async () => {
+    const err: AssetApplicationError = { code: "DatabaseError" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.getAssets();
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("getAssetsWithArchived surfaces DatabaseError on repo failure", async () => {
+    const err: AssetApplicationError = { code: "DatabaseError" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.getAssetsWithArchived();
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  // ── createAsset ────────────────────────────────────────────────────────────
+
+  it("createAsset returns Asset on success", async () => {
+    const asset = makeAsset();
+    mockInvoke.mockResolvedValue(asset);
+    const result = await assetGateway.createAsset(baseCreateDto);
+    expect(result).toEqual({ status: "ok", data: asset });
+    expect(mockInvoke).toHaveBeenCalledWith("add_asset", { dto: baseCreateDto });
+  });
+
+  it("createAsset surfaces NameEmpty domain leaf", async () => {
+    const err: AssetDomainError = { code: "NameEmpty" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.createAsset({ ...baseCreateDto, name: "" });
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("createAsset surfaces ReferenceEmpty domain leaf", async () => {
+    const err: AssetDomainError = { code: "ReferenceEmpty" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.createAsset({ ...baseCreateDto, reference: "" });
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("createAsset surfaces InvalidCurrency with currency payload", async () => {
+    const err: AssetDomainError = { code: "InvalidCurrency", currency: "XYZ" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.createAsset({ ...baseCreateDto, currency: "XYZ" });
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("createAsset surfaces InvalidRiskLevel with received payload", async () => {
+    const err: AssetDomainError = { code: "InvalidRiskLevel", received: 9 };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.createAsset({ ...baseCreateDto, risk_level: 9 });
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("createAsset surfaces CategoryApplicationError NotFound from cross-aggregate lookup", async () => {
+    const err: CategoryApplicationError = { code: "NotFound", id: "missing-cat" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.createAsset({ ...baseCreateDto, category_id: "missing-cat" });
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("createAsset surfaces DatabaseError on repo write failure", async () => {
+    const err: AssetApplicationError = { code: "DatabaseError" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.createAsset(baseCreateDto);
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  // ── updateAsset ────────────────────────────────────────────────────────────
+
+  it("updateAsset returns Asset on success", async () => {
+    const asset = makeAsset();
+    mockInvoke.mockResolvedValue(asset);
+    const result = await assetGateway.updateAsset(baseUpdateDto);
+    expect(result).toEqual({ status: "ok", data: asset });
+    expect(mockInvoke).toHaveBeenCalledWith("update_asset", { dto: baseUpdateDto });
+  });
+
+  it("updateAsset surfaces NotFound with asset id payload", async () => {
+    const err: AssetApplicationError = { code: "NotFound", id: "missing-id" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.updateAsset({ ...baseUpdateDto, asset_id: "missing-id" });
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("updateAsset surfaces Archived domain leaf", async () => {
+    const err: AssetDomainError = { code: "Archived" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.updateAsset(baseUpdateDto);
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("updateAsset surfaces CashAssetNotEditable for system Cash Asset", async () => {
+    const err: AssetDomainError = { code: "CashAssetNotEditable" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.updateAsset({
+      ...baseUpdateDto,
+      asset_id: "system-cash-eur",
+    });
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  // ── unarchiveAsset ─────────────────────────────────────────────────────────
+
+  it("unarchiveAsset returns null on success", async () => {
+    mockInvoke.mockResolvedValue(null);
+    const result = await assetGateway.unarchiveAsset("asset-1");
+    expect(result).toEqual({ status: "ok", data: null });
+    expect(mockInvoke).toHaveBeenCalledWith("unarchive_asset", { id: "asset-1" });
+  });
+
+  it("unarchiveAsset surfaces CashAssetNotEditable for system Cash Asset", async () => {
+    const err: AssetCrudError = { code: "CashAssetNotEditable" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.unarchiveAsset("system-cash-eur");
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  it("unarchiveAsset surfaces NotFound with id payload", async () => {
+    const err: AssetCrudError = { code: "NotFound", id: "missing" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.unarchiveAsset("missing");
+    expect(result).toEqual({ status: "error", error: err });
+  });
+});
 
 describe("asset gateway — lookupAsset", () => {
   beforeEach(() => {

@@ -2,7 +2,8 @@
 #![allow(clippy::unreachable)]
 
 use super::{ArchiveAssetError, ArchiveAssetUseCase};
-use crate::context::asset::AssetDomainError;
+use crate::context::asset::{AssetApplicationError, AssetCrudError, AssetDomainError};
+use crate::core::logger::BACKEND;
 use serde::Serialize;
 use specta::Type;
 use tauri::State;
@@ -31,19 +32,21 @@ fn to_archive_error(e: anyhow::Error) -> ArchiveAssetCommandError {
             ArchiveAssetError::ActiveHoldings => ArchiveAssetCommandError::ActiveHoldings,
         };
     }
-    if let Some(err) = e.downcast_ref::<AssetDomainError>() {
+    if let Some(err) = e.downcast_ref::<AssetCrudError>() {
         return match err {
-            AssetDomainError::NotFound(_) => ArchiveAssetCommandError::NotFound,
-            AssetDomainError::CashAssetNotEditable => {
+            AssetCrudError::Application(AssetApplicationError::NotFound { .. }) => {
+                ArchiveAssetCommandError::NotFound
+            }
+            AssetCrudError::Validation(AssetDomainError::CashAssetNotEditable) => {
                 ArchiveAssetCommandError::CashAssetNotEditable
             }
             other => {
-                tracing::error!(err = ?other, "unexpected asset error in archive_asset command");
+                tracing::error!(target: BACKEND, err = ?other, "unexpected asset error in archive_asset command");
                 ArchiveAssetCommandError::Unknown
             }
         };
     }
-    tracing::error!(err = ?e, "unexpected error in archive_asset command");
+    tracing::error!(target: BACKEND, err = ?e, "unexpected error in archive_asset command");
     ArchiveAssetCommandError::Unknown
 }
 
@@ -61,13 +64,27 @@ pub async fn archive_asset(
 mod tests {
     use super::*;
 
-    // CSH-016 — to_archive_error maps AssetDomainError::CashAssetNotEditable
+    // CSH-016 — to_archive_error maps AssetCrudError(Validation(CashAssetNotEditable))
     #[test]
     fn to_archive_error_maps_cash_asset_not_editable() {
-        let domain_err = AssetDomainError::CashAssetNotEditable;
-        let cmd_err = to_archive_error(anyhow::anyhow!(domain_err));
+        let crud_err: AssetCrudError = AssetDomainError::CashAssetNotEditable.into();
+        let cmd_err = to_archive_error(anyhow::anyhow!(crud_err));
         assert!(
             matches!(cmd_err, ArchiveAssetCommandError::CashAssetNotEditable),
+            "got: {cmd_err:?}"
+        );
+    }
+
+    // to_archive_error maps AssetCrudError(Application(NotFound)) → NotFound
+    #[test]
+    fn to_archive_error_maps_not_found() {
+        let crud_err: AssetCrudError = AssetApplicationError::NotFound {
+            id: "missing".into(),
+        }
+        .into();
+        let cmd_err = to_archive_error(anyhow::anyhow!(crud_err));
+        assert!(
+            matches!(cmd_err, ArchiveAssetCommandError::NotFound),
             "got: {cmd_err:?}"
         );
     }

@@ -1,5 +1,12 @@
-/// Typed errors for asset domain validation.
-#[derive(Debug, thiserror::Error)]
+/// Typed errors for asset domain validation. Only aggregate-method or
+/// value-object rejections live here per the rejection-layer rule
+/// (`docs/ddd-reference.md` § Errors).
+///
+/// Tagged with `#[serde(tag = "code")]` for exposure through the
+/// `AssetCrudError` untagged composite. Payload-bearing variants are
+/// struct-shaped (internally-tagged serde rejects tuple variants).
+#[derive(Debug, thiserror::Error, serde::Serialize, specta::Type, Clone)]
+#[serde(tag = "code")]
 pub enum AssetDomainError {
     /// Asset name is empty or whitespace-only.
     #[error("Asset name cannot be empty")]
@@ -8,20 +15,23 @@ pub enum AssetDomainError {
     #[error("Asset reference cannot be empty")]
     ReferenceEmpty,
     /// Risk level is outside the 1–5 range.
-    #[error("Risk level must be between 1 and 5 (received: {0})")]
-    InvalidRiskLevel(u8),
+    #[error("Risk level must be between 1 and 5 (received: {received})")]
+    InvalidRiskLevel {
+        /// The rejected value the caller supplied.
+        received: u8,
+    },
     /// The currency string is not a valid ISO 4217 code.
-    #[error("Invalid currency code: {0}")]
-    InvalidCurrency(String),
+    #[error("Invalid currency code: {currency}")]
+    InvalidCurrency {
+        /// The offending currency string the caller supplied.
+        currency: String,
+    },
     /// The asset is archived and cannot be edited.
     #[error("Cannot edit an archived asset")]
     Archived,
     /// The asset is a system Cash Asset and cannot be edited, archived, unarchived, or deleted (CSH-016).
     #[error("Cannot edit a system Cash Asset")]
     CashAssetNotEditable,
-    /// No asset with the given ID exists.
-    #[error("Asset not found: {0}")]
-    NotFound(String),
 }
 
 /// Typed errors for asset price domain validation.
@@ -66,9 +76,3 @@ pub enum CategoryDomainError {
     #[error("The system category cannot be deleted")]
     SystemProtected,
 }
-
-// `CategoryDomainError::NotFound(String)` and `DuplicateName` were migrated to
-// `CategoryApplicationError` in PR 6 (`refactor/category-crud-typed-error`).
-// Both are service-layer rejections (repository `Ok(None)` translation /
-// uniqueness pre-check), not single-aggregate state rules — application-class
-// per the rejection-layer rule (`docs/ddd-reference.md` § Errors).

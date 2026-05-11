@@ -10,7 +10,9 @@ mod repository;
 mod service;
 
 pub use api::*;
-pub use application::{CategoryApplicationError, CategoryCrudError};
+pub use application::{
+    AssetApplicationError, AssetCrudError, CategoryApplicationError, CategoryCrudError,
+};
 pub use domain::*;
 pub use repository::*;
 pub use service::*;

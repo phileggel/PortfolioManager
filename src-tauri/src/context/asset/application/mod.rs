@@ -6,4 +6,6 @@
 /// etc. as each family migrates.
 pub mod error;
 
-pub use error::{CategoryApplicationError, CategoryCrudError};
+pub use error::{
+    AssetApplicationError, AssetCrudError, CategoryApplicationError, CategoryCrudError,
+};

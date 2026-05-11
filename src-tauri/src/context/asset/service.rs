@@ -1,7 +1,9 @@
-use super::application::{CategoryApplicationError, CategoryCrudError};
+use super::application::{
+    AssetApplicationError, AssetCrudError, CategoryApplicationError, CategoryCrudError,
+};
 use super::domain::{
-    Asset, AssetCategory, AssetCategoryRepository, AssetClass, AssetDomainError, AssetPrice,
-    AssetPriceDomainError, AssetPriceRepository, AssetRepository, SYSTEM_CATEGORY_ID,
+    Asset, AssetCategory, AssetCategoryRepository, AssetClass, AssetPrice, AssetPriceDomainError,
+    AssetPriceRepository, AssetRepository, SYSTEM_CATEGORY_ID,
 };
 use crate::{
     context::asset::{CreateAssetDTO, UpdateAssetDTO},
@@ -42,16 +44,35 @@ impl AssetService {
     // --- Asset Methods ---
 
     /// Retrieves all active (non-archived) assets.
-    pub async fn get_all_assets(&self) -> Result<Vec<Asset>> {
-        self.asset_repo.get_all().await
+    ///
+    /// Read-only — only infrastructure failures can fire here, so the surface
+    /// is the narrow `AssetApplicationError` (only `DatabaseError` reachable).
+    pub async fn get_all_assets(&self) -> std::result::Result<Vec<Asset>, AssetApplicationError> {
+        self.asset_repo.get_all().await.map_err(|e| {
+            tracing::error!(target: BACKEND, err = ?e, "get_all_assets: repository failure");
+            AssetApplicationError::DatabaseError
+        })
     }
 
     /// Retrieves all assets including archived ones.
-    pub async fn get_all_assets_with_archived(&self) -> Result<Vec<Asset>> {
-        self.asset_repo.get_all_including_archived().await
+    pub async fn get_all_assets_with_archived(
+        &self,
+    ) -> std::result::Result<Vec<Asset>, AssetApplicationError> {
+        self.asset_repo
+            .get_all_including_archived()
+            .await
+            .map_err(|e| {
+                tracing::error!(target: BACKEND, err = ?e, "get_all_assets_with_archived: repository failure");
+                AssetApplicationError::DatabaseError
+            })
     }
 
     /// Retrieves a single asset by ID.
+    ///
+    /// Kept on `anyhow::Result` for now — used by the holding-transaction
+    /// orchestrator (`use_cases/holding_transaction/orchestrator.rs`) which
+    /// has its own typed surface composing this method's return via anyhow.
+    /// Will be narrowed when that orchestrator is sweep-cleaned in a later PR.
     pub async fn get_asset_by_id(&self, asset_id: &str) -> Result<Option<Asset>> {
         self.asset_repo.get_by_id(asset_id).await
     }
@@ -106,13 +127,11 @@ impl AssetService {
     }
 
     /// Creates a new asset and publishes an AssetUpdated event.
-    pub async fn create_asset(&self, dto: CreateAssetDTO) -> Result<Asset> {
-        let category = self
-            .get_category_by_id(&dto.category_id)
-            .await?
-            .ok_or_else(|| CategoryApplicationError::NotFound {
-                id: dto.category_id.clone(),
-            })?;
+    pub async fn create_asset(
+        &self,
+        dto: CreateAssetDTO,
+    ) -> std::result::Result<Asset, AssetCrudError> {
+        let category = find_category_for_asset_crud(&*self.category_repo, &dto.category_id).await?;
 
         let asset = Asset::new(
             dto.name,
@@ -123,7 +142,10 @@ impl AssetService {
             dto.reference,
         )?;
 
-        let asset = self.asset_repo.create(asset).await?;
+        let asset = self.asset_repo.create(asset).await.map_err(|e| {
+            tracing::error!(target: BACKEND, err = ?e, "create_asset: repository failure");
+            AssetApplicationError::DatabaseError
+        })?;
         tracing::info!(target: BACKEND, asset_id = %asset.id, name = %asset.name, "Asset created");
 
         if let Some(bus) = &self.event_bus {
@@ -136,19 +158,12 @@ impl AssetService {
     /// Updates an existing asset. Rejects if the asset is the system Cash Asset
     /// (CSH-016) or archived (R6) — both invariants are enforced inside
     /// `Asset::update_from` on the loaded aggregate (single source of truth).
-    pub async fn update_asset(&self, dto: UpdateAssetDTO) -> Result<Asset> {
-        let existing = self
-            .asset_repo
-            .get_by_id(&dto.asset_id)
-            .await?
-            .ok_or_else(|| AssetDomainError::NotFound(dto.asset_id.clone()))?;
-
-        let category = self
-            .get_category_by_id(&dto.category_id)
-            .await?
-            .ok_or_else(|| CategoryApplicationError::NotFound {
-                id: dto.category_id.clone(),
-            })?;
+    pub async fn update_asset(
+        &self,
+        dto: UpdateAssetDTO,
+    ) -> std::result::Result<Asset, AssetCrudError> {
+        let existing = load_asset_for_crud(&*self.asset_repo, &dto.asset_id).await?;
+        let category = find_category_for_asset_crud(&*self.category_repo, &dto.category_id).await?;
 
         let asset = existing.update_from(
             dto.name,
@@ -159,7 +174,10 @@ impl AssetService {
             dto.reference,
         )?;
 
-        let asset = self.asset_repo.update(asset).await?;
+        let asset = self.asset_repo.update(asset).await.map_err(|e| {
+            tracing::error!(target: BACKEND, asset_id = %dto.asset_id, err = ?e, "update_asset: repository failure");
+            AssetApplicationError::DatabaseError
+        })?;
         tracing::info!(target: BACKEND, asset_id = %asset.id, name = %asset.name, "Asset updated");
 
         if let Some(bus) = &self.event_bus {
@@ -171,18 +189,16 @@ impl AssetService {
 
     /// Archives an asset (reversible — R6). The system-asset invariant
     /// (CSH-016) is enforced inside `Asset::archive`.
-    pub async fn archive_asset(&self, asset_id: &str) -> Result<()> {
-        let existing = self
-            .asset_repo
-            .get_by_id(asset_id)
-            .await?
-            .ok_or_else(|| AssetDomainError::NotFound(asset_id.to_string()))?;
+    pub async fn archive_asset(&self, asset_id: &str) -> std::result::Result<(), AssetCrudError> {
+        let existing = load_asset_for_crud(&*self.asset_repo, asset_id).await?;
         // Aggregate enforces the invariant; the returned mutated Asset is
         // intentionally discarded — the column-update fast path
-        // `repo.archive(id)` handles persistence. PR 2 / a follow-up may
-        // collapse to `repo.update(asset)` once typed-Result migration lands.
+        // `repo.archive(id)` handles persistence.
         existing.archive()?;
-        self.asset_repo.archive(asset_id).await?;
+        self.asset_repo.archive(asset_id).await.map_err(|e| {
+            tracing::error!(target: BACKEND, asset_id = %asset_id, err = ?e, "archive_asset: repository failure");
+            AssetApplicationError::DatabaseError
+        })?;
         tracing::info!(target: BACKEND, asset_id = %asset_id, "Asset archived");
         if let Some(bus) = &self.event_bus {
             bus.publish(Event::AssetUpdated);
@@ -192,15 +208,14 @@ impl AssetService {
 
     /// Unarchives an asset (R18). The system-asset invariant (CSH-016) is
     /// enforced inside `Asset::unarchive`.
-    pub async fn unarchive_asset(&self, asset_id: &str) -> Result<()> {
-        let existing = self
-            .asset_repo
-            .get_by_id(asset_id)
-            .await?
-            .ok_or_else(|| AssetDomainError::NotFound(asset_id.to_string()))?;
+    pub async fn unarchive_asset(&self, asset_id: &str) -> std::result::Result<(), AssetCrudError> {
+        let existing = load_asset_for_crud(&*self.asset_repo, asset_id).await?;
         // See `archive_asset` for the rationale on discarding the returned aggregate.
         existing.unarchive()?;
-        self.asset_repo.unarchive(asset_id).await?;
+        self.asset_repo.unarchive(asset_id).await.map_err(|e| {
+            tracing::error!(target: BACKEND, asset_id = %asset_id, err = ?e, "unarchive_asset: repository failure");
+            AssetApplicationError::DatabaseError
+        })?;
         tracing::info!(target: BACKEND, asset_id = %asset_id, "Asset unarchived");
         if let Some(bus) = &self.event_bus {
             bus.publish(Event::AssetUpdated);
@@ -211,14 +226,13 @@ impl AssetService {
     /// Soft-deletes an asset and publishes an AssetUpdated event. The
     /// system-asset invariant (CSH-016) is enforced inside
     /// `Asset::ensure_user_managed` on the loaded aggregate.
-    pub async fn delete_asset(&self, asset_id: &str) -> Result<()> {
-        let existing = self
-            .asset_repo
-            .get_by_id(asset_id)
-            .await?
-            .ok_or_else(|| AssetDomainError::NotFound(asset_id.to_string()))?;
+    pub async fn delete_asset(&self, asset_id: &str) -> std::result::Result<(), AssetCrudError> {
+        let existing = load_asset_for_crud(&*self.asset_repo, asset_id).await?;
         existing.ensure_user_managed()?;
-        self.asset_repo.delete(asset_id).await?;
+        self.asset_repo.delete(asset_id).await.map_err(|e| {
+            tracing::error!(target: BACKEND, asset_id = %asset_id, err = ?e, "delete_asset: repository failure");
+            AssetApplicationError::DatabaseError
+        })?;
         tracing::info!(target: BACKEND, asset_id = %asset_id, "Asset deleted");
         if let Some(bus) = &self.event_bus {
             bus.publish(Event::AssetUpdated);
@@ -343,7 +357,10 @@ impl AssetService {
     ) -> Result<()> {
         // MKT-043 — reject unknown asset
         if self.asset_repo.get_by_id(asset_id).await?.is_none() {
-            return Err(AssetDomainError::NotFound(asset_id.to_string()).into());
+            return Err(AssetApplicationError::NotFound {
+                id: asset_id.to_string(),
+            }
+            .into());
         }
         // MKT-024 — convert f64 decimal to i64 micros at the IPC boundary
         if !price_f64.is_finite() {
@@ -373,7 +390,10 @@ impl AssetService {
     /// Rejects with AssetNotFound if the asset does not exist.
     pub async fn get_asset_prices(&self, asset_id: &str) -> Result<Vec<AssetPrice>> {
         if self.asset_repo.get_by_id(asset_id).await?.is_none() {
-            return Err(AssetDomainError::NotFound(asset_id.to_string()).into());
+            return Err(AssetApplicationError::NotFound {
+                id: asset_id.to_string(),
+            }
+            .into());
         }
         self.price_repo.get_all_for_asset(asset_id).await
     }
@@ -487,12 +507,57 @@ async fn find_category_by_name(
     })
 }
 
+/// Loads an asset by ID for the CRUD family. Translates `Ok(None)` into
+/// `AssetApplicationError::NotFound { id }` and any repository error into
+/// `AssetApplicationError::DatabaseError` after preserving the diagnostic
+/// chain via `tracing::error!`.
+async fn load_asset_for_crud(
+    repo: &dyn AssetRepository,
+    asset_id: &str,
+) -> std::result::Result<Asset, AssetCrudError> {
+    match repo.get_by_id(asset_id).await {
+        Ok(Some(asset)) => Ok(asset),
+        Ok(None) => Err(AssetApplicationError::NotFound {
+            id: asset_id.to_string(),
+        }
+        .into()),
+        Err(e) => {
+            tracing::error!(target: BACKEND, asset_id = %asset_id, err = ?e, "load_asset_for_crud: repository failure");
+            Err(AssetApplicationError::DatabaseError.into())
+        }
+    }
+}
+
+/// Looks up a category for the asset CRUD path (cross-aggregate dependency in
+/// `create_asset` / `update_asset`). Translates `Ok(None)` into
+/// `CategoryApplicationError::NotFound { id }` and any repo error into
+/// `CategoryApplicationError::DatabaseError`. Both propagate verbatim through
+/// `AssetCrudError::CategoryApplication(#[from] CategoryApplicationError)`:
+/// `NotFound` per the composition-over-redefinition rule (the source BC owns
+/// the variant), `DatabaseError` per the infra-translation rule.
+async fn find_category_for_asset_crud(
+    repo: &dyn AssetCategoryRepository,
+    category_id: &str,
+) -> std::result::Result<AssetCategory, AssetCrudError> {
+    match repo.get_by_id(category_id).await {
+        Ok(Some(cat)) => Ok(cat),
+        Ok(None) => Err(CategoryApplicationError::NotFound {
+            id: category_id.to_string(),
+        }
+        .into()),
+        Err(e) => {
+            tracing::error!(target: BACKEND, category_id = %category_id, err = ?e, "find_category_for_asset_crud: repository failure");
+            Err(CategoryApplicationError::DatabaseError.into())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::context::asset::{
-        AssetClass, CategoryDomainError, CreateAssetDTO, MockAssetCategoryRepository,
-        MockAssetPriceRepository, MockAssetRepository,
+        AssetClass, AssetDomainError, CategoryDomainError, CreateAssetDTO,
+        MockAssetCategoryRepository, MockAssetPriceRepository, MockAssetRepository,
     };
     use std::sync::Arc;
     use std::time::Duration;
@@ -574,8 +639,8 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::NameEmpty)
+                &err,
+                AssetCrudError::Validation(AssetDomainError::NameEmpty)
             ),
             "got: {err}"
         );
@@ -602,8 +667,8 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::ReferenceEmpty)
+                &err,
+                AssetCrudError::Validation(AssetDomainError::ReferenceEmpty)
             ),
             "got: {err}"
         );
@@ -630,8 +695,8 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::InvalidCurrency(_))
+                &err,
+                AssetCrudError::Validation(AssetDomainError::InvalidCurrency { .. })
             ),
             "got: {err}"
         );
@@ -658,8 +723,8 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::InvalidRiskLevel(_))
+                &err,
+                AssetCrudError::Validation(AssetDomainError::InvalidRiskLevel { .. })
             ),
             "got: {err}"
         );
@@ -735,10 +800,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::Archived)
-            ),
+            matches!(&err, AssetCrudError::Validation(AssetDomainError::Archived)),
             "got: {err}"
         );
     }
@@ -989,8 +1051,8 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::NotFound(_))
+                err.downcast_ref::<AssetApplicationError>(),
+                Some(AssetApplicationError::NotFound { .. })
             ),
             "got: {err}"
         );
@@ -1138,8 +1200,8 @@ mod tests {
         let err = svc.get_asset_prices("nonexistent-id").await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::NotFound(_))
+                err.downcast_ref::<AssetApplicationError>(),
+                Some(AssetApplicationError::NotFound { .. })
             ),
             "got: {err}"
         );
@@ -1505,10 +1567,7 @@ mod tests {
             .unwrap_err();
 
         assert!(
-            matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::Archived)
-            ),
+            matches!(&err, AssetCrudError::Validation(AssetDomainError::Archived)),
             "expected Archived, got: {err}"
         );
     }
@@ -1538,10 +1597,10 @@ mod tests {
 
         assert!(
             matches!(
-                err.downcast_ref::<CategoryApplicationError>(),
-                Some(CategoryApplicationError::NotFound { .. })
+                &err,
+                AssetCrudError::CategoryApplication(CategoryApplicationError::NotFound { .. })
             ),
-            "expected CategoryApplicationError::NotFound, got: {err}"
+            "expected CategoryApplicationError::NotFound, got: {err:?}"
         );
     }
 
@@ -1639,8 +1698,8 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::CashAssetNotEditable)
+                &err,
+                AssetCrudError::Validation(AssetDomainError::CashAssetNotEditable)
             ),
             "got: {err}"
         );
@@ -1661,8 +1720,8 @@ mod tests {
         let err = svc.archive_asset("system-cash-USD").await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::CashAssetNotEditable)
+                &err,
+                AssetCrudError::Validation(AssetDomainError::CashAssetNotEditable)
             ),
             "got: {err}"
         );
@@ -1683,8 +1742,8 @@ mod tests {
         let err = svc.unarchive_asset("system-cash-USD").await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::CashAssetNotEditable)
+                &err,
+                AssetCrudError::Validation(AssetDomainError::CashAssetNotEditable)
             ),
             "got: {err}"
         );
@@ -1705,8 +1764,8 @@ mod tests {
         let err = svc.delete_asset("system-cash-USD").await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::CashAssetNotEditable)
+                &err,
+                AssetCrudError::Validation(AssetDomainError::CashAssetNotEditable)
             ),
             "got: {err}"
         );
@@ -1726,8 +1785,8 @@ mod tests {
         let err = svc.archive_asset("missing").await.unwrap_err();
         assert!(
             matches!(
-                err.downcast_ref::<AssetDomainError>(),
-                Some(AssetDomainError::NotFound(_))
+                &err,
+                AssetCrudError::Application(AssetApplicationError::NotFound { .. })
             ),
             "got: {err}"
         );
@@ -1899,6 +1958,101 @@ mod tests {
             matches!(
                 err,
                 CategoryCrudError::Application(CategoryApplicationError::DatabaseError)
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Asset CRUD typed-error coverage (PR 7)
+    // -------------------------------------------------------------------------
+
+    // create_asset surfaces asset_repo.create failure as DatabaseError after
+    // category lookup succeeds. Distinct path from the category-side
+    // DatabaseError covered above.
+    #[tokio::test]
+    async fn test_create_asset_returns_database_error_when_repo_create_fails() {
+        let mut cr = MockAssetCategoryRepository::new();
+        cr.expect_get_by_id()
+            .return_once(|_| Ok(Some(make_category())));
+        let mut ar = MockAssetRepository::new();
+        ar.expect_create()
+            .return_once(|_| Err(SimulatedDbError.into()));
+        let svc = make_svc(ar, cr, MockAssetPriceRepository::new());
+        let err = svc.create_asset(base_dto("Bond")).await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AssetCrudError::Application(AssetApplicationError::DatabaseError)
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // load_asset_for_crud surfaces Ok(None) as typed NotFound carrying the ID.
+    // Exercised through archive_asset (the simplest write that hits the helper).
+    #[tokio::test]
+    async fn test_archive_asset_returns_not_found_with_id() {
+        let mut ar = MockAssetRepository::new();
+        ar.expect_get_by_id().return_once(|_| Ok(None));
+        let svc = make_svc(
+            ar,
+            MockAssetCategoryRepository::new(),
+            MockAssetPriceRepository::new(),
+        );
+        let err = svc.archive_asset("missing-id").await.unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                AssetCrudError::Application(AssetApplicationError::NotFound { id })
+                    if id == "missing-id"
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // delete_asset surfaces asset_repo.delete failure as DatabaseError after
+    // the ensure_user_managed invariant passes.
+    #[tokio::test]
+    async fn test_delete_asset_returns_database_error_when_repo_delete_fails() {
+        let asset = make_asset("some-id", false);
+        let mut ar = MockAssetRepository::new();
+        ar.expect_get_by_id().return_once(move |_| Ok(Some(asset)));
+        ar.expect_delete()
+            .return_once(|_| Err(SimulatedDbError.into()));
+        let svc = make_svc(
+            ar,
+            MockAssetCategoryRepository::new(),
+            MockAssetPriceRepository::new(),
+        );
+        let err = svc.delete_asset("some-id").await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AssetCrudError::Application(AssetApplicationError::DatabaseError)
+            ),
+            "got: {err:?}"
+        );
+    }
+
+    // load_asset_for_crud surfaces a get_by_id repo error (distinct from
+    // Ok(None) → NotFound) as DatabaseError. Exercised through archive_asset
+    // (the simplest write that hits the helper).
+    #[tokio::test]
+    async fn test_archive_asset_returns_database_error_when_load_fails() {
+        let mut ar = MockAssetRepository::new();
+        ar.expect_get_by_id()
+            .return_once(|_| Err(SimulatedDbError.into()));
+        let svc = make_svc(
+            ar,
+            MockAssetCategoryRepository::new(),
+            MockAssetPriceRepository::new(),
+        );
+        let err = svc.archive_asset("some-id").await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AssetCrudError::Application(AssetApplicationError::DatabaseError)
             ),
             "got: {err:?}"
         );

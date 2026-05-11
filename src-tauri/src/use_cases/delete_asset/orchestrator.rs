@@ -36,7 +36,10 @@ impl DeleteAssetUseCase {
         {
             return Err(DeleteAssetError::ExistingTransactions.into());
         }
-        self.asset_service.delete_asset(asset_id).await
+        self.asset_service
+            .delete_asset(asset_id)
+            .await
+            .map_err(Into::into)
     }
 }
 
