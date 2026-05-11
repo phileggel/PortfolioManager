@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use iso_currency::Currency;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::result::Result as StdResult;
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -94,7 +95,7 @@ impl Account {
         name: String,
         currency: String,
         update_frequency: UpdateFrequency,
-    ) -> std::result::Result<Self, AccountDomainError> {
+    ) -> StdResult<Self, AccountDomainError> {
         let name = name.trim().to_string();
         if name.is_empty() {
             return Err(AccountDomainError::NameEmpty);
@@ -117,7 +118,7 @@ impl Account {
         name: String,
         currency: String,
         update_frequency: UpdateFrequency,
-    ) -> std::result::Result<Self, AccountDomainError> {
+    ) -> StdResult<Self, AccountDomainError> {
         let name = name.trim().to_string();
         if name.is_empty() {
             return Err(AccountDomainError::NameEmpty);
@@ -578,7 +579,7 @@ impl Account {
     pub fn apply_deposit(
         &mut self,
         tx: Transaction,
-    ) -> std::result::Result<Transaction, AccountOperationError> {
+    ) -> StdResult<Transaction, AccountOperationError> {
         self.transactions.push(tx.clone());
         self.pending_changes
             .push(AccountChange::TransactionInserted(tx.clone()));
@@ -595,7 +596,7 @@ impl Account {
     pub fn apply_withdrawal(
         &mut self,
         tx: Transaction,
-    ) -> std::result::Result<Transaction, AccountOperationError> {
+    ) -> StdResult<Transaction, AccountOperationError> {
         let current = self.cash_holding_quantity();
         // Compare against `total_amount` to match `replay_cash_holding`'s deduction
         // field. For cash withdrawals built via `Transaction::new_withdrawal` the
@@ -903,7 +904,7 @@ impl Account {
         total_sell_amount - cost_basis
     }
 
-    fn validate_currency(currency: &str) -> std::result::Result<(), AccountDomainError> {
+    fn validate_currency(currency: &str) -> StdResult<(), AccountDomainError> {
         if Currency::from_str(currency).is_err() {
             return Err(AccountDomainError::InvalidCurrency {
                 currency: currency.to_string(),
@@ -955,7 +956,7 @@ impl Account {
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, AccountOperationError> {
+    ) -> StdResult<Transaction, AccountOperationError> {
         let tx =
             Transaction::new_deposit(self.id.clone(), self.cash_asset_id(), date, amount, note)
                 .expect("test transaction inputs must be valid");
@@ -969,7 +970,7 @@ impl Account {
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> std::result::Result<Transaction, AccountOperationError> {
+    ) -> StdResult<Transaction, AccountOperationError> {
         let tx =
             Transaction::new_withdrawal(self.id.clone(), self.cash_asset_id(), date, amount, note)
                 .expect("test transaction inputs must be valid");

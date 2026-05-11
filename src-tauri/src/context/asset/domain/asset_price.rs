@@ -1,10 +1,10 @@
 use super::error::AssetPriceDomainError;
 use anyhow::Result;
 use async_trait::async_trait;
-
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::result::Result as StdResult;
 
 /// A manually recorded market price for a financial asset on a specific date.
 /// Owned by the `asset` bounded context (MKT spec).
@@ -28,7 +28,7 @@ impl AssetPrice {
         asset_id: String,
         date: String,
         price: i64,
-    ) -> std::result::Result<Self, AssetPriceDomainError> {
+    ) -> StdResult<Self, AssetPriceDomainError> {
         if price <= 0 {
             return Err(AssetPriceDomainError::NotPositive);
         }

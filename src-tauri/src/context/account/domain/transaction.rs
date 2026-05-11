@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::result::Result as StdResult;
 use uuid::Uuid;
 
 /// Type of financial transaction.
@@ -84,7 +85,7 @@ impl Transaction {
         total_amount: i64,
         note: Option<String>,
         realized_pnl: Option<i64>,
-    ) -> std::result::Result<Self, TransactionDomainError> {
+    ) -> StdResult<Self, TransactionDomainError> {
         Self::validate(
             &date,
             quantity,
@@ -132,7 +133,7 @@ impl Transaction {
         note: Option<String>,
         realized_pnl: Option<i64>,
         created_at: String,
-    ) -> std::result::Result<Self, TransactionDomainError> {
+    ) -> StdResult<Self, TransactionDomainError> {
         Self::validate(
             &date,
             quantity,
@@ -172,7 +173,7 @@ impl Transaction {
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> std::result::Result<Self, TransactionDomainError> {
+    ) -> StdResult<Self, TransactionDomainError> {
         if amount <= 0 {
             return Err(TransactionDomainError::AmountNotPositive);
         }
@@ -204,7 +205,7 @@ impl Transaction {
         date: String,
         amount: i64,
         note: Option<String>,
-    ) -> std::result::Result<Self, TransactionDomainError> {
+    ) -> StdResult<Self, TransactionDomainError> {
         if amount <= 0 {
             return Err(TransactionDomainError::AmountNotPositive);
         }
@@ -267,7 +268,7 @@ impl Transaction {
         exchange_rate: i64,
         fees: i64,
         total_amount: i64,
-    ) -> std::result::Result<(), TransactionDomainError> {
+    ) -> StdResult<(), TransactionDomainError> {
         // TRX-020 — date must be parseable, not in the future, not before 1900-01-01
         let parsed_date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
             .map_err(|_| TransactionDomainError::InvalidDate)?;
@@ -347,7 +348,7 @@ mod tests {
         exchange_rate: i64,
         fees: i64,
         total_amount: i64,
-    ) -> std::result::Result<Transaction, TransactionDomainError> {
+    ) -> StdResult<Transaction, TransactionDomainError> {
         Transaction::new(
             "account-1".to_string(),
             "asset-1".to_string(),

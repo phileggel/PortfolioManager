@@ -3,6 +3,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use specta::Type;
+use std::result::Result as StdResult;
 use uuid::Uuid;
 
 /// The fixed ID of the system default category used as a fallback.
@@ -28,7 +29,7 @@ impl Default for AssetCategory {
 
 impl AssetCategory {
     /// Creates a new AssetCategory.
-    pub fn new(label: String) -> std::result::Result<Self, CategoryDomainError> {
+    pub fn new(label: String) -> StdResult<Self, CategoryDomainError> {
         if label.trim().is_empty() {
             return Err(CategoryDomainError::LabelEmpty);
         }
@@ -40,7 +41,7 @@ impl AssetCategory {
 
     /// Creates a new AssetCategory with a known deterministic ID.
     /// Used by system-seeded categories (e.g. the Cash category, CSH-017).
-    pub fn with_id(id: String, label: String) -> std::result::Result<Self, CategoryDomainError> {
+    pub fn with_id(id: String, label: String) -> StdResult<Self, CategoryDomainError> {
         if label.trim().is_empty() {
             return Err(CategoryDomainError::LabelEmpty);
         }
