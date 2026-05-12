@@ -2,6 +2,8 @@
 
 A concise reference for Domain-Driven Design concepts as applied in a Tauri 2 / Rust / React stack.
 
+> This codebase follows the structural pillars below strictly. Project-specific divergences from textbook DDD (typed IDs, value-object wrappers, in-aggregate events, ACL, etc.) — and the trade reasoning for each — live in [`docs/ddd-divergences.md`](ddd-divergences.md).
+
 ---
 
 ## Layers (within a Bounded Context)
