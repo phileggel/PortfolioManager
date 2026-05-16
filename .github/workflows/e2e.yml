@@ -1,10 +1,10 @@
 name: E2E
 
 on:
+  # E2E runs on push to main only — same cadence as backend coverage.
+  # PRs skip the ~20-min Tauri build; regressions surface within minutes
+  # of merge (cleaner main vs faster PR cycles trade-off).
   push:
-    branches: [main]
-    paths-ignore: ["**/*.md", "docs/**"]
-  pull_request:
     branches: [main]
     paths-ignore: ["**/*.md", "docs/**"]
 
