@@ -583,7 +583,11 @@ impl Account {
         self.transactions.push(tx.clone());
         self.pending_changes
             .push(AccountChange::TransactionInserted(tx.clone()));
-        self.replay_cash_holding()?;
+        if let Err(e) = self.replay_cash_holding() {
+            self.transactions.pop();
+            self.pending_changes.pop();
+            return Err(e);
+        }
         Ok(tx)
     }
 
@@ -611,7 +615,11 @@ impl Account {
         self.transactions.push(tx.clone());
         self.pending_changes
             .push(AccountChange::TransactionInserted(tx.clone()));
-        self.replay_cash_holding()?;
+        if let Err(e) = self.replay_cash_holding() {
+            self.transactions.pop();
+            self.pending_changes.pop();
+            return Err(e);
+        }
         Ok(tx)
     }
 
