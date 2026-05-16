@@ -63,5 +63,8 @@
     "vite": "^8.0.3",
     "vitest": "^4.1.2",
     "webdriverio": "^9.27.1"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.5"
   }
 }
