@@ -19,6 +19,30 @@ else
     NC='\033[0m'
 fi
 
+# Detect delete-only push. Git provides "<local-ref> <local-sha> <remote-ref>
+# <remote-sha>" on stdin for each ref (see `man githooks`, "pre-push"). For
+# deletions, local-sha is the all-zero OID — 40 hex chars under SHA-1, 64
+# under SHA-256, hence the length-agnostic regex. A push with no code
+# content has nothing to validate.
+#
+# Drain the entire stdin (no `break`) so any future consumer below this
+# loop sees the full refspec list. `while read` at EOF returns non-zero;
+# bash treats that as the loop-terminator, not an `errexit` trigger — do
+# not refactor to a pipe (the subshell + SIGPIPE interaction breaks this).
+DELETE_ONLY=true
+HAS_REFS=false
+while read -r local_ref local_sha remote_ref remote_sha; do
+    HAS_REFS=true
+    if [[ ! "$local_sha" =~ ^0+$ ]]; then
+        DELETE_ONLY=false
+    fi
+done
+
+if [[ "$HAS_REFS" == true && "$DELETE_ONLY" == true ]]; then
+    echo -e "${BLUE}ℹ  Delete-only push — skipping quality check.${NC}"
+    exit 0
+fi
+
 echo -e "${BLUE}🚀 Preparing to push... Running full quality check${NC}"
 
 if [ ! -f "$CHECK_SCRIPT" ]; then

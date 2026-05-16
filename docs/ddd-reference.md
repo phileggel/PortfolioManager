@@ -1,8 +1,6 @@
 # DDD Reference
 
-A concise reference for Domain-Driven Design concepts as applied in a Tauri 2 / Rust / React stack.
-
-> This codebase follows the structural pillars below strictly. Project-specific divergences from textbook DDD (typed IDs, value-object wrappers, in-aggregate events, ACL, etc.) — and the trade reasoning for each — live in [`docs/ddd-divergences.md`](ddd-divergences.md).
+A concise reference for Domain-Driven Design concepts as applied in a Tauri 2 / Rust stack.
 
 ---
 
@@ -186,8 +184,6 @@ Infrastructure types (`sqlx::Pool`, concrete repos) must never appear in Applica
 ---
 
 ## Errors
-
-> **Project-specific reference**: see [`docs/error-model.md`](error-model.md) for the directive how-to (rules, decision tree, recipes, anti-patterns). This section gives the conceptual framing only.
 
 ### Three categories of errors
 
