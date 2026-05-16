@@ -3,8 +3,10 @@ name: E2E
 on:
   push:
     branches: [main]
+    paths-ignore: ["**/*.md", "docs/**"]
   pull_request:
     branches: [main]
+    paths-ignore: ["**/*.md", "docs/**"]
 
 concurrency:
   group: e2e-${{ github.ref }}
