@@ -11,5 +11,6 @@
 | [ADR-007](007-e2e-combobox-boundary.md)                      | E2E Test Boundary at HeadlessUI ComboboxField                     | Accepted                      |
 | [ADR-008](008-asset-price-provider-chain.md)                 | Asset Price Provider Chain: Stooq + Finnhub-BYOK + Manual         | Accepted                      |
 | [ADR-009](009-fx-rate-provider-chain.md)                     | FX Rate Provider Chain: Frankfurter + ECB XML + Manual            | Accepted                      |
-| [ADR-010](010-source-qualifier-precedence.md)                | Source-Qualifier Precedence: Manual Overrides External            | Accepted                      |
+| [ADR-010](010-source-qualifier-precedence.md)                | Source-Qualifier Precedence: Manual Overrides External            | Superseded by ADR-012         |
 | [ADR-011](011-byok-api-keys-os-keychain.md)                  | User-Supplied API Keys via OS Keychain (3-Tier Linux Fallback)    | Accepted                      |
+| [ADR-012](012-latest-write-wins-source-as-metadata.md)       | Latest-Write-Wins; Source Field is Metadata (supersedes ADR-010)  | Accepted — supersedes ADR-010 |

@@ -17,7 +17,7 @@ Use a three-tier source chain for `CurrencyRate`, captured by a new `source: Cur
 2. **ECB XML feed direct** (`https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml`) — fallback when Frankfurter is unreachable. Same upstream data, different hosting.
 3. **Manual** — user-entered rates via the FXR spec; always available.
 
-Precedence per `(from_currency, to_currency, date)`: Manual wins over any External source (per ADR-010). The `source` column is persisted as a SQLite text discriminant matching the enum variant name (consistent with ADR-008's `AssetPrice.source`).
+Write semantics per `(from_currency, to_currency, date)`: latest write wins regardless of source (per ADR-012). The `source` enum is metadata for traceability and is not a precedence input. The `source` column is persisted as a SQLite text discriminant matching the enum variant name (consistent with ADR-008's `AssetPrice.source`).
 
 Both External tiers use EUR as the base currency. Non-EUR pairs (e.g. USD/GBP) must therefore be computed via EUR cross-rate. The exact cross-rate algorithm and edge-case behaviour (same-date rate availability, rounding) will be specified in the future FXR spec; this ADR commits to the EUR-base architectural choice, not to the formula.
 
