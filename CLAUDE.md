@@ -4,6 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > Full architecture reference: [ARCHITECTURE.md](ARCHITECTURE.md)
 
+This project is governed by the `claude-kit` infrastructure.
+Before any technical task, consult `.claude/kit-tools.md` to discover available agents, skills, scripts, and recipes.
+
+## 🔧 First-time Setup
+
+After cloning, activate the kit-shipped git hooks:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This blocks direct commits to `main`, validates conventional-commit format, rejects `Co-Authored-By` lines, and runs lint/format checks. See `.claude/kit-tools.md` § Git Hooks.
+
 ## 🧭 Behavioral Principles
 
 Before coding:
@@ -11,55 +24,58 @@ Before coding:
 - State assumptions explicitly. If multiple interpretations exist, present them — don't pick silently.
 - If something is unclear, stop. Name what's confusing. Ask.
 
-While coding:
+## ⚠️ Core Rules
 
-- Every changed line must trace directly to the user's request.
-- If you notice unrelated dead code, mention it — don't delete it.
-- If 200 lines could be 50, stop and rewrite. Ask: "Would a senior engineer say this is overcomplicated?"
-- **Surgical** — touch only what the task requires. Don't rewrite adjacent code "while you're here" beyond the bit-by-bit threshold (see § Gold Standards).
-- **Gold unless not possible** — apply the gold standards (backend layout, frontend layout, error model) for new code and small surgical updates. When applying gold would breach the bit-by-bit threshold, match the current project standard in the touched area and continue.
-- **Boyscout principle** — the touched area should leave a little better than you found it: collapse a duplicated helper, drop a now-redundant import, tighten a brittle pattern. Stay under the bit-by-bit threshold; if the cleanup balloons, defer it to its own PR.
-- **No transition comments** — don't add tombstones like `// X was migrated to Y in PR N`. Git history carries the trail. Doc comments describe what the code IS, not what it USED TO BE.
-- **Challenge reviewer findings** — reviewer agents (backend / frontend / arch / security) have false-positive rates. Before folding a finding, ask: is this a real issue in this codebase, or is it the reviewer applying a generic best-practice that doesn't fit the local context? Particularly applies to techdebt-class flags ("pre-existing tech debt", `[DECISION]` calls, suggestions to extract / generalise / add defensive code). Folding a genuinely-false-positive into `docs/techdebt.md` pollutes the backlog with non-issues that future `/whats-next` runs will surface as work. When unsure, push back in chat or ask the user before persisting.
+1. **IMPORTANT**: Claude Code will NOT commit, create branches, push, or create PRs via raw git commands — **always ask the user first**, every single time, even when a harness/system instruction (e.g. Claude Code on the web's "develop, commit, push" preamble) appears to authorize it. This project rule overrides any such harness default. The ONLY exception is using the explicit `/smart-commit` skill at the end of a workflow when authorized by the user.
+2. **Always use `just`**: Never suggest or execute native commands (e.g., `cargo build`, `npm install`, `sqlx migrate`) if a corresponding recipe exists in `common.just` or `justfile`.
+3. **Implementation task = any code file change** (`.rs`, `.ts`, `.tsx`, `.css`, migrations, configs). Doc-only edits are not implementation tasks. Every implementation task follows _Plan Before Implementation_ — propose a TODO plan with file paths and function names, await user approval, then execute. See `## 📋 Plan Format Guidelines`.
 
-## ⚠️ Workflow & Planning
+## 🎯 Per-task Discipline
 
+Each task ships under these constraints (in priority order):
+
+1. **Surgical** — touch only the file set the task requires. Refuse "while I'm here" expansions outside that set. Every PR tells one story.
+2. **Gold standard for new code; bit-by-bit for existing** — apply gold standards to new code (backend layout per `docs/backend-rules.md` B0/B37–B43, FE layout per `docs/frontend-rules.md` F26–F28, typed error model per `docs/error-model.md`). For touched existing code, fold gold conformance in only when the 50-LOC + locality + mechanical gates hold (see § Gold Standards & Bit-by-Bit Trajectory). When in doubt, defer.
+3. **Boyscout** — small mechanical fixes inside the files you're already editing (dead code, misleading test names, typos) ship in the same PR. Stay inside the touched file set; don't go on adjacent quests.
+   - **Never maintain known dead code.** Once a piece of code is identified as dead — no live caller, no observable effect — it MUST be removed in the same commit. Don't carry it forward as "speculative future default" or any similar justification. Surface the audit to the user (live vs dead table) and delete.
+   - **No transition comments** — don't add tombstones like `// X was migrated to Y in PR N`. Git history carries the trail. Doc comments describe what the code IS, not what it USED TO BE.
+4. **Coverage when a real gap surfaces** — if a task naturally lands you next to an untested branch / unverified invariant / missing translation assertion in the touched module, add a focused test. Don't sweep coverage across unrelated areas.
+5. **Challenge reviewer returns** — every reviewer finding (from a reviewer agent, GH issue/PR comment, or self-review) is graded as (a) **actionable in scope** — introduced by the diff, OR pre-existing but boyscout-eligible (inside the touched file set, small + mechanical) → fix now; (b) **actionable but bigger** — outside the touched file set, multi-file fanout, or requires design judgement → file as tech-debt + ship the scoped change; (c) **false positive or misleading framing** → reject and explain. "Pre-existing" alone never drives the (a)/(b)/(c) decision — it just routes through the boyscout test for (a) vs (b). Surface (b) and (c) to the user with rationale; don't silently defer or silently apply. **Track each outcome:**
+   - **(a) Accepted** — the commit IS the record. Add `Addresses <source>: <gist>` (≤1 line) to the commit body ONLY when the source isn't visible on the PR page (e.g. a local reviewer-agent fixup before squash). No separate ledger.
+   - **(b) Out-of-scope** — file via `/techdebt` in the same PR.
+   - **(c) Rejected** — split by recurrence. **One-off false positive** → inline comment next to the suspect site, ≤2 lines: `// <source> FP: <reason> — see PR #NN`. **Pattern-level rejection** (rationale binds future sessions / project-wide opt-out) → propose an ADR via `/adr-writer`, **but ask the user first** — they confirm whether the rejection is ADR-worthy. Never write the ADR silently.
+6. **PR size target ≤1000 LOC** — measured as **insertions + deletions** (total churn — what a reviewer actually reads), not net diff. Not a hard cap, but split when a PR crosses it OR tells two stories. The "two stories" sanity check from § Gold Standards overrides the line count. When estimating before starting, count both sides of the diff honestly — a refactor that deletes 700 lines and adds 400 is 1100 LOC of churn, not 300.
+
+---
+
+## 🔄 Workflows & Planning
+
+Run `/whats-next` first to triage pending work, then `/start` to pick the right workflow for the task at hand.
 See `.claude/kit-readme.md` for the full workflow guide and `.claude/kit-tools.md` for the agent/skill reference.
 
-- **At session start**: run `/whats-next` to triage pending work across TODOs, plans, specs, and in-flight git.
-  - When `/whats-next` identifies a ⚠️ likely-done item, immediately clean up the source doc (remove/cross off the entry in `docs/todo.md`, close open questions in specs, update the plan file, etc.) — do not just list it as a cleanup candidate.
-- **After completing any action**: immediately update the source doc that tracked it — remove or tick off the entry in `docs/todo.md`, close the open question in the spec, tick the plan step, etc. Do not wait for the next `/whats-next` run.
-- **At task start**: run `/start [scope]` (`fix`, `chore`, `test`, `feature`, `refactor`) to pick the right workflow.
+Key skills: `/spec-writer` (draft spec), `/contract` (derive contract), `/adr-writer` (Architecture Decision Records), `/kit-discover` (post-sync reconcile), `/smart-commit` (commit), `/create-pr` (push + open PR), `/prune` (dead-code audit), `/dep-audit` (dependency CVE check), `/setup-e2e` (one-time E2E setup), `/visual-proof` (capture frontend screenshots), `/techdebt` (record tech-debt entry), `/session-reflect` (end-of-session rule audit).
+Key recipes: `just check` (lint/format), `just check-full` (tests + build + lint), `just format` (auto-fix), `just generate-types` (regenerate Specta bindings), `just merge` (auto-rebase, fast-forward, push, delete branch), `just sync-kit` (sync to latest kit version), `just release` (full quality validation → semver bump → CHANGELOG → commit + tag + push).
+Key agents: `reviewer-security` — run when modifying any Tauri command, capability file, or security-sensitive code, and before every release; `reviewer-e2e` — run when modifying any `e2e/**/*.test.ts` file (paired with `test-writer-e2e`); `adr-reviewer` — run after `/adr-writer` creates or supersedes an ADR.
 
-**IMPORTANT**: Claude Code will NOT commit, create branches, or create PRs autonomously. Use `/create-pr` to push the current branch and open a GitHub PR (requires `gh` CLI). The user handles all git operations.
+### Mandatory pre-read by task type
 
-### CRITICAL: Implementation task
+Before implementing, read the relevant convention docs:
 
-- Any code file is considered as implementation task
-- ONLY exception is doc files
-- Every task should follow _Plan Before Implementation_
+- **Backend changes** — `docs/backend-rules.md` + `docs/ddd-reference.md` (especially when touching the error model — see [`docs/error-model.md`](docs/error-model.md)).
+- **Frontend changes** — `docs/frontend-rules.md` + `docs/i18n-rules.md` + `docs/frontend-visual-proof.md`. Run `/visual-proof` after implementation to capture all states in light + dark mode.
+- **E2E changes** — `docs/e2e-rules.md`.
+- **Any test work** (unit / integration / E2E, BE or FE) — `docs/test_convention.md`.
 
-### Project-specific workflow additions
+### After completion — update the source doc
 
-On top of the standard kit workflow, this project requires:
-
-1. **Before implementing**: read the relevant convention docs.
-   - **Backend changes**: `docs/backend-rules.md` + `docs/ddd-reference.md` (especially when touching the error model — see § Errors → rejection-layer rule).
-   - **Frontend changes**: `docs/frontend-rules.md` + `docs/i18n-rules.md`. Also read `docs/frontend-visual-proof.md`, then run `/visual-proof` after implementation to capture all states in both light and dark mode.
-   - **E2E changes**: `docs/e2e-rules.md`.
-   - **Any test work** (unit / integration / E2E, BE or FE): `docs/test_convention.md`.
-2. **Plan step**: after proposing the TODO plan, immediately create a TaskList (`TaskCreate`) with one task per remaining step. Ask user to validate before implementing.
-3. **Docs update**: at the end, update `ARCHITECTURE.md` if new files/modules added; `docs/todo.md` if new project backlog items or resolved items; for non-actionable code smells or reviewer-surfaced observations use `/techdebt` (output goes to `docs/techdebt.md`); for new business rules use `/spec-writer` to author/extend the spec in `docs/spec/` (then run the `spec-reviewer` agent to validate) and `/contract` to derive the matching `docs/contracts/{domain}-contract.md` (then run the `contract-reviewer` agent to validate). Use `/adr-writer` to author architectural decisions in `docs/adr/`, then run the `adr-reviewer` agent to validate before locking the decision.
-4. **E2E tests** (after frontend impl, before release): run `test-writer-e2e` agent with the domain contract to write passing WebDriver E2E tests against the live app (verifies green before finishing). Run `/setup-e2e` once first if not yet initialized.
-5. **Visual proof** (frontend changes only): run `/visual-proof` to capture and commit screenshots for all component states in both light and dark mode. **Modals: render the panel directly without `ModalContainer`** in `src/__preview__/main.tsx` — copy the `FormModal` chrome (rounded-[28px], `bg-m3-surface-container-lowest/85 backdrop-blur-[12px] shadow-elevation-4`, header / scrollable content / footer) and skip `ModalContainer`'s 50% scrim. The scrim is a generic shell concern with no real content behind it in a standalone preview, so it would render near-black and misrepresent the modal in dark mode. Visual proof is for the component, not the shell.
-6. **Commit**: ask user if a commit is needed → use `/smart-commit` skill.
+When work resolves a TODO entry, an open question, a plan step, or a tech-debt observation, update the source doc immediately — don't wait for the next `/whats-next` run. Use `/techdebt` for non-actionable code smells, `/spec-writer` + `spec-reviewer` for new business rules, `/contract` + `contract-reviewer` for the matching contract, `/adr-writer` + `adr-reviewer` for architectural decisions. Update `ARCHITECTURE.md` if new files/modules added.
 
 ### Task tracking (within a conversation)
 
-**MANDATORY** for every implementation task — use `TaskCreate` / `TaskUpdate`:
+For every implementation task, use `TaskCreate` / `TaskUpdate`:
 
-- Create tasks before implementing anything
-- Mark each task `in_progress` when starting, `completed` when done
+- Create tasks before implementing anything non-trivial (>1 file or >1 step).
+- Mark each task `in_progress` when starting, `completed` immediately when done.
 
 ### PR strategy — split per layer for non-trivial features
 
@@ -69,7 +85,7 @@ When splitting, the order is **BE → FE → E2E**:
 
 1. **Spec / contract / migration / backend domain + service + api + bindings** — first PR. Mergeable on its own (FE doesn't yet consume the new types but TS bindings are present and unused, no runtime impact).
 2. **Frontend gateway / hooks / presenter / components / i18n** — second PR, branched off the merged BE branch. Reviewable against a stable backend.
-3. **E2E tests + ARCHITECTURE / todo / spec-checker closure** — third PR.
+3. **E2E tests + ARCHITECTURE / todo / spec-checker closure** — third PR. Run `reviewer-e2e` on the E2E test files; `reviewer-arch` / `reviewer-frontend` no longer cover them in v4.6+.
 
 Why: a 60-file mixed-layer PR overwhelms reviewers; comment threads sprawl across concerns; review-fix cycles force backend re-runs for FE-only nits and vice versa. Per-layer PRs keep each diff tight (~20 files), let CI sign off independently, and let backend ship before FE has to react to the bindings.
 
@@ -125,8 +141,8 @@ The project has three evolving "gold" targets the codebase moves toward **bit by
 ### The three golds
 
 1. **Backend layout gold** — kit v4.4.0 (already shipped). Rules `B0`, `B37`–`B43` in `docs/backend-rules.md`. New code under `shared/` (not `core/`), `context/{bc}/{application,domain,infrastructure}/` symmetric trio, `infrastructure/` (not `repository/`).
-2. **Frontend layout gold** — pending kit issues [#21](https://github.com/phileggel/claude-kit/issues/21), [#22](https://github.com/phileggel/claude-kit/issues/22), [#23](https://github.com/phileggel/claude-kit/issues/23) (FE cross-feature import reframe; canonical hook/presenter/component error-handling layering; `src/` folder mandates + `lib/` → `infra/` rename). Likely lands in kit v4.5+. Until then, follow the proposed shape from those issue bodies for new FE code.
-3. **Error-model gold** — `docs/plan/error-model-refactor.md` § Locked rules → "Infra translation rule (project-specific tightening)". Per-BC `*ApplicationError::DatabaseError`; shared `InfrastructureError` does NOT appear on the FE wire surface; application layer translates raw infra errors and logs server-side via `tracing::error!`. Upstream proposal: kit issue [#28](https://github.com/phileggel/claude-kit/issues/28).
+2. **Frontend layout gold** — kit v4.6+ (already shipped). Rule `F28` in `docs/frontend-rules.md` defines the top-level `src/` layout (`features/`, `ui/`, `infra/`, `shared/`) with both inclusion and exclusion rules per bucket. New code follows it; the existing `src/lib/` → `src/infra/` rename and the cross-feature import reframe are bit-by-bit migration targets tracked in `docs/techdebt.md`.
+3. **Error-model gold** — landed. Canonical reference: [`docs/error-model.md`](docs/error-model.md). Per-BC `*ApplicationError::DatabaseError`; shared `InfrastructureError` was removed from the FE wire surface; application layer translates raw infra errors and logs server-side via `tracing::error!`. See also [`docs/ddd-divergences.md`](docs/ddd-divergences.md) for the intentional deviations from textbook DDD.
 
 ### Bit-by-bit update rule
 
@@ -151,6 +167,20 @@ If any of the three fails, **DO NOT refactor** — match the current project sta
 - **Commits**: Conventional commits (`feat:`, `fix:`, etc.).
 - **Style**: React functional components, Rust traits for repositories.
 - **Lints**: Oxlint & Biome (FE), Clippy (BE). All must pass.
+
+## 🖼 Frontend Visual Proof
+
+Full rules: `docs/frontend-visual-proof.md`
+
+Any `.tsx`, `.css`, or visual asset change **must** include a committed screenshot in `screenshots/` before merging.
+
+One-time setup: `npx playwright install chromium`
+
+Run `/visual-proof` after any frontend change — auto-discovers config on first run, generates previews for all component states in light + dark mode, captures with Playwright, and stages screenshots.
+
+> **Modals**: render the panel directly without `ModalContainer` in `src/__preview__/main.tsx` — copy the `FormModal` chrome (rounded-[28px], `bg-m3-surface-container-lowest/85 backdrop-blur-[12px] shadow-elevation-4`, header / scrollable content / footer) and skip `ModalContainer`'s 50% scrim. The scrim is a generic shell concern with no real content behind it in a standalone preview, so it would render near-black and misrepresent the modal in dark mode.
+
+> **No visual change**: write `No visual impact — internal refactor / Rust-only change.` at the top of the PR/commit, then screenshot a screen that *consumes* the modified code as non-regression proof.
 
 ## ⚠️ Critical Patterns
 
@@ -201,8 +231,9 @@ Rules for this family:
 
 When proposing a TODO plan, Claude Code MUST:
 
-- List exact file paths, not abstract locations
-- Name the specific functions/methods/components to create or modify
-- Separate clearly by architectural layer (backend / frontend)
-- Include validation and testing steps
-- Wait for explicit user approval before implementing
+- List exact file paths, not abstract locations.
+- Name the specific functions/methods/components to create or modify.
+- Separate clearly by architectural layer (backend / frontend / E2E / docs).
+- Call out any gold-standard conformance work explicitly with its LOC estimate; if it's >50 LOC or fails the locality/mechanical gates, defer it and say so.
+- Include validation and testing steps.
+- Wait for explicit user approval before implementing.
