@@ -439,13 +439,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // TRX-042 — OpeningBalance variant exists in the enum
-    #[test]
-    fn opening_balance_variant_exists() {
-        let tx_type = TransactionType::OpeningBalance;
-        assert_eq!(tx_type, TransactionType::OpeningBalance);
-    }
-
     // TRX-042 — OpeningBalance round-trips through strum Display → from_str
     #[test]
     fn opening_balance_round_trips_through_strum() {
@@ -454,14 +447,6 @@ mod tests {
         let as_str = original.to_string();
         let parsed = TransactionType::from_str(&as_str).expect("strum parse");
         assert_eq!(parsed, TransactionType::OpeningBalance);
-    }
-
-    // TRX-042 — all three variants are distinct
-    #[test]
-    fn transaction_type_variants_are_distinct() {
-        assert_ne!(TransactionType::Purchase, TransactionType::Sell);
-        assert_ne!(TransactionType::Purchase, TransactionType::OpeningBalance);
-        assert_ne!(TransactionType::Sell, TransactionType::OpeningBalance);
     }
 
     // CSH-022 — Transaction::new_deposit sets the cash-specific defaults

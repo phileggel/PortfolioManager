@@ -55,10 +55,3 @@ Entries are observations, not commitments. Triaged by `/whats-next` alongside
 - Severity: 🔴
 - Observation: The CSH-016 invariant intends to protect the seeded system Cash Asset, but the guard predicate is `self.class == AssetClass::Cash` rather than a system-asset marker. As a result, any user-created cash-class asset is also silently blocked from edits, archiving, and deletion by the same code path. The behavior is pre-existing — PR `refactor/move-asset-category-state-checks` preserves it verbatim from the original `guard_not_cash`. Whether a user can actually create a cash-class asset (i.e. whether the issue is reachable) is unverified against the spec.
 
-## 2026-05-08 — Two B33 trivial tests in transaction.rs (variant identity + distinctness)
-
-- Found by: reviewer-backend
-- Where: src-tauri/src/context/account/domain/transaction.rs (`opening_balance_variant_exists`, `transaction_type_variants_are_distinct`)
-- Context: branch `refactor/cash-tx-aggregate-split` @ `2c2ea3e`
-- Severity: 🔵
-- Observation: `opening_balance_variant_exists` asserts a value equals itself; `transaction_type_variants_are_distinct` asserts the compiler-derived `PartialEq` distinguishes named variants. Both are tautological — they exercise the language, not the domain. Candidates for deletion in a B33 sweep alongside other trivial tests in the suite.
