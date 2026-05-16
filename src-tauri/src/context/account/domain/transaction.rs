@@ -276,7 +276,7 @@ impl Transaction {
         if parsed_date > today {
             return Err(TransactionDomainError::DateInFuture);
         }
-        let min_date = NaiveDate::from_ymd_opt(1900, 1, 1).unwrap_or(chrono::NaiveDate::MIN);
+        let min_date = NaiveDate::from_ymd_opt(1900, 1, 1).expect("hardcoded valid date");
         if parsed_date < min_date {
             return Err(TransactionDomainError::DateTooOld);
         }
