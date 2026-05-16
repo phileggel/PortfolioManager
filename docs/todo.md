@@ -2,6 +2,55 @@
 
 <!-- Add new tech debt and backlog items here. Format: ## (domain) — Short title -->
 
+## (asset) — Surface OpenFIGI 429 (rate-limit) distinctly in web lookup
+
+OpenFIGI's no-API-key tier caps `/v3/search` at 5 requests/minute. Today every 429 maps to `WebLookupApplicationError::NetworkError` → opaque "Network error while contacting the lookup service" — the user has no idea they just need to wait. Manifests as a fragile-feeling search UX during testing/iteration.
+
+**Minimal fix (~1h, Workflow B)**:
+
+- New `WebLookupApplicationError::RateLimited` variant
+- Parse status in `search_keyword` / `map_isin` / `map_share_classes` (orchestrator.rs ReqwestOpenFigiClient impl) — branch on `resp.status() == StatusCode::TOO_MANY_REQUESTS` before the generic non-2xx bail
+- Map to i18n key (e.g. `webLookup.errors.rateLimited`) with copy "Too many searches. Please wait a minute and try again."
+
+**Better long-term fix (subsumes this)**: implement the KEY spec (per ADR-011) so users can paste an optional free OpenFIGI API key → lifts the limit ~20× (5 → 100 req/min on search). Tracked separately as "(spec) — Write KEY spec".
+
+Surfaced 2026-05-16 during a manual test session (`api.openfigi.com 429 Too Many Requests`).
+
+## (spec) — Amend MKT spec to align with ADR-008 + ADR-010
+
+ADR-008 introduces `AssetPrice.source` (Manual | Stooq | Finnhub) and ADR-010 establishes the Manual-overrides-External precedence rule. The current MKT spec (`docs/spec/market-price.md`) has no `source` field on the `AssetPrice` entity, and rules MKT-025 (last-write-wins upsert) and MKT-058 (silent overwrite on `record_price = true`) contradict the new precedence rule.
+
+**Required spec edits**:
+
+- Add `source: AssetPriceSource` to the AssetPrice entity table
+- Reframe MKT-025 to honour Manual-wins (auto-fetch never overwrites Manual)
+- Resolve the MKT-058 question: when a user's buy/sell transaction has `record_price = true` and a Manual `AssetPrice` already exists for that date, does the transaction-derived price overwrite Manual? **Deliberate spec call required** — both answers are defensible; we should not back into one silently.
+- New MKT-100+ rules covering the on-app-launch auto-fetch flow, per-day cache, manual refresh button, staleness indicator
+
+Workflow-A: `/spec-writer market-price` (amend) → `spec-reviewer` → contract refresh. Implementation lands later under PFD or its own MKT-extension feature.
+
+Surfaced 2026-05-16 by `adr-reviewer` after ADRs 008/010 were written.
+
+## (spec) — Write KEY spec (User API Key Management)
+
+ADR-011 captures the BYOK + OS keychain + 3-tier fallback decision. The spec to write — trigram `KEY` — covers the Tauri command surface, state machine, Connections settings panel UX, link-out to provider signup, "test connection" probe, and the Linux-without-keyring detection + UX flow.
+
+Cross-cutting enabler: every current and future external-provider feature depends on this. Once shipped, the OpenFIGI 429 TODO above is largely subsumed (the user just adds a key).
+
+Workflow-A: `/spec-writer api-key-management` → `/contract` → `feature-planner` → implementation. ~1-2 day feature.
+
+Surfaced 2026-05-16 during the asset-valuation ADR thread.
+
+## (spec) — Write FXR spec (Foreign Exchange Rate)
+
+ADR-009 introduces a new `CurrencyRate` entity, but no spec defines its bounded context, repository contract, or read path. Trigram `FXR`. Covers the entity definition, EUR-base + cross-rate computation algorithm, source qualifier (per ADR-010), Frankfurter primary + ECB XML fallback flow, manual entry CRUD, and the cache/refresh policy that parallels MKT's.
+
+Prerequisite for PFD (cross-currency rollup needs current FX).
+
+Workflow-A: `/spec-writer fx-rate` → `/contract` → `feature-planner` → implementation.
+
+Surfaced 2026-05-16 by `adr-reviewer` after ADR-009 was written.
+
 ## (asset) — Promote ISIN to canonical identifier alongside ticker
 
 `Asset.reference` is currently a single field that ends up holding either an ISIN or a ticker depending on how the asset was created (ISIN search → ISIN; keyword search → ticker; manual → whatever the user typed). This makes the AST uniqueness check semantic noise — the same instrument can be created twice as `AI` and `FR0000120073` and the two records won't dedup.
