@@ -573,9 +573,10 @@ impl Account {
     /// history, queues the `TransactionInserted` change, and replays the cash
     /// holding (CSH-012 lazy-creates the Cash Holding on first deposit).
     ///
-    /// Returns `AccountOperationError` only if the chronological replay surfaces
-    /// `InsufficientCash` (e.g. an out-of-order back-dated deposit interleaved
-    /// with prior withdrawals would briefly drive the running balance negative).
+    /// Returns a `Result` for signature symmetry with `apply_withdrawal`, but
+    /// the only failure path (`replay_cash_holding` raising `InsufficientCash`)
+    /// is unreachable for a Deposit: deposits only add to the running balance,
+    /// so back-dating one cannot create an interim shortfall.
     pub fn apply_deposit(
         &mut self,
         tx: Transaction,
@@ -611,7 +612,11 @@ impl Account {
         self.transactions.push(tx.clone());
         self.pending_changes
             .push(AccountChange::TransactionInserted(tx.clone()));
-        self.replay_cash_holding()?;
+        if let Err(e) = self.replay_cash_holding() {
+            self.transactions.pop();
+            self.pending_changes.pop();
+            return Err(e);
+        }
         Ok(tx)
     }
 
@@ -2125,5 +2130,54 @@ mod tests {
         .unwrap();
         acc.apply_withdrawal(tx).unwrap();
         assert_eq!(acc.cash_holding_quantity(), before - micro(200));
+    }
+
+    // CSH-080 — apply_withdrawal rolls back the pushed tx + pending_change when
+    // the chronological replay catches an interim shortfall the eager guard
+    // cannot see (back-dated withdrawal between two deposits: current balance
+    // covers it but the interim running balance at the back-dated date does not).
+    #[test]
+    fn apply_withdrawal_rolls_back_when_replay_overdraws_backdated() {
+        let mut acc = base_account();
+        acc.record_deposit("2026-01-01".to_string(), micro(100), None)
+            .unwrap();
+        acc.record_deposit("2026-03-01".to_string(), micro(200), None)
+            .unwrap();
+        // Current balance is 300 (>= 150) so the eager guard inside
+        // apply_withdrawal passes; replay catches the back-dated shortfall
+        // (100 < 150 at 2026-02-01, between the two deposits).
+        let txs_before = acc.transactions.len();
+        let changes_before = acc.pending_changes.len();
+        let tx = Transaction::new_withdrawal(
+            acc.id.clone(),
+            acc.cash_asset_id(),
+            "2026-02-01".to_string(),
+            micro(150),
+            None,
+        )
+        .unwrap();
+
+        let err = acc.apply_withdrawal(tx).unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                AccountOperationError::InsufficientCash {
+                    current_balance_micros: 100_000_000,
+                    ..
+                }
+            ),
+            "expected InsufficientCash{{100_000_000,…}}, got: {err:?}"
+        );
+        assert_eq!(
+            acc.transactions.len(),
+            txs_before,
+            "rejected tx must not be kept in self.transactions"
+        );
+        assert_eq!(
+            acc.pending_changes.len(),
+            changes_before,
+            "rolled-back pending_change must not be kept"
+        );
     }
 }
