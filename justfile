@@ -21,7 +21,7 @@ dev-wayland *ARGS:
 
 # Regenerate Specta TypeScript bindings (run after adding or changing Tauri commands)
 generate-types:
-    cd src-tauri && SQLX_OFFLINE=true cargo run --bin generate_bindings --features generate-bindings
+    cd src-tauri && cargo run --bin generate_bindings --features generate-bindings
 
 # Run frontend tests
 test:
@@ -29,7 +29,7 @@ test:
 
 # Run backend tests
 test-rust:
-    cd src-tauri && SQLX_OFFLINE=true cargo test
+    cd src-tauri && cargo test
 
 # Run frontend tests with lcov coverage (output: coverage/frontend/lcov.info)
 coverage-fe:
@@ -37,7 +37,7 @@ coverage-fe:
 
 # Run backend tests with coverage (output: coverage/backend/lcov.info + tarpaulin-report.html); requires: cargo install cargo-tarpaulin
 coverage-be:
-    cd src-tauri && SQLX_OFFLINE=true cargo tarpaulin --out Lcov Html --output-dir ../coverage/backend --lib --exclude-files "build.rs" --exclude-files "src/bin/generate_bindings.rs"
+    cd src-tauri && cargo tarpaulin --out Lcov Html --output-dir ../coverage/backend --lib --exclude-files "build.rs" --exclude-files "src/bin/generate_bindings.rs"
 
 # Run E2E tests against the built binary (opens a window)
 test-e2e:
@@ -61,7 +61,7 @@ screenshot:
 # Run linters only
 lint:
     npm run lint
-    cd src-tauri && SQLX_OFFLINE=true cargo clippy -- -D warnings
+    cd src-tauri && cargo clippy -- -D warnings
 
 # Clean build artifacts
 clean:

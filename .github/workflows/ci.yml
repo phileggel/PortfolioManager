@@ -1,0 +1,192 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: PR title (conventional commits)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      pull-requests: read
+    steps:
+      # Pinned to full SHA for v6.1.1 — mutable tags are a supply-chain risk.
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            docs
+            refactor
+            test
+            ci
+
+  commits:
+    name: Commit messages (mirrors commit-msg hook)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate every commit in the PR
+        shell: bash
+        run: |
+          set -u
+          BASE=$(git merge-base HEAD origin/main)
+          FAIL=0
+          REGEX='^(feat|fix|docs|test|chore|refactor|ci)(\([^)]+\))?!?: .+'
+          # --no-merges skips the synthetic merge commit GitHub creates at
+          # HEAD for pull_request events (it represents "what main looks
+          # like if this PR merged" — not a real PR commit).
+          for sha in $(git rev-list --no-merges "$BASE..HEAD"); do
+            TITLE=$(git log -1 --pretty=%s "$sha")
+            BODY=$(git log -1 --pretty=%b "$sha")
+
+            if ! echo "$TITLE" | grep -E "$REGEX" >/dev/null; then
+              echo "::error::$sha — invalid conventional format: $TITLE"
+              FAIL=1
+            fi
+            if [ ${#TITLE} -gt 72 ]; then
+              echo "::error::$sha — title > 72 chars (${#TITLE}): $TITLE"
+              FAIL=1
+            fi
+            TRIMMED=$(echo "$TITLE" | sed 's/[[:space:]]*$//')
+            if [[ "$TRIMMED" == *. ]]; then
+              echo "::error::$sha — title ends with period: $TITLE"
+              FAIL=1
+            fi
+            BODY_LINES=$(echo "$BODY" | { grep -v '^$' || true; } | { grep -v '^BREAKING CHANGE:' || true; } | wc -l)
+            if [ "$BODY_LINES" -gt 5 ]; then
+              echo "::error::$sha — body > 5 lines ($BODY_LINES): $TITLE"
+              FAIL=1
+            fi
+            if echo "$BODY" | grep -i '^Co-Authored-By:' >/dev/null; then
+              echo "::error::$sha — contains Co-Authored-By trailer: $TITLE"
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" -eq 0 ]; then
+            echo "✅ All commits pass the commit-msg hook rules."
+          fi
+          exit "$FAIL"
+
+  frontend:
+    name: Frontend — quality + coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Quality checks (lint + biome + tsc + build, skip tests)
+        shell: bash
+        run: python3 scripts/check.py --frontend --skip-tests
+
+      - name: Tests with coverage
+        shell: bash
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        # Pinned to full SHA for v5.5.4 — mutable tags are a supply-chain risk
+        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/frontend/lcov.info
+          flags: frontend
+          fail_ci_if_error: false # non-blocking: Codecov outages should not fail CI
+
+  backend:
+    name: Backend — quality (coverage on merge only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    env:
+      # SQLX_OFFLINE comes from src-tauri/.cargo/config.toml [env].
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-C debuginfo=0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          prefix-key: linux-rust
+
+      - name: Install sqlx-cli
+        # Pinned to full SHA for v2.75.30 — mutable tags are a supply-chain risk
+        uses: taiki-e/install-action@db5fb34fa772531a3ece57ca434f579eb334e0fb
+        with:
+          tool: sqlx-cli
+
+      - name: Quality checks (clippy + fmt + sqlx + tests, skip coverage)
+        shell: bash
+        run: python3 scripts/check.py --backend
+
+      - name: Install cargo-tarpaulin
+        if: github.event_name == 'push'
+        # Pinned to full SHA for v2.75.30 — mutable tags are a supply-chain risk
+        uses: taiki-e/install-action@db5fb34fa772531a3ece57ca434f579eb334e0fb
+        with:
+          tool: cargo-tarpaulin
+
+      - name: Coverage with tarpaulin
+        if: github.event_name == 'push'
+        working-directory: src-tauri
+        shell: bash
+        run: cargo tarpaulin --out Lcov --output-dir ../coverage/backend --lib --exclude-files "build.rs" --exclude-files "src/bin/generate_bindings.rs"
+
+      - name: Upload coverage to Codecov
+        if: github.event_name == 'push'
+        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/backend/lcov.info
+          flags: backend
+          fail_ci_if_error: false

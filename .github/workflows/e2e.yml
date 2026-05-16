@@ -1,10 +1,12 @@
 name: E2E
 
 on:
+  # E2E runs on push to main only — same cadence as backend coverage.
+  # PRs skip the ~20-min Tauri build; regressions surface within minutes
+  # of merge (cleaner main vs faster PR cycles trade-off).
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+    paths-ignore: ["**/*.md", "docs/**"]
 
 concurrency:
   group: e2e-${{ github.ref }}
@@ -19,7 +21,7 @@ jobs:
       contents: read
 
     env:
-      SQLX_OFFLINE: true
+      # SQLX_OFFLINE comes from src-tauri/.cargo/config.toml [env].
       CARGO_INCREMENTAL: 0
       RUSTFLAGS: "-C debuginfo=0"
 
