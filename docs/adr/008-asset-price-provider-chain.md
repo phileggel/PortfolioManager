@@ -19,7 +19,7 @@ Use a three-tier source chain for `AssetPrice`, captured by a new `source: Asset
 2. **Finnhub** (`https://finnhub.io/api/v1/quote?symbol=...&token=...`) — fallback when Stooq returns no data for a symbol. Requires a free user-supplied API key (60 req/min on the free tier). Key storage and lifecycle live in ADR-011 / the KEY spec; consumers here only call the gateway.
 3. **Manual** — user-entered prices via MKT; always available.
 
-Precedence per `(asset_id, date)`: Manual wins over any External source. The auto-fetch flow never overwrites a Manual row for the same date. When two External sources both have a row for a date, the most recently written wins (auto-fetch logic always writes to today's date). The `source` column is persisted as a SQLite text discriminant (matching the enum variant name), not an integer — text keeps migrations and ad-hoc database inspection trivial.
+Write semantics per `(asset_id, date)`: latest write wins regardless of source (per ADR-012). The auto-fetch flow unconditionally upserts; no source-based skip. The `source` enum is metadata for the price-history UI and debugging — it does not influence read or write precedence. The `source` column is persisted as a SQLite text discriminant (matching the enum variant name), not an integer — text keeps migrations and ad-hoc database inspection trivial.
 
 **Stooq symbol resolution**: derive the Stooq symbol from `(ticker, exchange_code)` initially — most cases collapse to lowercasing the ticker and appending an exchange suffix (`TTE` + `PA` → `tte.fr`). Add an explicit `stooq_symbol: Option<String>` field on `Asset` later only if derivation proves brittle on real assets. Avoids a schema change for the common case.
 

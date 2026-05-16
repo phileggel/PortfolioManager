@@ -1,7 +1,7 @@
 # ADR 010 — Source-qualifier precedence: Manual overrides External per (key, date)
 
 **Date**: 2026-05-16
-**Status**: Accepted
+**Status**: Superseded by ADR-012
 
 ## Context
 
