@@ -25,12 +25,6 @@ Industry convention: ISIN is the canonical identity (stable across rebrands, glo
 
 `docs/spec-index.md` lists PFD as `planning — paused — blocked on cash-tracking spec`. Cash-tracking shipped on 2026-05-06, so the blocker is lifted, but no `docs/spec/portfolio-dashboard.md` has been written yet. Next step when picked up: run `/spec-writer portfolio-dashboard` to author the cross-account aggregate-view spec (KPIs + per-account list, per the registry description), then the standard `/contract` → `feature-planner` flow. Update `docs/spec-index.md` to drop the "paused — blocked on cash-tracking spec" suffix at the same time.
 
-## (backend) — Error-model refactor (multi-PR)
-
-Tracked in `docs/plan/error-model-refactor.md`. Migrates services from `anyhow::Result` to typed Result with composed error enums per `docs/ddd-reference.md` § Errors. Supersedes the previous "untagged-composition rollout" and "convert services to typed Result" TODOs.
-
-Status (2026-05-10): PRs 1–5 shipped — asset/category state-checks (PR 1), cash typed Result + shared `InfrastructureError` (PR 2), holding-transaction unification (PR 3), open-holding typed (PR 4), Account CRUD typed (PR 5). The plan doc was tightened in PR 5 with the project-specific **infra translation rule** (per-BC `*ApplicationError::DatabaseError`; shared `InfrastructureError` does NOT appear on the FE wire) — PR 6+ enforces it. 7 families remaining (Account details, Category CRUD, Asset CRUD, Asset price, Archive/Delete asset, Account deletion, Web lookup) — see plan doc § Failure-surface-family map.
-
 ## (backend) — `correct_transaction` / `cancel_transaction` parameter style
 
 `correct_transaction(id: String, account_id: String, dto: CorrectTransactionDTO)` and `cancel_transaction(id: String, account_id: String)` mix primitives + DTO; the rest of the holding-transaction commands are DTO-only. Move `id`/`account_id` into the DTOs for consistency. Frontend impact: gateway call sites change. Surfaced during cash-tracking spec review (2026-05-05); per-command-error-enums concern from the original entry is subsumed by `docs/plan/error-model-refactor.md` PR 3.
