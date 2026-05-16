@@ -20,31 +20,37 @@ release *ARGS:
 
 # ⚠️  Destructive: removes stale remote-tracking branches
 clean-branches:
+    #!/usr/bin/env bash
+    set -euo pipefail
     git fetch --prune
-    git branch -vv | grep ': gone]' | awk '{print $1}' | xargs -r git branch -D
+    # Portable equivalent of `xargs -r` (which is GNU-only — BSD/macOS
+    # xargs runs the command once with no arguments instead of skipping).
+    stale=$(git branch -vv | grep ': gone]' | awk '{print $1}')
+    [ -n "$stale" ] && echo "$stale" | xargs git branch -D || true
 
 stat:
     cloc . --vcs=git
 
-# Fast-forward current branch into main (no merge commit), then delete the branch
+# Fast-forward merge the current feature branch into main and delete it.
+# Refuses with a specific diagnostic + recovery command if FF is not safe
+# (squash/rebase merge on GitHub, divergence, dirty tree, etc.). Override
+# in the downstream justfile if your project needs a different policy.
 merge:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    branch=$(git rev-parse --abbrev-ref HEAD)
-    if [ "$branch" = "main" ]; then echo "❌ Already on main — nothing to merge."; exit 1; fi
-    git checkout main
-    git merge --ff-only "$branch"
-    git branch -d "$branch"
-    echo "✅ $branch fast-forwarded into main and deleted."
+    @[ -f scripts/merge.py ] || { echo "❌ scripts/merge.py not found — run: just sync-kit"; exit 1; }
+    python3 scripts/merge.py
 
 # Run pending database migrations
 # Prerequisites: sqlx must be on $PATH and DATABASE_URL must be set
 migrate:
     cd src-tauri && sqlx migrate run
 
-# Regenerate SQLx offline query cache (run after schema or query changes)
+# Regenerate SQLx offline query cache (run after schema or query changes).
+# SQLX_OFFLINE=false forces online mode — projects that set SQLX_OFFLINE=true
+# globally (in their .cargo/config.toml) still let `prepare` hit the live DB,
+# which is its whole purpose. No-op for projects that haven't set SQLX_OFFLINE.
+# Override `DATABASE_URL` in your local justfile if your dev DB lives elsewhere.
 prepare-sqlx:
-    cd src-tauri && DATABASE_URL="sqlite:.local/dev_check.sqlite" cargo sqlx prepare -- --tests
+    cd src-tauri && SQLX_OFFLINE=false DATABASE_URL="sqlite:.local/dev_check.sqlite" cargo sqlx prepare -- --tests
 
 # Auto-fix formatting and linting
 format:

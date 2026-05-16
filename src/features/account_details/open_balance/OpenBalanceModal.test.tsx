@@ -222,8 +222,9 @@ describe("OpenBalanceModal", () => {
     mockUseOpenBalance.mockReturnValue(makeHookReturn({ isFormValid: true, handleSubmit }));
     const { container } = render(<OpenBalanceModal {...BASE_PROPS} />);
 
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    fireEvent.submit(container.querySelector("#ob-form")!);
+    const form = container.querySelector("#ob-form");
+    if (!form) throw new Error("expected #ob-form to be in the DOM");
+    fireEvent.submit(form);
 
     expect(handleSubmit).toHaveBeenCalled();
   });
