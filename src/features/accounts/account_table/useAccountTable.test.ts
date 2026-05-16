@@ -7,7 +7,7 @@ function makeAccount(id: string, name: string, freq: Account["update_frequency"]
   return { id, name, currency: "EUR", update_frequency: freq };
 }
 
-const accounts: Account[] = [
+const accounts: [Account, Account, Account, Account] = [
   makeAccount("1", "Alpha", "ManualYear"),
   makeAccount("2", "Beta", "Automatic"),
   makeAccount("3", "Gamma", "ManualDay"),
@@ -133,7 +133,7 @@ describe("useAccountTable", () => {
       useAccountTable(accounts, "", noopDelete, noopSummary, noopAccountClick),
     );
     const e = makeMouseEvent();
-    const account = accounts[0]!;
+    const account = accounts[0];
 
     act(() => result.current.handleEditClick(e, account));
 
@@ -146,7 +146,7 @@ describe("useAccountTable", () => {
       useAccountTable(accounts, "", noopDelete, noopSummary, noopAccountClick),
     );
 
-    act(() => result.current.handleEditClick(makeMouseEvent(), accounts[0]!));
+    act(() => result.current.handleEditClick(makeMouseEvent(), accounts[0]));
     act(() => result.current.handleEditClose());
 
     expect(result.current.editData).toBeNull();

@@ -17,19 +17,17 @@ export function useHeaderConfig(): HeaderConfig {
   const { pathname, searchStr } = location;
 
   // /accounts/$accountId/transactions/$assetId
-  const txListMatch = pathname.match(/^\/accounts\/([^/]+)\/transactions\/([^/]+)$/);
-  if (txListMatch) {
-    const accountId = txListMatch[1]!;
+  const txAccountId = pathname.match(/^\/accounts\/([^/]+)\/transactions\/([^/]+)$/)?.[1];
+  if (txAccountId) {
     return {
       title: t("transaction.list_title"),
-      onBack: () => navigate({ to: "/accounts/$accountId", params: { accountId } }),
+      onBack: () => navigate({ to: "/accounts/$accountId", params: { accountId: txAccountId } }),
     };
   }
 
   // /accounts/$accountId
-  const accountMatch = pathname.match(/^\/accounts\/([^/]+)$/);
-  if (accountMatch) {
-    const accountId = accountMatch[1]!;
+  const accountId = pathname.match(/^\/accounts\/([^/]+)$/)?.[1];
+  if (accountId) {
     const account = accounts.find((a) => a.id === accountId);
     return {
       title: account?.name ?? t("account_details.title"),
