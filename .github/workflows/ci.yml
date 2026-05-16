@@ -135,7 +135,7 @@ jobs:
       contents: read
 
     env:
-      SQLX_OFFLINE: "true"
+      # SQLX_OFFLINE comes from src-tauri/.cargo/config.toml [env].
       CARGO_INCREMENTAL: "0"
       RUSTFLAGS: "-C debuginfo=0"
 
