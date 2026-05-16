@@ -43,10 +43,6 @@ Extract a trait per service (e.g. `AccountServiceContract`, `AssetServiceContrac
 
 `reqwest 0.12.28` is a major version behind (`0.13.3` available). Breaking changes: TLS default switches from native-tls to rustls+aws-lc; `query()`/`form()` are now optional features; several deprecated methods removed. Current feature flags (`rustls-tls-native-roots`, `json`) need review against the new defaults before upgrading. See `docs/dep-audit-2026-05-05.md`.
 
-## (deps) — serialize-javascript CVE in @wdio/mocha-framework (GHSA-5c6j-r48x-rmvq, CVE-2026-34043)
-
-`@wdio/mocha-framework@9.27.1` depends on `mocha` which pins `serialize-javascript <=7.0.4`. Two high-severity CVEs: RCE via RegExp.flags (GHSA-5c6j-r48x-rmvq) and CPU exhaustion DoS (CVE-2026-34043, fixed in 7.0.5). devDependency only — E2E test runner, not in the production bundle. Upstream fix tracked in [mocha#5872](https://github.com/mochajs/mocha/issues/5872). Do NOT run `npm audit fix --force` (downgrades @wdio to v6, breaking). Re-evaluate when mocha releases with serialize-javascript 7.0.5+.
-
 ## (deps) — Update specta to rc.23
 
 `tauri-specta rc.21` pins `specta = "=2.0.0-rc.22"` (exact version). Wait for `tauri-specta rc.22+` before upgrading to `specta rc.23` + `specta-typescript 0.0.10`.
