@@ -2,6 +2,42 @@
 
 <!-- Add new tech debt and backlog items here. Format: ## (domain) — Short title -->
 
+## (asset) — Asset-price commands do not surface `Archived` per AST-006
+
+AST-006 states "An archived asset can no longer receive new prices." But `record_asset_price`, `update_asset_price`, and `delete_asset_price` in `docs/contracts/asset-contract.md` list only `NotFound` / `PriceNotFound` / `DatabaseError` — no `Archived` variant. The BE likely does not enforce the archived guard for these commands today (predates the MKT auto-fetch amendment).
+
+**Two paths**:
+
+- **If AST-006 intent is enforced**: add archive guards in `AssetService::record_asset_price` / `update_asset_price` / `delete_asset_price`, surface `Archived` variant in the contract for all three, add covering tests. Code change.
+- **If AST-006 intent is "price ops are independent of archive state"** (matching current behaviour): amend AST-006 in `docs/spec/asset.md` to carve out price recording, no contract change.
+
+Surfaced 2026-05-17 by `contract-reviewer` after the MKT auto-fetch amendment. Out of scope for that amendment but worth resolving before the next asset-domain feature.
+
+## (contracts) — Migrate account-contract.md and update-contract.md to wire-only framing
+
+`asset-contract.md` was migrated 2026-05-17 to the wire-only framing — no Rust-internal type names (composites, leaves, `*ApplicationError` / `*DomainError`) in the contract; each command's "Errors" column lists wire-flat variant codes only. The other two contracts still use the older "Error type | Reachable codes" two-column shape with Rust-internal attributions.
+
+**Scope per file**:
+
+- `docs/contracts/account-contract.md` — ~15 commands across Account CRUD + Holding/Transaction + Cash; header rework + per-command table cleanup
+- `docs/contracts/update-contract.md` — ~3 commands; small file
+
+**Approach** (per file): replace the multi-block error-model header (composites + leaves) with a short wire-only intro mirroring `asset-contract.md`; for each command row, collapse "Error type | Reachable codes" into a single "Errors" column listing variant codes (strip `(AssetApplicationError, ...)` / `(*DomainError)` attributions, keep spec-rule tags like `(MKT-043)` and contextual prose like `(when category_id missing)`). Also drop the `## Changelog` section — git history is the changelog.
+
+**Estimate**: ~1.5h for both files combined (mechanical doc editing).
+
+**Trigger**: bundle with the next session that touches either BC, or run as a standalone refactor PR.
+
+Surfaced 2026-05-17 during `/contract market-price`.
+
+## (mkt) — Surface fetch-task completion to FE for end-of-task user feedback
+
+`fetch_all_asset_prices` and `fetch_account_asset_prices` return synchronously on dispatch; per-asset results stream via `AssetPriceUpdated` events. The user has no signal for "task finished" — whether successfully, with partial failures, or with full provider outage. Per-asset failures are currently logged BE-side per MKT-114 with no FE surface; the task-level summary is the missing layer.
+
+**Proposed**: emit a task-completion signal (e.g. `FetchTaskCompleted { scope, ok: u32, skipped: u32 }`) and an FE snackbar/banner that summarizes — "12 prices updated, 3 skipped". Distinct from `AssetPriceUpdated` (which is per-asset) and complements MKT-115 (which currently only covers dispatch-time feedback).
+
+Surfaced 2026-05-17 during `/contract market-price` triage. Spec amendment to MKT-114 (or a new MKT-117+) will be needed.
+
 ## (asset) — Surface OpenFIGI 429 (rate-limit) distinctly in web lookup
 
 OpenFIGI's no-API-key tier caps `/v3/search` at 5 requests/minute. Today every 429 maps to `WebLookupApplicationError::NetworkError` → opaque "Network error while contacting the lookup service" — the user has no idea they just need to wait. Manifests as a fragile-feeling search UX during testing/iteration.

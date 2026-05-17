@@ -217,7 +217,7 @@ This section adds an automated price-update mechanism that complements the exist
 
 **MKT-110 — Symbol derivation (backend)**: The external provider symbol is derived from `Asset.reference` per ADR-008. When a valid symbol cannot be derived, the asset is skipped per MKT-114.
 
-**MKT-111 — Empty-holdings short-circuit (backend)**: When the task's scope contains no holding asset that is both active (quantity > 0) and has a derivable provider symbol (MKT-110), every fetch task (launch MKT-122, global refresh MKT-130, account refresh MKT-132) completes immediately with no external calls.
+**MKT-111 — Empty-holdings rejection (backend)**: When the task's scope contains no holding asset that is both active (quantity > 0) and has a derivable provider symbol (MKT-110), the fetch task is rejected with a specific error so the frontend can give feedback. No external calls are made. Applies to every fetch task path (launch MKT-122, global refresh MKT-130, account refresh MKT-132).
 
 **MKT-112 — `AssetPriceUpdated` on fetch success (backend)**: Every successful `AssetPrice` write produced by a fetch publishes `AssetPriceUpdated` per MKT-026.
 
@@ -228,7 +228,8 @@ This section adds an automated price-update mechanism that complements the exist
 **MKT-115 — Manual refresh feedback (frontend)**: For user-triggered fetch actions (global refresh MKT-130, account refresh MKT-131), the frontend surfaces feedback via snackbar:
 
 - On successful dispatch by the backend: a snackbar acknowledges the fetch has started (e.g. "Fetching prices…").
-- On in-flight error (MKT-113): a snackbar indicates a fetch is already in progress; the user's action is rejected without disrupting the ongoing fetch.
+- On in-flight rejection (MKT-113): a snackbar indicates a fetch is already in progress; the user's action is rejected without disrupting the ongoing fetch.
+- On no-fetchable-holdings rejection (MKT-111): a snackbar indicates there are no holdings to fetch.
 
 The launch auto-fetch (MKT-121) is silent (no snackbar).
 
@@ -341,9 +342,12 @@ App launch
     → frontend reads auto-fetch setting from FE store                      (MKT-120)
         if OFF (default): no launch call; user can still trigger refresh
         if ON: frontend calls auto-fetch task once per session             (MKT-121, fire-and-forget)
-    → backend handler dispatches background job and returns immediately   (MKT-122)
+    → backend (sync part):
+        ├─ if a fetch task is already running: reject (MKT-113)
+        ├─ load scope (active/derivable holdings)
+        ├─ if scope is empty: reject (MKT-111)
+        └─ dispatch background job, return                                 (MKT-122)
     → background job:
-        ├─ if no active/derivable holdings in scope: exit early           (MKT-111)
         for each active holding asset:
             ├─ derive provider symbol from Asset.reference                (MKT-110, ADR-008)
             ├─ if symbol unmappable OR provider fetch fails: skip silently (MKT-114, logged warning)
@@ -353,16 +357,22 @@ App launch
 
 User clicks "Refresh prices" on the global dashboard
     → frontend calls global refresh                                        (MKT-130, fire-and-forget)
-    → backend uses the same entry point as launch                          (MKT-122)
-    → events fire per MKT-112; UI updates reactively
+    → backend (sync part — same entry point as launch MKT-122):
+        ├─ if a fetch task is already running: reject (MKT-113)
+        ├─ load scope (active/derivable holdings across all accounts)
+        ├─ if scope is empty: reject (MKT-111)
+        └─ dispatch background job, return
+    → background job: same per-asset behavior as launch                    (MKT-110, MKT-114, MKT-112, MKT-116)
 
 User clicks "Refresh prices" on an account detail page
     → frontend calls account refresh with account_id                       (MKT-131, fire-and-forget)
-    → backend: rejects with specific error if account_id unknown          (MKT-132)
-    → backend dispatches a background job scoped to that account          (MKT-132)
-        if no active/derivable holdings in scope: exit early              (MKT-111)
-        system cash assets excluded                                        (MKT-116)
-        otherwise same per-asset behavior as launch                        (MKT-110, MKT-114, MKT-112)
+    → backend (sync part):
+        ├─ if account_id is unknown: reject (MKT-132)
+        ├─ if a fetch task is already running: reject (MKT-113)
+        ├─ load scope (active/derivable holdings for this account)
+        ├─ if scope is empty: reject (MKT-111)
+        └─ dispatch background job, return                                 (MKT-132)
+    → background job: same per-asset behavior as launch                    (MKT-110, MKT-114, MKT-112, MKT-116)
 
 In-flight guard (all fetch paths)
     → if any fetch task (launch, global, account) is already running,
@@ -372,6 +382,7 @@ User-triggered refresh feedback (FE)
     → button disabled + spinner while awaiting BE ack                     (MKT-133)
     → snackbar on dispatch success ("Fetching prices…")                   (MKT-115)
     → snackbar on in-flight rejection ("Fetch already in progress")       (MKT-115)
+    → snackbar on no-fetchable-holdings rejection ("No holdings to fetch") (MKT-115)
 ```
 
 ---
@@ -532,6 +543,7 @@ Each row in the price-history list (MKT-071) gains a small badge to the right of
 - **Refresh button awaiting ack**: button disabled + spinner until BE acknowledges dispatch (MKT-133).
 - **Refresh dispatched**: snackbar "Fetching prices…" (MKT-115); rows update reactively as the background job completes.
 - **Concurrent refresh attempt**: BE returns the in-flight error (MKT-113); snackbar "Fetch already in progress" (MKT-115); ongoing fetch undisturbed.
+- **Refresh on empty scope**: BE returns the no-fetchable-holdings rejection (MKT-111); snackbar "No holdings to fetch" (MKT-115).
 - **Account refresh on unknown account**: BE returns a specific error (MKT-132); FE surfaces it via the standard error pipeline.
 - **Asset with no provider coverage**: row's "Current Price" stays at "—" indefinitely. The user can enter a manual value via "Enter price" (MKT-010).
 - **System cash holding**: excluded from fetch scope (MKT-116); no warning, no badge change.
