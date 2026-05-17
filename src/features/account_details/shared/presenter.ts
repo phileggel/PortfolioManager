@@ -1,4 +1,9 @@
-import type { AccountDetailsResponse, ClosedHoldingDetail, HoldingDetail } from "@/bindings";
+import type {
+  AccountDetailsResponse,
+  AssetPriceSource,
+  ClosedHoldingDetail,
+  HoldingDetail,
+} from "@/bindings";
 import { microToFormatted } from "@/lib/microUnits";
 
 const DASH = "—";
@@ -38,7 +43,14 @@ export interface HoldingRowViewModel {
   performancePct: string;
   /** True when this row is the system Cash Holding (CSH-090). Drives the cash variant in HoldingRow. */
   isCash: boolean;
+  /** Staleness label for the current price (MKT-140); null when no price is recorded. */
+  staleness: StalenessLabel | null;
+  /** i18n key for the price source badge (MKT-142), or null when no price is recorded. */
+  sourceLabel: string | null;
 }
+
+/** i18n key + optional interpolation params for the price staleness label (MKT-140). */
+export type StalenessLabel = { key: string; params?: { days: number } };
 
 export interface ClosedHoldingRowViewModel {
   assetId: string;
@@ -74,6 +86,40 @@ export interface AccountSummaryViewModel {
   hasCashHolding: boolean;
 }
 
+/**
+ * MKT-140 — Returns an i18n descriptor for the staleness of the current price.
+ * `null` when no date is recorded; `{ key: "mkt.staleness_today" }` when the price is from today;
+ * `{ key: "mkt.staleness_days_ago", params: { days } }` otherwise.
+ *
+ * The caller renders via `t(label.key, label.params)`.
+ */
+export function formatStaleness(
+  currentPriceDate: string | null,
+  today: Date,
+): StalenessLabel | null {
+  if (currentPriceDate === null) return null;
+  const observed = new Date(`${currentPriceDate}T00:00:00`);
+  if (Number.isNaN(observed.getTime())) return null;
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const millisPerDay = 24 * 60 * 60 * 1000;
+  const dayDelta = Math.floor((startOfToday.getTime() - observed.getTime()) / millisPerDay);
+  if (dayDelta <= 0) return { key: "mkt.staleness_today" };
+  return { key: "mkt.staleness_days_ago", params: { days: dayDelta } };
+}
+
+/**
+ * MKT-141 / MKT-142 — Maps an AssetPriceSource to its i18n label key, or null when source is null.
+ */
+export function formatSource(source: AssetPriceSource | null): string | null {
+  if (source === null) return null;
+  switch (source) {
+    case "Manual":
+      return "mkt.source_manual";
+    case "Stooq":
+      return "mkt.source_stooq";
+  }
+}
+
 export function toHoldingRow(detail: HoldingDetail): HoldingRowViewModel {
   const isCash = isCashAsset(detail.asset_id);
   if (isCash) {
@@ -98,6 +144,8 @@ export function toHoldingRow(detail: HoldingDetail): HoldingRowViewModel {
       unrealizedPnlRaw: null,
       performancePct: "",
       isCash: true,
+      staleness: null,
+      sourceLabel: null,
     };
   }
   return {
@@ -120,6 +168,8 @@ export function toHoldingRow(detail: HoldingDetail): HoldingRowViewModel {
     performancePct:
       detail.performance_pct !== null ? `${microToFormatted(detail.performance_pct, 2)}%` : DASH,
     isCash: false,
+    staleness: formatStaleness(detail.current_price_date, new Date()),
+    sourceLabel: formatSource(detail.current_price_source),
   };
 }
 

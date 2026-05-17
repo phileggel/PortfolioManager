@@ -11,6 +11,7 @@ import { ConfirmationDialog } from "@/ui/components/modal/Dialog";
 import { ListModal } from "@/ui/components/modal/ListModal";
 import { PriceModal } from "../account_details_view/PriceModal";
 import { formatIsoDate } from "../shared/formatDate";
+import { formatSource } from "../shared/presenter";
 import { EditPriceForm } from "./EditPriceForm";
 import { usePriceHistory } from "./usePriceHistory";
 
@@ -131,36 +132,47 @@ export function PriceHistoryModal({ isOpen, onClose, holding }: PriceHistoryModa
                 <th className="m3-th text-right">
                   {t("price_history.column_price")} ({holding.asset_currency})
                 </th>
+                <th className="m3-th text-left">{t("price_history.column_source")}</th>
                 <th className="m3-th" />
               </tr>
             </thead>
             <tbody>
-              {prices.map((row) => (
-                <tr key={row.date} className="m3-tr">
-                  <td className="m3-td">{formatIsoDate(row.date)}</td>
-                  <td className="m3-td text-right tabular-nums">
-                    {microToFormatted(row.price, 2)}
-                  </td>
-                  <td className="m3-td">
-                    <div className="flex items-center gap-1 justify-end">
-                      <IconButton
-                        icon={<Pencil size={14} />}
-                        size="sm"
-                        aria-label={t("price_history.action_edit")}
-                        onClick={() => setEditTarget(row)}
-                      />
-                      <IconButton
-                        icon={<Trash2 size={14} />}
-                        size="sm"
-                        variant="error"
-                        aria-label={t("price_history.action_delete")}
-                        onClick={() => setDeleteTarget(row)}
-                        disabled={deletingDate === row.date}
-                      />
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {prices.map((row) => {
+                const sourceLabel = formatSource(row.source);
+                return (
+                  <tr key={row.date} className="m3-tr">
+                    <td className="m3-td">{formatIsoDate(row.date)}</td>
+                    <td className="m3-td text-right tabular-nums">
+                      {microToFormatted(row.price, 2)}
+                    </td>
+                    <td className="m3-td">
+                      {sourceLabel && (
+                        <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-m3-surface-container-highest text-m3-on-surface-variant">
+                          {t(sourceLabel)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="m3-td">
+                      <div className="flex items-center gap-1 justify-end">
+                        <IconButton
+                          icon={<Pencil size={14} />}
+                          size="sm"
+                          aria-label={t("price_history.action_edit")}
+                          onClick={() => setEditTarget(row)}
+                        />
+                        <IconButton
+                          icon={<Trash2 size={14} />}
+                          size="sm"
+                          variant="error"
+                          aria-label={t("price_history.action_delete")}
+                          onClick={() => setDeleteTarget(row)}
+                          disabled={deletingDate === row.date}
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

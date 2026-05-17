@@ -8,34 +8,34 @@ VaultCompass is a single-user Tauri 2 desktop app. React 19 + TypeScript on the 
 
 ## Stack
 
-| Layer | Tech |
-| ----- | ---- |
-| Desktop shell | Tauri 2 (single executable) |
-| Frontend | React 19 + TypeScript, Zustand store, react-i18next |
-| Backend | Rust, async via tokio, SQLite via sqlx (compile-time query checking) |
-| IPC | Specta-generated bindings — `src/bindings.ts` (auto-generated, do not edit; regenerate via `just generate-types`) |
+| Layer         | Tech                                                                                                              |
+| ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Desktop shell | Tauri 2 (single executable)                                                                                       |
+| Frontend      | React 19 + TypeScript, Zustand store, react-i18next                                                               |
+| Backend       | Rust, async via tokio, SQLite via sqlx (compile-time query checking)                                              |
+| IPC           | Specta-generated bindings — `src/bindings.ts` (auto-generated, do not edit; regenerate via `just generate-types`) |
 
 ---
 
 ## Where to look
 
-| You need | Read |
-| --- | --- |
-| Backend implementation patterns (row mapping, orchestrator shape, etc.) | [`docs/backend-patterns.md`](docs/backend-patterns.md) |
-| Generic DDD rules (kit-managed) | [`docs/backend-rules.md`](docs/backend-rules.md), [`docs/ddd-reference.md`](docs/ddd-reference.md) |
-| Intentional divergences from textbook DDD | [`docs/ddd-divergences.md`](docs/ddd-divergences.md) |
-| Error model (per-BC enum + per-use-case composite) | [`docs/error-model.md`](docs/error-model.md) |
-| Frontend rules + visual proof workflow | [`docs/frontend-rules.md`](docs/frontend-rules.md), [`docs/frontend-visual-proof.md`](docs/frontend-visual-proof.md) |
-| i18n + a11y rules | [`docs/i18n-rules.md`](docs/i18n-rules.md) |
-| E2E + test conventions | [`docs/e2e-rules.md`](docs/e2e-rules.md), [`docs/test_convention.md`](docs/test_convention.md) |
-| Business rules per feature | [`docs/spec/{feature}.md`](docs/spec/) |
-| Architectural decisions | [`docs/adr/{NNN}-*.md`](docs/adr/) |
-| Domain terms (canonical) | [`docs/ubiquitous-language.md`](docs/ubiquitous-language.md) |
-| Tech debt | [`docs/techdebt.md`](docs/techdebt.md) |
-| Open items | [`docs/todo.md`](docs/todo.md) |
-| Roadmap | [`docs/roadmap.md`](docs/roadmap.md) |
-| Design system tokens | [`docs/design-system.md`](docs/design-system.md), [`docs/theme.md`](docs/theme.md) |
-| Kit-managed tools | [`.claude/kit-tools.md`](.claude/kit-tools.md) |
+| You need                                                                | Read                                                                                                                 |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Backend implementation patterns (row mapping, orchestrator shape, etc.) | [`docs/backend-patterns.md`](docs/backend-patterns.md)                                                               |
+| Generic DDD rules (kit-managed)                                         | [`docs/backend-rules.md`](docs/backend-rules.md), [`docs/ddd-reference.md`](docs/ddd-reference.md)                   |
+| Intentional divergences from textbook DDD                               | [`docs/ddd-divergences.md`](docs/ddd-divergences.md)                                                                 |
+| Error model (per-BC enum + per-use-case composite)                      | [`docs/error-model.md`](docs/error-model.md)                                                                         |
+| Frontend rules + visual proof workflow                                  | [`docs/frontend-rules.md`](docs/frontend-rules.md), [`docs/frontend-visual-proof.md`](docs/frontend-visual-proof.md) |
+| i18n + a11y rules                                                       | [`docs/i18n-rules.md`](docs/i18n-rules.md)                                                                           |
+| E2E + test conventions                                                  | [`docs/e2e-rules.md`](docs/e2e-rules.md), [`docs/test_convention.md`](docs/test_convention.md)                       |
+| Business rules per feature                                              | [`docs/spec/{feature}.md`](docs/spec/)                                                                               |
+| Architectural decisions                                                 | [`docs/adr/{NNN}-*.md`](docs/adr/)                                                                                   |
+| Domain terms (canonical)                                                | [`docs/ubiquitous-language.md`](docs/ubiquitous-language.md)                                                         |
+| Tech debt                                                               | [`docs/techdebt.md`](docs/techdebt.md)                                                                               |
+| Open items                                                              | [`docs/todo.md`](docs/todo.md)                                                                                       |
+| Roadmap                                                                 | [`docs/roadmap.md`](docs/roadmap.md)                                                                                 |
+| Design system tokens                                                    | [`docs/design-system.md`](docs/design-system.md), [`docs/theme.md`](docs/theme.md)                                   |
+| Kit-managed tools                                                       | [`.claude/kit-tools.md`](.claude/kit-tools.md)                                                                       |
 
 For "what does use case X do?" → read `src-tauri/src/use_cases/{name}/mod.rs` (module doc) and its spec at `docs/spec/`.
 For "what does feature X do?" → read `src/features/{name}/` and its spec.
@@ -82,13 +82,13 @@ lib.rs                composition root — wires services, use cases, dispatcher
 
 Backend publishes events on every state change. Frontend listens via a single `events.event.listen()` subscription in `src/lib/store.ts:init()` and dispatches to the right fetcher.
 
-| Event | Published by | Frontend re-fetches |
-| --- | --- | --- |
-| `AssetUpdated` | `context/asset/` writes | `assets` |
-| `CategoryUpdated` | `context/asset/` category writes | `categories` |
-| `AssetPriceUpdated` | `context/asset/` price writes + `use_cases/asset_price_fetch/` | `account_details` (per-page) |
-| `AccountUpdated` | `context/account/` account writes | `accounts` |
-| `TransactionUpdated` | `context/account/` holding / transaction writes | `account_details`, `transactions` (per-page) |
+| Event                | Published by                                                   | Frontend re-fetches                          |
+| -------------------- | -------------------------------------------------------------- | -------------------------------------------- |
+| `AssetUpdated`       | `context/asset/` writes                                        | `assets`                                     |
+| `CategoryUpdated`    | `context/asset/` category writes                               | `categories`                                 |
+| `AssetPriceUpdated`  | `context/asset/` price writes + `use_cases/asset_price_fetch/` | `account_details` (per-page)                 |
+| `AccountUpdated`     | `context/account/` account writes                              | `accounts`                                   |
+| `TransactionUpdated` | `context/account/` holding / transaction writes                | `account_details`, `transactions` (per-page) |
 
 Adding a new event: declare the variant in `core/event_bus/event.rs`, publish from the service after persistence (`bus.publish(Event::Foo)`), subscribe in the relevant feature hook.
 

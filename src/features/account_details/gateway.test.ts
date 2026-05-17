@@ -299,6 +299,62 @@ describe("accountDetailsGateway — recordDeposit (CSH-022)", () => {
   });
 });
 
+describe("accountDetailsGateway — fetchAccountAssetPrices (MKT-131, MKT-132)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // MKT-131 / MKT-132 — happy path: dispatch acknowledged, returns null
+  it("fetchAccountAssetPrices returns null on successful dispatch", async () => {
+    mockInvoke.mockResolvedValue(null);
+    const result = await accountDetailsGateway.fetchAccountAssetPrices("account-1");
+    expect(result).toEqual({ status: "ok", data: null });
+    expect(mockInvoke).toHaveBeenCalledWith("fetch_account_asset_prices", {
+      accountId: "account-1",
+    });
+  });
+
+  // MKT-132 — unknown account rejection
+  it("fetchAccountAssetPrices surfaces AccountNotFound for unknown account_id", async () => {
+    const error = { code: "AccountNotFound", account_id: "no-such" };
+    mockInvoke.mockRejectedValue(error);
+    const result = await accountDetailsGateway.fetchAccountAssetPrices("no-such");
+    expect(result).toEqual({ status: "error", error });
+  });
+
+  // MKT-113 — in-flight guard: FetchAlreadyRunning
+  it("fetchAccountAssetPrices surfaces FetchAlreadyRunning when another fetch is in progress", async () => {
+    const error = { code: "FetchAlreadyRunning" };
+    mockInvoke.mockRejectedValue(error);
+    const result = await accountDetailsGateway.fetchAccountAssetPrices("account-1");
+    expect(result).toEqual({ status: "error", error });
+  });
+
+  // MKT-111 — no fetchable holdings for this account
+  it("fetchAccountAssetPrices surfaces NoFetchableHoldings when account scope is empty", async () => {
+    const error = { code: "NoFetchableHoldings" };
+    mockInvoke.mockRejectedValue(error);
+    const result = await accountDetailsGateway.fetchAccountAssetPrices("account-1");
+    expect(result).toEqual({ status: "error", error });
+  });
+
+  // DatabaseError from asset or account BC
+  it("fetchAccountAssetPrices surfaces DatabaseError on infrastructure failure", async () => {
+    const error = { code: "DatabaseError" };
+    mockInvoke.mockRejectedValue(error);
+    const result = await accountDetailsGateway.fetchAccountAssetPrices("account-1");
+    expect(result).toEqual({ status: "error", error });
+  });
+
+  // UnknownError catch-all
+  it("fetchAccountAssetPrices surfaces UnknownError on unexpected runtime failure", async () => {
+    const error = { code: "UnknownError" };
+    mockInvoke.mockRejectedValue(error);
+    const result = await accountDetailsGateway.fetchAccountAssetPrices("account-1");
+    expect(result).toEqual({ status: "error", error });
+  });
+});
+
 describe("accountDetailsGateway — recordWithdrawal (CSH-032)", () => {
   beforeEach(() => {
     vi.clearAllMocks();

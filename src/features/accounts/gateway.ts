@@ -5,6 +5,7 @@ import {
   type AccountDeletionSummary,
   type CreateAccountDTO,
   commands,
+  type FetchAllAssetPricesError,
   type Result,
   type UpdateAccountDTO,
 } from "../../bindings";
@@ -34,5 +35,9 @@ export const accountGateway = {
     accountId: string,
   ): Promise<Result<AccountDeletionSummary, AccountApplicationError>> {
     return await commands.getAccountDeletionSummary(accountId);
+  },
+
+  async fetchAllAssetPrices(): Promise<Result<null, FetchAllAssetPricesError>> {
+    return commands.fetchAllAssetPrices();
   },
 };

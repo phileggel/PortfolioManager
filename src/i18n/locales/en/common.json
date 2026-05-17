@@ -92,6 +92,7 @@
   "account": {
     "title": "Accounts",
     "fab_label": "Add account",
+    "refresh_prices": "Refresh prices",
     "search_placeholder": "Search accounts...",
     "column_name": "Name",
     "column_frequency": "Frequency",
@@ -180,7 +181,9 @@
     "language_en": "English",
     "language_fr": "Français",
     "auto_record_price_label": "Automatically record transaction price as market price",
-    "auto_record_price_description": "When enabled, new transaction forms will have the auto-record checkbox pre-checked."
+    "auto_record_price_description": "When enabled, new transaction forms will have the auto-record checkbox pre-checked.",
+    "auto_fetch_label": "Automatically fetch prices on launch",
+    "auto_fetch_description": "When enabled, the app fetches current prices from Stooq for all active holdings every time it starts."
   },
   "shell": {
     "sidebar_collapse": "Collapse menu",
@@ -284,7 +287,17 @@
     "action_open_balance": "Open Balance",
     "action_deposit": "Deposit",
     "action_withdraw": "Withdraw",
+    "action_refresh_prices": "Refresh prices",
     "total_global_value": "Global Value"
+  },
+  "mkt": {
+    "fetch_dispatched": "Fetching prices…",
+    "fetch_already_running": "A price fetch is already running.",
+    "fetch_no_holdings": "No holdings to fetch prices for.",
+    "source_manual": "Manual",
+    "source_stooq": "Stooq",
+    "staleness_today": "Updated today",
+    "staleness_days_ago": "Updated {{days}}d ago"
   },
   "cash": {
     "deposit_modal_title": "Record a deposit",
@@ -322,6 +335,7 @@
     "empty": "No prices recorded",
     "column_date": "Date",
     "column_price": "Price",
+    "column_source": "Source",
     "column_actions": "Actions",
     "action_edit": "Edit price",
     "action_delete": "Delete price",
