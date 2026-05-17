@@ -20,13 +20,14 @@ All financial values are stored as `i64` micro-units per [ADR-001](../adr/001-us
 
 Represents a manually recorded market price for a financial asset on a specific date. Owned by the `asset` bounded context.
 
-| Field      | Business meaning                                                                   |
-| ---------- | ---------------------------------------------------------------------------------- |
-| `asset_id` | The asset whose market price this record describes.                                |
-| `date`     | The calendar date this price observation applies to (ISO 8601, e.g. `2026-04-26`). |
-| `price`    | Market price per unit in the asset's native currency (i64 micros, ADR-001).        |
+| Field      | Business meaning                                                                                                                                                                                                                                                                                                       |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `asset_id` | The asset whose market price this record describes.                                                                                                                                                                                                                                                                    |
+| `date`     | The calendar date this price observation applies to (ISO 8601, e.g. `2026-04-26`). Date is the user's local calendar date at write time, not the asset market's timezone.                                                                                                                                              |
+| `price`    | Market price per unit in the asset's native currency (i64 micros, ADR-001).                                                                                                                                                                                                                                            |
+| `source`   | Provenance of this price record (see MKT-100 for variants). `Manual` for user-entered values (including those auto-recorded from a transaction's `record_price=true` flag); a provider name (e.g. `Stooq`) for auto-fetched values. Metadata for traceability; does not influence read/write precedence (per ADR-012). |
 
-> The combination `(asset_id, date)` is unique: only one price per asset per day. Recording a second price for the same `(asset_id, date)` pair overwrites the first (MKT-025). Correction by re-recording remains valid. Standalone edit and delete of individual entries are also supported via the price history view (MKT-070+).
+> The combination `(asset_id, date)` is unique: only one price per asset per day. Recording a second price for the same `(asset_id, date)` pair overwrites the first (MKT-025), regardless of source (per ADR-012). Correction by re-recording remains valid. Standalone edit and delete of individual entries are also supported via the price history view (MKT-070+).
 
 ### HoldingDetail (extended)
 
@@ -74,7 +75,7 @@ The `AccountDetailsResponse` DTO gains one new field.
 
 **MKT-024 — i64 storage (backend)**: The price is stored as i64 micro-units per ADR-001. The frontend transmits the human-readable decimal; the backend converts to micros at the IPC boundary.
 
-**MKT-025 — Upsert by (asset, date) (backend)**: If a price record already exists for the same `(asset_id, date)` pair, it is overwritten with the new value. Otherwise a new record is created. This is transparent to the user; the form behaves identically for new and existing entries.
+**MKT-025 — Upsert by (asset, date) (backend)**: If a price record already exists for the same `(asset_id, date)` pair, it is overwritten with the new value regardless of either row's `source` (per ADR-012; latest-write-wins). Otherwise a new record is created. This is transparent to the user; the form behaves identically for new and existing entries. The `source` value written by this command is governed by MKT-101.
 
 **MKT-026 — AssetPriceUpdated event (backend)**: After a successful upsert, the backend publishes an `AssetPriceUpdated` event on the event bus. This event carries no payload; it is a bare signal consistent with `AssetUpdated`, `CategoryUpdated`, `AccountUpdated`, and `TransactionUpdated`. It is published by the `asset` bounded context per B4. The Tauri frontend event discriminant string is `"AssetPriceUpdated"` — the variant name is forwarded as-is by the event forwarder, matching the convention for all existing events.
 
@@ -86,7 +87,7 @@ The `AccountDetailsResponse` DTO gains one new field.
 
 ### Display in Account Details (030–039)
 
-**MKT-030 — Current price column (frontend + backend)**: The Account Details active holdings table gains a "Current Price" column. For each holding row, it displays `HoldingDetail.current_price` formatted in the asset's native currency. When `current_price_date` is available, it is shown as a secondary label (e.g. "as of 2026-04-25") to indicate the age of the data.
+**MKT-030 — Current price column (frontend + backend)**: The Account Details active holdings table gains a "Current Price" column. For each holding row, it displays `HoldingDetail.current_price` formatted in the asset's native currency. When `current_price_date` is available, it is shown as a secondary label indicating the age of the data — formatted as "Updated today" when the date equals the user's local date, or "Updated Nd ago" otherwise. See MKT-140 for the staleness-label rules introduced alongside auto-fetch.
 
 **MKT-031 — Latest price resolution (backend)**: The `AccountDetailsUseCase` retrieves the most recently dated `AssetPrice` for each active holding's asset via `AssetService`, per ADR-004 (use cases inject services, not repositories). If no record exists for an asset, `current_price` and `current_price_date` are `None`. A failure in the price lookup does not abort the overall `get_account_details` response; it degrades gracefully by returning `None` for the affected holding's price fields.
 
@@ -192,6 +193,73 @@ This section extends the buy/sell transaction flow defined in `docs/spec/financi
 
 **MKT-096 — Delete error feedback (frontend)**: If the delete request fails, an error banner is shown at the top of the price history list. The view remains open and the targeted entry is not removed from the list. The user may retry.
 
+### Source field on AssetPrice (100–109)
+
+These rules apply to all paths that write `AssetPrice` (manual entry MKT-020+, transaction auto-record MKT-050+, and auto-fetch — see "Auto-Fetch from External Provider").
+
+**MKT-100 — `AssetPriceSource` enum (backend)**: `AssetPrice.source` is of type `AssetPriceSource`, with variants `Manual | Stooq` in v1 (`Finnhub` added when the KEY spec ships). Exposed on the frontend wire surface.
+
+**MKT-101 — `source: Manual` on user-driven paths (backend)**: Every user-driven write sets `source = Manual` — both `record_asset_price` (manual entry MKT-020+, transaction auto-record MKT-050+) and `update_asset_price` (price-history edit MKT-083, MKT-084). An auto-fetched row edited via the price-history flow therefore becomes `Manual`. The frontend never passes a source value.
+
+**MKT-102 — `source: Stooq` on fetched paths (backend)**: Every write produced by a fetch path (launch MKT-122, global refresh MKT-130, account refresh MKT-132) sets `source = Stooq` (and the corresponding provider variant when more are added per MKT-100).
+
+### Auto-Fetch from External Provider (110–149)
+
+This section adds an automated price-update mechanism that complements the existing manual entry paths (MKT-020+, MKT-050+). Auto-fetch retrieves current prices from an external provider on app launch and on user demand. The choice of external provider is captured in ADR-008 (Stooq primary; future Finnhub fallback per the KEY spec, deferred to a follow-up phase).
+
+#### Fetch task definitions
+
+- **Auto-fetch**: a task called at application launch.
+- **Global refresh**: a task manually triggered by the user to refresh all values (button on global dashboard).
+- **Account refresh**: a task triggered by the user on an account detail page to refresh all values for that account (button on account detail).
+
+#### Shared behaviors (110–119)
+
+**MKT-110 — Symbol derivation (backend)**: The external provider symbol is derived from `Asset.reference` per ADR-008. When a valid symbol cannot be derived, the asset is skipped per MKT-114.
+
+**MKT-111 — Empty-holdings short-circuit (backend)**: When the task's scope contains no holding asset that is both active (quantity > 0) and has a derivable provider symbol (MKT-110), every fetch task (launch MKT-122, global refresh MKT-130, account refresh MKT-132) completes immediately with no external calls.
+
+**MKT-112 — `AssetPriceUpdated` on fetch success (backend)**: Every successful `AssetPrice` write produced by a fetch publishes `AssetPriceUpdated` per MKT-026.
+
+**MKT-113 — In-flight guard, one fetch at a time (backend)**: Only one fetch task may run at a time across all three paths (launch MKT-122, global refresh MKT-130, account refresh MKT-132). If a fetch task is already running, a subsequent task call is rejected with a specific error.
+
+**MKT-114 — Asset silently skipped on per-asset failure (backend)**: In a fetch task (launch MKT-122, global refresh MKT-130, account refresh MKT-132), an individual asset is silently skipped (no row written, no error surfaced) when either its symbol cannot be derived OR the provider fetch fails (network/HTTP/parse error, logged as warning). The task continues with the remaining assets.
+
+**MKT-115 — Manual refresh feedback (frontend)**: For user-triggered fetch actions (global refresh MKT-130, account refresh MKT-131), the frontend surfaces feedback via snackbar:
+
+- On successful dispatch by the backend: a snackbar acknowledges the fetch has started (e.g. "Fetching prices…").
+- On in-flight error (MKT-113): a snackbar indicates a fetch is already in progress; the user's action is rejected without disrupting the ongoing fetch.
+
+The launch auto-fetch (MKT-121) is silent (no snackbar).
+
+**MKT-116 — System cash assets excluded (backend)**: System cash assets (per CSH spec, identified by their `system-cash-*` reference) are excluded from every fetch task scope (launch MKT-122, global refresh MKT-130, account refresh MKT-132). They have no external market price.
+
+#### Auto-fetch (120–125)
+
+**MKT-120 — Auto-fetch setting (frontend)**: An auto-fetch setting is present on the Settings page. The setting defaults to `OFF` and persists across sessions on the current device. When `ON`, the auto-fetch feature is enabled; when `OFF`, it is disabled.
+
+**MKT-121 — Auto-fetch call (frontend)**: If the setting (MKT-120) is `ON`, the frontend calls the auto-fetch task once per session, after initial app mount. The call is fire-and-forget (the frontend does not await the backend response).
+
+**MKT-122 — Auto-fetch start (backend)**: The auto-fetch task scope is all active holdings across all accounts (subject to MKT-111, MKT-116). Auto-fetch is acknowledged synchronously; per-asset results are signaled via `AssetPriceUpdated` (MKT-112).
+
+#### Manual refresh (130–134)
+
+**MKT-130 — Global refresh (frontend)**: The global refresh action is triggered by the user on the global dashboard. It uses the same backend entry point as the auto-fetch call (MKT-122) and therefore shares its scope (all active holdings across all accounts). The call is fire-and-forget.
+
+**MKT-131 — Account refresh (frontend)**: The account refresh action is triggered by the user on an account detail page. The account identifier is transmitted to the backend. The call is fire-and-forget.
+
+**MKT-132 — Account refresh (backend)**: Account refresh on an unknown account is rejected with a specific error. Otherwise account refresh is acknowledged synchronously; per-asset results are signaled via `AssetPriceUpdated` (MKT-112). The task scope is the active / derivable holdings for the specified account (subject to MKT-111, MKT-116).
+
+**MKT-133 — Refresh button in-flight state (frontend)**: While a manual refresh is being acknowledged (between the user click and the dispatch-success snackbar of MKT-115, or the in-flight error snackbar), the corresponding refresh button is disabled and displays a spinner to prevent double-clicks.
+
+#### Display (140–149)
+
+**MKT-140 — Staleness indicator (frontend)**: The "Current Price" column's secondary label shows "Updated today" when the most recent `AssetPrice.date` for the asset equals today's local date, "Updated Nd ago" otherwise (N integer day delta), "—" when no price exists.
+
+**MKT-141 — Source badge in price history (frontend)**: Each row in the price-history modal (MKT-071) displays a badge with the row's `source` value.
+
+**MKT-142 — Source badge in Current Price column (frontend)**: The Account Details "Current Price" column displays a badge alongside the price (or near the staleness label MKT-140) showing the source of the most recent `AssetPrice` record. Same styling as MKT-141.
+
 ---
 
 ## Workflow
@@ -263,6 +331,47 @@ Buy/Sell transaction form (create or edit)
             on success: asset context publishes AssetPriceUpdated         (MKT-057, B8)
             on failure: logged as warning, silently dropped               (MKT-056, MKT-062)
         → Account Details re-fetches via AssetPriceUpdated                (MKT-036)
+```
+
+### Workflow — Auto-fetch on launch and on user demand (MKT-100+)
+
+```
+App launch
+    → frontend completes initial mount
+    → frontend reads auto-fetch setting from FE store                      (MKT-120)
+        if OFF (default): no launch call; user can still trigger refresh
+        if ON: frontend calls auto-fetch task once per session             (MKT-121, fire-and-forget)
+    → backend handler dispatches background job and returns immediately   (MKT-122)
+    → background job:
+        ├─ if no active/derivable holdings in scope: exit early           (MKT-111)
+        for each active holding asset:
+            ├─ derive provider symbol from Asset.reference                (MKT-110, ADR-008)
+            ├─ if symbol unmappable OR provider fetch fails: skip silently (MKT-114, logged warning)
+            └─ on success: upsert (asset_id, today, price, source=Stooq)  (MKT-025, MKT-102)
+                          publish AssetPriceUpdated                       (MKT-112)
+    → subscribers re-fetch on AssetPriceUpdated                            (MKT-036)
+
+User clicks "Refresh prices" on the global dashboard
+    → frontend calls global refresh                                        (MKT-130, fire-and-forget)
+    → backend uses the same entry point as launch                          (MKT-122)
+    → events fire per MKT-112; UI updates reactively
+
+User clicks "Refresh prices" on an account detail page
+    → frontend calls account refresh with account_id                       (MKT-131, fire-and-forget)
+    → backend: rejects with specific error if account_id unknown          (MKT-132)
+    → backend dispatches a background job scoped to that account          (MKT-132)
+        if no active/derivable holdings in scope: exit early              (MKT-111)
+        system cash assets excluded                                        (MKT-116)
+        otherwise same per-asset behavior as launch                        (MKT-110, MKT-114, MKT-112)
+
+In-flight guard (all fetch paths)
+    → if any fetch task (launch, global, account) is already running,
+      a subsequent task call is rejected with a specific error            (MKT-113)
+
+User-triggered refresh feedback (FE)
+    → button disabled + spinner while awaiting BE ack                     (MKT-133)
+    → snackbar on dispatch success ("Fetching prices…")                   (MKT-115)
+    → snackbar on in-flight rejection ("Fetch already in progress")       (MKT-115)
 ```
 
 ---
@@ -394,10 +503,68 @@ Modal or side panel listing all recorded `AssetPrice` entries for the selected a
 7. Backend deletes the 2026-04-28 record and upserts at 2026-04-27 (MKT-084).
 8. Edit form closes; history list refreshes; snackbar confirms (MKT-086).
 
+### UX Draft — Auto-Fetch from External Provider (MKT-100+)
+
+#### Settings page
+
+The existing Settings page (host of MKT-050's transaction auto-record toggle) gains a second toggle: "Automatically fetch prices on launch" (MKT-120). Default OFF. Sits above the existing transaction-related toggle to group all price-related settings together.
+
+#### Global dashboard — Refresh action
+
+A "Refresh prices" button is added to the global dashboard, placed in the page header. Pressing it triggers the global refresh (MKT-130). The button is disabled with a spinner while the refresh is being acknowledged (MKT-133); on dispatch, a snackbar acknowledges the fetch (MKT-115). Per-asset failures during the fetch degrade silently per MKT-114. On in-flight collision (MKT-113), a snackbar indicates a fetch is already in progress (MKT-115); the user's action is rejected without disrupting the ongoing fetch.
+
+#### Account Details — Refresh action
+
+A "Refresh prices" button is added to the Account Details view, placed in the page header. Pressing it triggers the account refresh (MKT-131) scoped to that account's holdings. Same feedback and in-flight semantics as the global refresh (MKT-113, MKT-114, MKT-115, MKT-133).
+
+#### Account Details — Current Price column secondary label and source badge
+
+The "Current Price" column displays the price as before (MKT-030), with a secondary label below showing the staleness phrasing per MKT-140: "Updated today" or "Updated Nd ago". A small source badge (per MKT-142) sits alongside the price or near the staleness label so the user can tell auto-fetched values from manual entries without opening the price history. Subdued typography on both label and badge to avoid competing with the price value itself.
+
+#### Price-history modal — Source badge
+
+Each row in the price-history list (MKT-071) gains a small badge to the right of the date showing the row's `source` value: "Manual", "Stooq", etc. (MKT-141). The badge uses neutral styling — it's informational, not a status pill.
+
+#### States
+
+- **Initial launch with auto-fetch OFF (default)**: the dashboard renders with whatever stored prices exist; missing prices show "—". The user can hit "Refresh prices" on the global dashboard or on an account detail page to fetch on demand.
+- **Initial launch with auto-fetch ON (user-enabled)**: prices appear as the background job completes; per-row updates are reactive via `AssetPriceUpdated` events. No global spinner or progress UI — the UI fills in row-by-row as data arrives.
+- **Refresh button awaiting ack**: button disabled + spinner until BE acknowledges dispatch (MKT-133).
+- **Refresh dispatched**: snackbar "Fetching prices…" (MKT-115); rows update reactively as the background job completes.
+- **Concurrent refresh attempt**: BE returns the in-flight error (MKT-113); snackbar "Fetch already in progress" (MKT-115); ongoing fetch undisturbed.
+- **Account refresh on unknown account**: BE returns a specific error (MKT-132); FE surfaces it via the standard error pipeline.
+- **Asset with no provider coverage**: row's "Current Price" stays at "—" indefinitely. The user can enter a manual value via "Enter price" (MKT-010).
+- **System cash holding**: excluded from fetch scope (MKT-116); no warning, no badge change.
+
+#### User flow — first launch of the day (auto-fetch enabled by the user)
+
+1. User opens the app.
+2. Frontend mounts. Auto-fetch setting is `ON` (MKT-120), so the frontend calls the auto-fetch task (MKT-121). Backend returns immediately and dispatches the background job (MKT-122).
+3. The dashboard renders immediately with stored prices (likely yesterday's for active holdings).
+4. As each asset's fetch completes in the backend job, `AssetPriceUpdated` events fire; the Current Price column updates reactively; the staleness label flips to "Updated today".
+5. User sees a fully refreshed dashboard within seconds (typical case: ~5–50 holdings).
+
+#### User flow — enable auto-fetch
+
+1. User opens Settings.
+2. User toggles "Automatically fetch prices on launch" to ON.
+3. Setting persists in the FE store; no immediate fetch (the launch trigger fires once per session at mount).
+4. On the next launch, the auto-fetch task runs (MKT-121).
+5. User can still hit "Refresh prices" (global or account) at any time to fetch on demand.
+
+#### User flow — manual override of a fetched value
+
+1. Auto-fetch writes `AssetPrice(AAPL, 2026-05-17) = $192, source: Stooq`.
+2. User notices the "Stooq" badge and disagrees with the value (e.g. corporate-action edge case).
+3. User opens "Enter price" or "Price history", enters $189.
+4. Backend writes `AssetPrice(AAPL, 2026-05-17) = $189, source: Manual` — overwrites the Stooq row (per ADR-012; MKT-025, MKT-101).
+5. Account Details shows $189; the badge becomes "Manual".
+6. On the next launch, auto-fetch will overwrite $189 with the new day's Stooq value (per ADR-012). The user's correction is for today; tomorrow brings tomorrow's price.
+
 ---
 
 ## Open Questions
 
 - [x] **OQ-1** — Should the standalone "Enter price" action on the holding row (MKT-010) be removed? **Decision: keep both.** MKT-010 remains as a fast path for the common case (record today's price without opening history). MKT-070 adds a second "Price history" action for review and corrections. The holding row will have five actions: Buy, Sell, Enter price, Price history, and the transaction magnifier.
 
-None — all questions have been resolved.
+None — all open questions have a recorded decision.
