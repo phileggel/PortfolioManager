@@ -91,11 +91,11 @@ If everything is "Nothing":
 
 Otherwise, output a single table:
 
-| # | Bucket | Item | Evidence |
-|---|---|---|---|
-| 1 | Add | One-line rule statement | Commit / memory entry / reviewer finding from this session + reference to prior session |
-| 2 | Trim | Existing rule to remove or rewrite | Contradiction or redundancy observed (cite specifically) |
-| 3 | No-add memory | Rule going to memory only | Why it's premature for CLAUDE.md |
+| #   | Bucket        | Item                               | Evidence                                                                                |
+| --- | ------------- | ---------------------------------- | --------------------------------------------------------------------------------------- |
+| 1   | Add           | One-line rule statement            | Commit / memory entry / reviewer finding from this session + reference to prior session |
+| 2   | Trim          | Existing rule to remove or rewrite | Contradiction or redundancy observed (cite specifically)                                |
+| 3   | No-add memory | Rule going to memory only          | Why it's premature for CLAUDE.md                                                        |
 
 End with: `Confirm Add/Trim entries to apply.`
 

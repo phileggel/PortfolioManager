@@ -20,17 +20,18 @@ The script self-updates before syncing: if `sync-config.sh` itself changed in th
 
 ## Convention Docs
 
-The kit syncs 7 convention docs into `docs/` on first sync (copy-once — never overwrites project customizations). They are the authoritative reference for the stack's coding standards and are read directly by review and test agents:
+The kit syncs 8 convention docs into `docs/` on first sync (copy-once — never overwrites project customizations). They are the authoritative reference for the stack's coding standards and are read directly by review and test agents:
 
-| Doc                        | What it governs                          |
-| -------------------------- | ---------------------------------------- |
-| `backend-rules.md`         | Rust DDD structure and patterns          |
-| `frontend-rules.md`        | React feature layout, gateway pattern    |
-| `e2e-rules.md`             | WebdriverIO testability conventions      |
-| `test_convention.md`       | Testing strategy across all tiers        |
-| `ddd-reference.md`         | DDD concept glossary                     |
-| `i18n-rules.md`            | Translation structure and key naming     |
-| `frontend-visual-proof.md` | Screenshot/video workflow for UI changes |
+| Doc                        | What it governs                                      |
+| -------------------------- | ---------------------------------------------------- |
+| `backend-rules.md`         | Rust DDD structure and patterns                      |
+| `frontend-rules.md`        | React feature layout, gateway pattern                |
+| `e2e-rules.md`             | WebdriverIO testability conventions                  |
+| `test_convention.md`       | Testing strategy across all tiers                    |
+| `ddd-reference.md`         | DDD concept glossary                                 |
+| `error-model.md`           | Typed-error contract (flat `{BC}Error` + composites) |
+| `i18n-rules.md`            | Translation structure and key naming                 |
+| `frontend-visual-proof.md` | Screenshot/video workflow for UI changes             |
 
 **Do not edit these files directly.** Update them in the kit and re-sync. Rule numbers (B1, F3, etc.) are stable — never renumber.
 
@@ -155,6 +156,19 @@ If you need to extend a kit agent's behaviour:
 1. Create a new local agent that invokes or wraps the kit agent's logic.
 2. Add project-context or domain-specific validation.
 3. Document it in your project's local `.claude/` directory.
+
+### Authoring rule — no compound shell in agent / skill prompts
+
+Bash blocks inside agents (`kit/agents/*.md`) and skills (`kit/skills/*/SKILL.md`) **must not** contain compound shell. Specifically, the following patterns are rejected by `scripts/check.py`'s `No compound shell in prompts` rule:
+
+- Command substitution: `$(...)` (e.g. `BASE=$(git merge-base ...)`)
+- Sequence operators: `cmd1 && cmd2`, `cmd1 || cmd2`
+- Command separator: `cmd1 ; cmd2`
+- `cd X && cmd` chains
+
+Why: Claude Code's permission allowlist matches by **literal prefix** on the command string. A line like `BASE=$(...); git diff "$BASE"..HEAD -- foo` cannot match any `Bash(...)` allowlist entry because it does not start with the tool you want to authorize. The result is an unavoidable permission prompt on every invocation — on a sweep PR, dozens of prompts per reviewer run.
+
+**Fix**: extract the logic to a script in `kit/scripts/` and call it by literal name. Example already in the kit: `branch.sh {base|diff|log}` consolidates branch-base git operations behind one allowlistable entry (`Bash(bash scripts/branch.sh *)`). When a multi-line body or other quoted payload is the obstacle, write it to a temp file via the Write tool first, then call the consumer (e.g. `gh pr create --body-file …`) as a single literal command.
 
 ---
 

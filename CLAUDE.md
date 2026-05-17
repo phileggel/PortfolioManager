@@ -180,7 +180,7 @@ Run `/visual-proof` after any frontend change — auto-discovers config on first
 
 > **Modals**: render the panel directly without `ModalContainer` in `src/__preview__/main.tsx` — copy the `FormModal` chrome (rounded-[28px], `bg-m3-surface-container-lowest/85 backdrop-blur-[12px] shadow-elevation-4`, header / scrollable content / footer) and skip `ModalContainer`'s 50% scrim. The scrim is a generic shell concern with no real content behind it in a standalone preview, so it would render near-black and misrepresent the modal in dark mode.
 
-> **No visual change**: write `No visual impact — internal refactor / Rust-only change.` at the top of the PR/commit, then screenshot a screen that *consumes* the modified code as non-regression proof.
+> **No visual change**: write `No visual impact — internal refactor / Rust-only change.` at the top of the PR/commit, then screenshot a screen that _consumes_ the modified code as non-regression proof.
 
 ## ⚠️ Critical Patterns
 

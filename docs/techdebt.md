@@ -58,4 +58,3 @@ Entries are observations, not commitments. Triaged by `/whats-next` alongside
      `InfrastructureError` reclassifies as application-layer (it's the typed application translation of opaque infra failures, per the DDD doc's travel rule — the NAME describes the source, the LAYER is application).
 
   Migration is mechanical (folder moves + module-path updates, ~50–100 import sites total). Cleanest as a single dedicated chore PR after the kit proposals land (so the project mirrors the kit-ratified spec). Track in `docs/plan/error-model-refactor.md` § Out of scope (already lists "Folder reshape" as deferred — this entry expands the scope to all three deltas).
-

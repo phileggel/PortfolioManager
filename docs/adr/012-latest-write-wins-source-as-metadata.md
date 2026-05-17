@@ -9,7 +9,7 @@ ADR-010 introduced a "Manual overrides External" precedence rule for source-qual
 
 In the immediate follow-up review (same day as ADR-010 landed), the rule was challenged on common-case grounds:
 
-- **Onboarding** — a user types a last-known price when adding an asset; the next auto-fetch should *replace* that placeholder, not be blocked by it.
+- **Onboarding** — a user types a last-known price when adding an asset; the next auto-fetch should _replace_ that placeholder, not be blocked by it.
 - **Backfill** — a user types a historical price for a date Stooq does not cover; this is a different `(asset, date)` row and never conflicts with auto-fetch in the first place.
 - **No-coverage assets** — Stooq does not cover the asset; Manual is the only source ever written; no conflict.
 - **Trade-derived prices** (`record_price=true`) — the user just executed a real trade at that price; this is more current than any prior manual entry on the same day.

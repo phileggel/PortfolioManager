@@ -1,16 +1,16 @@
 # Error Model
 
-Reference for handling errors in this codebase. Directive, not historical.
+Reference for handling errors in this codebase. Directive, not historical. Conceptual framing of where errors come from lives in [`ddd-reference.md`](ddd-reference.md) § Errors; this doc gives the how-to.
 
 ---
 
-## Rules
+## The rule
 
-1. **Repos return `anyhow::Error`.** The application layer translates to a typed enum. Domain and use-case layers never see `anyhow`.
-2. **Infra failures translate to `*ApplicationError::DatabaseError`** at the application layer. Unit variant — no payload on the wire. The diagnostic chain is logged server-side via `tracing::error!` at the same site as the translation.
-3. **Domain errors are raised by aggregate methods on their own loaded state.** Anything else (NotFound from a repo lookup, cross-aggregate uniqueness checks, cross-BC orchestration verdicts) is an application error.
-4. **Composites at the boundary, tagged leaves underneath.** Composites use `#[serde(untagged)]`; leaves use `#[serde(tag = "code")]`. Wire shape is always `{ code: "VariantName", ...payload }`.
-5. **New variants go in the leaf, not the composite.** The composite reflects what its leaves expose; never re-declare leaf codes inside the composite.
+**One flat enum per bounded context (`{BC}Error`).** Holds every variant the BC can raise — aggregate-invariant errors raised by domain methods AND lookup / state / infra errors raised by services. No Domain / Application split inside the BC.
+
+**One composite per use case (`{UseCase}Error`).** Wraps the BC enums the use case touches via `#[from]` + adds use-case-specific flat variants (cross-BC guards, in-flight checks, catch-alls). Serialized with `#[serde(untagged)]` so the wrappers disappear on the wire.
+
+**Contracts describe the wire shape only.** `docs/contracts/{bc}-contract.md` lists per-command wire-visible variant codes; Rust-internal type names (BC enums, composite enums) are not exposed in contracts.
 
 ---
 
@@ -18,155 +18,186 @@ Reference for handling errors in this codebase. Directive, not historical.
 
 > I'm adding or changing an error path. Where does it go?
 
-- **Raised by an aggregate method on its own loaded state?** (e.g. `Account::apply_withdrawal` rejecting `InsufficientCash`)
-  → Domain leaf (`{bc}/domain/error.rs`).
+- **Aggregate-invariant violation** (raised by a domain method on loaded state, e.g. `Order::apply_payment` rejecting `InsufficientFunds`)
+  → variant of `{BC}Error`.
 
-- **Raised by a service-layer check** (NotFound from `repo.get_by_id`, uniqueness pre-check, cross-aggregate gating)?
-  → Application leaf (`{bc}/application/error.rs`).
+- **Service-layer error** (NotFound from `repo.get_by_id`, uniqueness pre-check, cross-aggregate gating within the BC)
+  → variant of `{BC}Error`.
 
-- **Raised by a use-case orchestrator** (cross-BC verdict like `ActiveHoldings`, `ExistingTransactions`, `OpeningBalanceOnCashAsset`)?
-  → Use-case-owned application leaf (`use_cases/{name}/error.rs`).
-
-- **Raised by an infra failure** (sqlx error, repo I/O, connection lost)?
-  → Do NOT add a new variant. Translate to the relevant `*ApplicationError::DatabaseError` at the call site:
+- **Infra failure** (sqlx error, repo I/O, connection lost)
+  → translate to `{BC}Error::DatabaseError` at the call site, log via `tracing::error!`:
 
   ```rust
   repo.something().await.map_err(|e| {
       tracing::error!(target: BACKEND, ..context fields.., err = ?e, "service_method: what failed");
-      AccountApplicationError::DatabaseError
+      OrderError::DatabaseError
   })?;
   ```
 
+- **Use-case-specific guard** (cross-BC verdict like `InventoryUnavailable`; orchestrator-level check like `ProcessAlreadyRunning`)
+  → flat variant in `{UseCase}Error`.
+
+- **Unexpected catch-all in a use case** (panic-kind; sync infra failure not attributable to a specific BC's database)
+  → `{UseCase}Error::UnknownError`.
+
 - **Need a payload on the wire?**
-  → Use a struct variant. Tuple variants don't survive `#[serde(tag = "code")]`.
+  → struct variants. Tuple variants don't survive `#[serde(tag = "code")]`.
 
   ```rust
-  { code: "Oversell"; available: number; requested: number }
+  { code: "OutOfStock"; available: number; requested: number }
   ```
-
-- **Need a new command surface that composes errors from multiple sources?**
-  → New composite in the layer that owns the surface (BC for BC writes, use-case for cross-BC orchestration). Each leaf via `#[from]`.
 
 ---
 
 ## Recipes
 
-### Leaf enum
+### BC enum
 
 ```rust
 #[derive(Debug, thiserror::Error, serde::Serialize, specta::Type, Clone)]
 #[serde(tag = "code")]
-pub enum AccountApplicationError {
-    #[error("Account not found: {account_id}")]
-    AccountNotFound { account_id: String },
+pub enum OrderError {
+    #[error("Insufficient funds: available {available_micros}, required {required_micros}")]
+    InsufficientFunds { available_micros: i64, required_micros: i64 },
 
-    #[error("Account name already exists")]
-    NameAlreadyExists,
+    #[error("Order reference cannot be empty")]
+    ReferenceEmpty,
+
+    #[error("Order not found: {order_id}")]
+    OrderNotFound { order_id: String },
+
+    #[error("Order reference already exists")]
+    ReferenceAlreadyExists,
 
     #[error("An unexpected database error occurred")]
     DatabaseError,
 }
 ```
 
-### Composite
+A single enum holds every variant the BC can raise. Aggregate-invariant variants (`InsufficientFunds`, `ReferenceEmpty`) and service-layer variants (`OrderNotFound`, `ReferenceAlreadyExists`, `DatabaseError`) sit side by side. The reader sees the BC's full failure surface in one type.
+
+### Use-case composite
 
 ```rust
 #[derive(Debug, thiserror::Error, serde::Serialize, specta::Type)]
 #[serde(untagged)]
-pub enum HoldingTransactionError {
+pub enum ProcessOrderError {
     #[error(transparent)]
-    Application(#[from] AccountApplicationError),
+    Order(#[from] OrderError),
+
     #[error(transparent)]
-    Operation(#[from] AccountOperationError),
-    #[error(transparent)]
-    Validation(#[from] TransactionDomainError),
+    Inventory(#[from] InventoryError),
+
+    #[error("An order is already being processed")]
+    ProcessAlreadyRunning,
+
+    #[error("No line items in scope")]
+    NoLineItemsToProcess,
+
+    #[error("Unexpected error")]
+    UnknownError,
 }
 ```
+
+Wrapper variants propagate BC errors via `?` (thanks to `#[from]`). Use-case-specific variants are flat (no inner enum) and constructed explicitly. All variants serialize as `{ code: "..." }` on the wire via `untagged`.
 
 ### Service method signature
 
 ```rust
-pub async fn record_deposit(...) -> Result<Transaction, HoldingTransactionError> {
-    let mut account = load_account(&*self.account_repo, account_id).await?;  // AccountApplicationError → ?
-    let tx = Transaction::new_deposit(...)?;                                  // TransactionDomainError → ?
-    let tx = account.apply_deposit(tx)?;                                      // AccountOperationError → ?
-    save_account(&*self.account_repo, &mut account).await?;                   // AccountApplicationError → ?
-    Ok(tx)
+pub async fn record_payment(...) -> Result<Payment, OrderError> {
+    let mut order = load_order(&*self.order_repo, order_id).await?;
+    let payment = Payment::new(...)?;
+    let payment = order.apply_payment(payment)?;
+    save_order(&*self.order_repo, &mut order).await?;
+    Ok(payment)
+}
+```
+
+### Use case method signature
+
+```rust
+pub async fn run(&self, order_id: &str) -> Result<(), ProcessOrderError> {
+    let _ = self.order_service.find_by_id(order_id).await?;
+    if self.guard.is_running() {
+        return Err(ProcessOrderError::ProcessAlreadyRunning);
+    }
+    let scope = self.order_service.load_pending_line_items(order_id).await?;
+    if scope.is_empty() {
+        return Err(ProcessOrderError::NoLineItemsToProcess);
+    }
+    self.dispatch(scope);
+    Ok(())
 }
 ```
 
 ### Tauri command boundary
 
-The composite IS the FE-facing contract. No mapper, no boundary type:
+The use-case composite (or BC enum when no orchestration is needed) IS the FE-facing type. No mapper, no boundary type:
 
 ```rust
 #[tauri::command]
 #[specta::specta]
-pub async fn record_deposit(
-    uc: State<'_, HoldingTransactionUseCase>,
-    dto: DepositDTO,
-) -> Result<Transaction, HoldingTransactionError> {
-    uc.record_deposit(...).await
+pub async fn process_order(
+    uc: State<'_, ProcessOrderUseCase>,
+    order_id: String,
+) -> Result<(), ProcessOrderError> {
+    uc.run(&order_id).await
 }
 ```
 
 ### Frontend handling
 
-The wire shape is a flat union of every leaf's variants. Narrow on `code`:
+The wire shape is a flat union of every variant. Narrow on `code`:
 
 ```ts
-const result = await accountGateway.recordDeposit(dto);
+const result = await orderGateway.processOrder(orderId);
 if (result.status === "error") {
-    switch (result.error.code) {
-        case "AccountNotFound":   // ...
-        case "InsufficientCash":  // ...
-        case "DatabaseError":     // i18n key error.DatabaseError
-        // ...
-    }
+  switch (result.error.code) {
+    case "OrderNotFound": // wrapped from OrderError
+    case "ProcessAlreadyRunning": // flat use-case variant
+    case "NoLineItemsToProcess": // flat use-case variant
+    case "DatabaseError": // wrapped from OrderError or InventoryError
+    // ...
+  }
 }
 ```
 
 ---
 
+## Contract presentation
+
+`docs/contracts/{bc}-contract.md` describes the wire shape only.
+
+- Per-command "Errors" column lists wire-visible variant codes (e.g. `ProcessAlreadyRunning (ORD-113)`).
+- No `*ApplicationError`, `*DomainError`, composite type names — Rust internals are out of scope.
+- Spec rule tags (`(ORD-043)`, `(B18)`) and short contextual prose (`(when reference missing)`) are encouraged; they help the FE author and don't leak Rust.
+- No `## Changelog` section; git history is the changelog.
+
+---
+
 ## Anti-patterns
 
-- ❌ Returning `anyhow::Result<T>` from an application service method that surfaces to a Tauri command.
+- ❌ Per-BC `*ApplicationError` / `*DomainError` split — collapse into a single `{BC}Error`.
+- ❌ Wrapping use-case-specific guards in their own leaf enum (`{UseCase}GuardError`) — keep them as flat variants in the composite.
+- ❌ Documenting Rust-internal type names in the contract — wire shape only.
+- ❌ Returning `anyhow::Result<T>` from a service or use-case method that surfaces to a Tauri command.
 - ❌ Adding a `Database` / `Infrastructure` / `Unknown` variant carrying a `String` hint to the FE.
 - ❌ `format!("{e:#}")` into a wire-visible payload.
-- ❌ Re-declaring leaf variant codes inside a composite (e.g. flattening `AccountApplicationError`'s codes into `HoldingTransactionError`).
-- ❌ Putting NotFound in the domain layer (it's a service-layer translation of `Ok(None)`).
-- ❌ Using tuple variants on a leaf (`#[serde(tag = "code")]` rejects them — use struct variants).
-- ❌ Two leaves of the same composite with the same `code` discriminant under `#[serde(untagged)]` (silent collision; first arm wins).
+- ❌ Re-declaring leaf variant codes inside a composite (the `#[from]` wrapper does the routing).
+- ❌ Tuple variants on a `#[serde(tag = "code")]` enum — use struct variants.
+- ❌ Two wrapper variants in a composite whose enums share a `code` discriminant (silent collision under `#[serde(untagged)]`; verify uniqueness when adding a wrapper).
 - ❌ `panic!` / `unwrap` / `expect` in production paths. Tests only.
-- ❌ Documenting per-leaf variants in the composite's docstring (rots the moment a leaf changes — point at the leaf type instead).
 - ❌ Comments like `// Replaces the anyhow-era X` or `// Per the Y rule` (rationale-as-comment; doc what the code IS, not what it used to be).
 
 ---
 
 ## Where things live
 
-| What | Where |
-|---|---|
-| Per-BC application leaves | `src-tauri/src/context/{bc}/application/error.rs` |
-| Per-BC domain leaves | `src-tauri/src/context/{bc}/domain/` (each aggregate has its own error type) |
-| Use-case composites and leaves | `src-tauri/src/use_cases/{name}/error.rs` |
-| All composites + leaves on the FE wire | `src/bindings.ts` (auto-generated; do not edit) |
-| Per-command reachable code surface | `docs/contracts/{domain}-contract.md` |
-| Layering rules (domain vs application) | `docs/ddd-reference.md` § Errors |
-| Backend coding rules | `docs/backend-rules.md` |
-
----
-
-## Known limits
-
-These are documented soft spots. Do not paper over them; do not pretend they don't exist.
-
-- **`AccountOperationError` and `OpeningBalanceDomainError` raised by aggregate methods that return `anyhow::Result`.** Service-layer bridges (`to_holding_tx_error`, `to_open_holding_error` in `account/service.rs`) downcast the typed errors out and translate the rest to `DatabaseError`. The bridges are intentional until aggregate methods are split into typed factory + apply pairs. New aggregate methods should return typed `Result` directly.
-
-- **Composite codes are an upper bound, not the actual reachable set per command.** When `AccountApplicationError` gains a variant, every composite that includes it advertises that variant — even commands that can't raise it. The actual per-command surface lives in `docs/contracts/{domain}-contract.md`. Keep the contract narrower than the type when relevant; use the contract (not the type) to drive FE exhaustiveness.
-
-- **`#[serde(untagged)]` matches first arm in declaration order.** Two leaves of the same composite with overlapping `code` discriminants will collide silently. Verify uniqueness when adding a leaf.
-
-- **Specta + serde derives leak into the domain layer.** Domain error types must derive `Serialize + specta::Type` to be composable into FE-wire enums. Acceptable trade for typed bindings; constrains future non-Specta consumers.
-
-- **Repos use `type Error = anyhow::Error`.** Translation happens at the application layer. Do not propagate `anyhow` past the service boundary.
+| What                                          | Where                                                |
+| --------------------------------------------- | ---------------------------------------------------- |
+| Per-BC flat enum (`{BC}Error`)                | `src-tauri/src/context/{bc}/error.rs`                |
+| Use-case composite + flat guards              | `src-tauri/src/use_cases/{name}/error.rs`            |
+| All composites + BC enums on the FE wire      | `src/bindings.ts` (auto-generated; do not edit)      |
+| Per-command wire variants                     | `docs/contracts/{bc}-contract.md`                    |
+| Layering rules within a BC (domain / service) | [`docs/ddd-reference.md`](ddd-reference.md) § Errors |
+| Backend coding rules (B31 in particular)      | [`docs/backend-rules.md`](backend-rules.md)          |

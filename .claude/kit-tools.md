@@ -22,15 +22,16 @@ Read on demand to orient — none are auto-loaded by Claude Code.
 
 Synced to `docs/` in downstream projects on first sync (copy-once — never overwrites project customizations). Agents reference these directly; no "if exists" hedging needed.
 
-| File                       | Purpose                                                                                                                                                                                                           |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `backend-rules.md`         | Rust DDD structure: bounded context layout, aggregate roots, repositories, services, error handling, logging (B0–B43)                                                                                             |
-| `frontend-rules.md`        | React feature layout: top-level `src/` buckets (features/shell/ui/infra/), gateway pattern, smart/dumb components, hook colocation, i18n, logging, cross-feature routing (F1–F28)                                 |
-| `e2e-rules.md`             | WebdriverIO testability: form/field `id` conventions, aria labels, `setReactInputValue`, deterministic dates (E1–E10)                                                                                             |
-| `test_convention.md`       | Testing strategy across all tiers: frontend Vitest, BE unit/repo/integration, mocking rules, async patterns                                                                                                       |
-| `ddd-reference.md`         | DDD concept glossary + error-handling guidance: Entity, Aggregate, Repository, Domain Event, Bounded Context, Unit of Work, error categories (domain/application/infrastructure), travel rule, flow toward the UI |
-| `i18n-rules.md`            | Translation structure, key naming (`domain.component.element`), locale consistency rules                                                                                                                          |
-| `frontend-visual-proof.md` | Visual proof requirements: screenshot/video workflow for any `.tsx`/`.css` change, Playwright capture process                                                                                                     |
+| File                       | Purpose                                                                                                                                                                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `backend-rules.md`         | Rust DDD structure: bounded context layout, aggregate roots, repositories, services, error handling, logging (B0–B43)                                                                                                           |
+| `frontend-rules.md`        | React feature layout: top-level `src/` buckets (features/shell/ui/infra/), gateway pattern, smart/dumb components, hook colocation, i18n, logging, cross-feature routing (F1–F28)                                               |
+| `e2e-rules.md`             | WebdriverIO testability: form/field `id` conventions, aria labels, `setReactInputValue`, deterministic dates (E1–E10)                                                                                                           |
+| `test_convention.md`       | Testing strategy across all tiers: frontend Vitest, BE unit/repo/integration, mocking rules, async patterns                                                                                                                     |
+| `ddd-reference.md`         | DDD concept glossary + error-handling guidance: Entity, Aggregate, Repository, Domain Event, Bounded Context, Unit of Work, error categories (domain/application/infrastructure), travel rule, flow toward the UI               |
+| `error-model.md`           | How-to for the kit's typed-error contract: one flat `{BC}Error` per BC + use-case composites via `#[serde(untagged)]` + `#[from]`, Tauri command boundary, FE handling, anti-patterns (complements `ddd-reference.md` § Errors) |
+| `i18n-rules.md`            | Translation structure, key naming (`domain.component.element`), locale consistency rules                                                                                                                                        |
+| `frontend-visual-proof.md` | Visual proof requirements: screenshot/video workflow for any `.tsx`/`.css` change, Playwright capture process                                                                                                                   |
 
 ---
 
@@ -121,7 +122,7 @@ Not a workflow tool — run only after syncing a new kit version to realign `CLA
 | `pre-push`         | `git push`   | Runs `python3 scripts/check.py` (full suite: tests + build + lint); blocks push on failure                         |
 | `pre-merge-commit` | `git merge`  | Blocks non-fast-forward merge commits to enforce linear history; does not affect `--ff-only` or `--squash`         |
 
-Activate with: `git config core.hooksPath .githooks`
+Activation is automatic — `just sync-kit` sets `core.hooksPath = .githooks` on first sync (idempotent on subsequent syncs). To opt out, pre-set `core.hooksPath` to another value (e.g. for Husky) or run `SYNC_NO_HOOKS=1 just sync-kit`.
 
 ---
 
@@ -131,13 +132,14 @@ Synced to downstream `scripts/` on every sync.
 
 ### Shared helpers
 
-| Script             | Command                              | Description                                                                                                                         |
-| ------------------ | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `changed-files.sh` | `bash scripts/changed-files.sh`      | Print sort-unique union of changed-vs-HEAD, staged, and untracked files. Use for pre-commit / uncommitted-work context              |
-| `branch-files.sh`  | `bash scripts/branch-files.sh`       | Print sort-unique union of all files changed on the current branch vs main, plus uncommitted changes. Use in review agents          |
-| `report-path.sh`   | `bash scripts/report-path.sh <slug>` | Compute and print the next available `tmp/<slug>-YYYY-MM-DD-NN.md` report path; creates `tmp/` if needed                            |
-| `whats-next.py`    | `python3 scripts/whats-next.py`      | Deterministic data collector for the `/whats-next` skill; emits JSON describing TODOs, plans, specs, git, roadmap, techdebt         |
-| `validate-sync.sh` | `bash scripts/validate-sync.sh`      | Verify every file in `.claude/kit-manifest.txt` is present after `just sync-kit`; exit 1 on any missing. Invoked by `/kit-discover` |
+| Script             | Command                                                        | Description                                                                                                                                                                                                                                                                                     |
+| ------------------ | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `changed-files.sh` | `bash scripts/changed-files.sh`                                | Print sort-unique union of changed-vs-HEAD, staged, and untracked files. Use for pre-commit / uncommitted-work context                                                                                                                                                                          |
+| `branch-files.sh`  | `bash scripts/branch-files.sh`                                 | Print sort-unique union of all files changed on the current branch vs main, plus uncommitted changes. Use in review agents (Step 1)                                                                                                                                                             |
+| `branch.sh`        | `bash scripts/branch.sh {base \| diff <paths> \| log [flags]}` | Branch-base git operations. `base` prints the resolved BASE (merge-base HEAD..main, with fallbacks for detached HEAD / shallow clone / no-main); `diff` prints `git diff BASE..HEAD -- <paths>`; `log` prints `git log --oneline BASE..HEAD`. Used by reviewer agents (Step 3) and `/create-pr` |
+| `report-path.sh`   | `bash scripts/report-path.sh <slug>`                           | Compute and print the next available `tmp/<slug>-YYYY-MM-DD-NN.md` report path; creates `tmp/` if needed                                                                                                                                                                                        |
+| `whats-next.py`    | `python3 scripts/whats-next.py`                                | Deterministic data collector for the `/whats-next` skill; emits JSON describing TODOs, plans, specs, git, roadmap, techdebt                                                                                                                                                                     |
+| `validate-sync.sh` | `bash scripts/validate-sync.sh`                                | Verify every file in `.claude/kit-manifest.txt` is present after `just sync-kit`; exit 1 on any missing. Invoked by `/kit-discover`                                                                                                                                                             |
 
 ### Quality & release
 
