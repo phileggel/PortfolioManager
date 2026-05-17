@@ -130,6 +130,18 @@ Read this when:
 
 ---
 
+## 11. Aggregate methods returning `anyhow::Result` in the account BC
+
+**Pattern**: Aggregate methods raise typed domain errors that the application service consumes directly.
+
+**Practice**: `AccountOperationError` and `OpeningBalanceDomainError` are raised by aggregate methods that return `anyhow::Result`. Service-layer bridges (`to_holding_tx_error`, `to_open_holding_error` in `context/account/service.rs`) downcast the typed errors out and translate the rest to `DatabaseError`.
+
+**Trade**: Splitting these aggregate methods into typed factory + apply pairs (so they return `Result<_, AccountError>` directly) is a real refactor across the account BC and pairs cleanly with the broader collapse of `*ApplicationError` + `*DomainError` + composite into a single flat `AccountError` per the new error-model rule. Doing the bridge cleanup separately would be wasted motion. The bridges are intentional until that retrofit happens.
+
+**When to revisit**: When the account BC retrofit lands (collapse split application/domain enums into one flat `AccountError`), fold the aggregate methods into typed `Result` at the same time and delete the bridges.
+
+---
+
 ## What we follow strictly (not divergences)
 
 For reference, the patterns this codebase enforces tightly:

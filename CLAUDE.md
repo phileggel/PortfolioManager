@@ -70,6 +70,16 @@ Before implementing, read the relevant convention docs:
 
 When work resolves a TODO entry, an open question, a plan step, or a tech-debt observation, update the source doc immediately — don't wait for the next `/whats-next` run. Use `/techdebt` for non-actionable code smells, `/spec-writer` + `spec-reviewer` for new business rules, `/contract` + `contract-reviewer` for the matching contract, `/adr-writer` + `adr-reviewer` for architectural decisions. Update `ARCHITECTURE.md` if new files/modules added.
 
+### Kit-managed docs are read-only for project-specific content
+
+Convention docs listed in `.claude/kit-manifest.txt` (currently: `docs/backend-rules.md`, `docs/ddd-reference.md`, `docs/e2e-rules.md`, `docs/error-model.md`, `docs/frontend-rules.md`, `docs/frontend-visual-proof.md`, `docs/i18n-rules.md`, `docs/test_convention.md`) are owned by the kit and get overwritten on `just sync-kit -f`. **Do not add project-specific addenda (known limits, migration status, project-name-flavored examples) to these files** — the next sync will silently delete the content if `KIT_SYNC_FORCE=true`, or force a manual conflict every sync if not.
+
+Where project addenda belong instead:
+
+- **Intentional deviations from the kit/textbook rule** → `docs/ddd-divergences.md`
+- **Tracked-to-resolve items** → `docs/techdebt.md` or `docs/todo.md`
+- **Project-wide rules that ride on top of kit rules** → CLAUDE.md (here) or a new project-owned doc
+
 ### Task tracking (within a conversation)
 
 For every implementation task, use `TaskCreate` / `TaskUpdate`:
