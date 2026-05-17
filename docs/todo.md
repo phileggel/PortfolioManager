@@ -16,20 +16,20 @@ OpenFIGI's no-API-key tier caps `/v3/search` at 5 requests/minute. Today every 4
 
 Surfaced 2026-05-16 during a manual test session (`api.openfigi.com 429 Too Many Requests`).
 
-## (spec) — Amend MKT spec to align with ADR-008 + ADR-010
+## (spec) — Amend MKT spec: add source field + Stooq auto-fetch rules
 
-ADR-008 introduces `AssetPrice.source` (Manual | Stooq | Finnhub) and ADR-010 establishes the Manual-overrides-External precedence rule. The current MKT spec (`docs/spec/market-price.md`) has no `source` field on the `AssetPrice` entity, and rules MKT-025 (last-write-wins upsert) and MKT-058 (silent overwrite on `record_price = true`) contradict the new precedence rule.
+ADR-008 introduces `AssetPrice.source` (variants `Manual | Stooq` in v1; `Finnhub` deferred to KEY phase). ADR-012 (supersedes ADR-010) establishes latest-write-wins regardless of source; `source` is metadata for traceability and does NOT influence read/write precedence. The current MKT spec (`docs/spec/market-price.md`) has no `source` field on `AssetPrice` but its precedence story (MKT-025 last-write-wins, MKT-058 silent overwrite) already matches ADR-012 — no precedence reconciliation needed.
 
 **Required spec edits**:
 
-- Add `source: AssetPriceSource` to the AssetPrice entity table
-- Reframe MKT-025 to honour Manual-wins (auto-fetch never overwrites Manual)
-- Resolve the MKT-058 question: when a user's buy/sell transaction has `record_price = true` and a Manual `AssetPrice` already exists for that date, does the transaction-derived price overwrite Manual? **Deliberate spec call required** — both answers are defensible; we should not back into one silently.
-- New MKT-100+ rules covering the on-app-launch auto-fetch flow, per-day cache, manual refresh button, staleness indicator
+- Add `source: AssetPriceSource` to the AssetPrice entity table (text discriminant per ADR-008)
+- Annotate MKT-025 / MKT-058 to note the new `source` field is written alongside the price (no behavioral change — confirm via spec-reviewer)
+- New MKT-100+ rules covering: on-app-launch auto-fetch via Stooq, per-day cache (≤24h fresh), manual refresh button (global on dashboard + per-asset on detail), staleness indicator copy, Stooq symbol derivation from `(ticker, exchange_code)`
+- Confirm: `record_asset_price` writes `source: Manual` (both MKT modal entry and transaction `record_price=true` paths)
 
-Workflow-A: `/spec-writer market-price` (amend) → `spec-reviewer` → contract refresh. Implementation lands later under PFD or its own MKT-extension feature.
+Workflow-A: `/spec-writer market-price` (amend) → `spec-reviewer` → `/contract` refresh → `feature-planner` → implementation (migration + Stooq client + repository + new auto-fetch use case + UI). Per Option B sequencing: this is step 1 of PFD enablement; FXR is step 2; PFD is step 3; KEY (Finnhub fallback + OpenFIGI key) is the QoL follow-up.
 
-Surfaced 2026-05-16 by `adr-reviewer` after ADRs 008/010 were written.
+Surfaced 2026-05-16 by `adr-reviewer`; simplified 2026-05-17 after ADR-010 was superseded by ADR-012.
 
 ## (spec) — Write KEY spec (User API Key Management)
 
