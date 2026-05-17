@@ -1,3 +1,5 @@
+use crate::context::account::AccountApplicationError;
+use crate::context::asset::AssetError;
 use serde::Serialize;
 use specta::Type;
 
@@ -20,4 +22,40 @@ pub enum FetchPriceTask {
     /// Catch-all for unexpected runtime failures not attributable to a specific BC.
     #[error("Unexpected error")]
     UnknownError,
+}
+
+/// Wire-facing error composite for `fetch_all_asset_prices` (MKT-113, MKT-111, MKT-122).
+///
+/// `#[serde(untagged)]` lets every arm surface its inner `{ "code": "..." }` payload
+/// directly on the wire. Each arm carries a tagged inner type (BC enum or
+/// `FetchPriceTask`) so the discriminator survives the untagging.
+#[derive(Debug, thiserror::Error, Serialize, Type)]
+#[serde(untagged)]
+pub enum FetchAllAssetPricesError {
+    /// Propagates asset-BC failures (e.g. `DatabaseError`) via `?`.
+    #[error(transparent)]
+    Asset(#[from] AssetError),
+    /// Propagates account-BC failures (`AccountNotFound`, `DatabaseError`) via `?`.
+    #[error(transparent)]
+    Account(#[from] AccountApplicationError),
+    /// Use-case-specific failures (`FetchAlreadyRunning`, `NoFetchableHoldings`, `UnknownError`).
+    #[error(transparent)]
+    Failure(#[from] FetchPriceTask),
+}
+
+/// Wire-facing error composite for `fetch_account_asset_prices` (MKT-113, MKT-111, MKT-132).
+///
+/// See `FetchAllAssetPricesError` for the shared shape rationale.
+#[derive(Debug, thiserror::Error, Serialize, Type)]
+#[serde(untagged)]
+pub enum FetchAccountAssetPricesError {
+    /// Propagates asset-BC failures (e.g. `DatabaseError`) via `?`.
+    #[error(transparent)]
+    Asset(#[from] AssetError),
+    /// Propagates account-BC failures (`AccountNotFound`, `DatabaseError`) via `?`.
+    #[error(transparent)]
+    Account(#[from] AccountApplicationError),
+    /// Use-case-specific failures (`FetchAlreadyRunning`, `NoFetchableHoldings`, `UnknownError`).
+    #[error(transparent)]
+    Failure(#[from] FetchPriceTask),
 }

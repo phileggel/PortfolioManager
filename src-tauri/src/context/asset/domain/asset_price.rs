@@ -60,27 +60,18 @@ impl AssetPrice {
     }
 }
 
-impl AssetPriceSource {
-    /// Returns the stable string discriminant persisted in the `asset_prices.source` column.
-    /// Matches the variant name verbatim (`"Manual"`, `"Stooq"`).
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AssetPriceSource::Manual => "Manual",
-            AssetPriceSource::Stooq => "Stooq",
-        }
-    }
-
-    /// Parses the stable string discriminant from storage; unknown values fall back to `Manual`.
-    pub fn from_storage(value: &str) -> Self {
-        match value {
-            "Stooq" => AssetPriceSource::Stooq,
-            _ => AssetPriceSource::Manual,
-        }
-    }
-}
-
 /// Provenance qualifier for an AssetPrice record (MKT-100).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    specta::Type,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
 pub enum AssetPriceSource {
     /// User-driven write: manual entry or price-history edit (MKT-101).
     Manual,

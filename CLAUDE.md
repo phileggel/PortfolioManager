@@ -61,7 +61,7 @@ Key agents: `reviewer-security` — run when modifying any Tauri command, capabi
 
 Before implementing, read the relevant convention docs:
 
-- **Backend changes** — `docs/backend-rules.md` + `docs/ddd-reference.md` (especially when touching the error model — see [`docs/error-model.md`](docs/error-model.md)).
+- **Backend changes** — `docs/backend-rules.md` + `docs/ddd-reference.md` (especially when touching the error model — see [`docs/error-model.md`](docs/error-model.md)). Project-specific idiomatic patterns (row mapping, orchestrator shape) live in [`docs/backend-patterns.md`](docs/backend-patterns.md).
 - **Frontend changes** — `docs/frontend-rules.md` + `docs/i18n-rules.md` + `docs/frontend-visual-proof.md`. Run `/visual-proof` after implementation to capture all states in light + dark mode.
 - **E2E changes** — `docs/e2e-rules.md`.
 - **Any test work** (unit / integration / E2E, BE or FE) — `docs/test_convention.md`.

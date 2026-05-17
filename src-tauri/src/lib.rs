@@ -26,9 +26,7 @@ use crate::use_cases::account_deletion::AccountDeletionUseCase;
 use crate::use_cases::account_details::AccountDetailsUseCase;
 use crate::use_cases::archive_asset::ArchiveAssetUseCase;
 use crate::use_cases::asset_price_fetch::dispatcher::Dispatcher as PriceFetchDispatcher;
-use crate::use_cases::asset_price_fetch::{
-    FetchAccountAssetPricesUseCase, FetchAllAssetPricesUseCase, FetchGuard,
-};
+use crate::use_cases::asset_price_fetch::{AssetPriceFetchUseCase, FetchGuard};
 use crate::use_cases::asset_web_lookup::{AssetWebLookupUseCase, ReqwestOpenFigiClient};
 use crate::use_cases::delete_asset::DeleteAssetUseCase;
 use crate::use_cases::holding_transaction::HoldingTransactionUseCase;
@@ -200,20 +198,13 @@ pub fn run() {
                     Arc::clone(&event_bus),
                     Arc::new(|| chrono::Local::now().date_naive()),
                 ));
-                let fetch_all_uc = Arc::new(FetchAllAssetPricesUseCase::new(
+                let asset_price_fetch_uc = Arc::new(AssetPriceFetchUseCase::new(
                     Arc::clone(&account_service),
                     Arc::clone(&asset_service),
                     Arc::clone(&fetch_guard),
                     Arc::clone(&dispatcher),
                 ));
-                let fetch_account_uc = Arc::new(FetchAccountAssetPricesUseCase::new(
-                    Arc::clone(&account_service),
-                    Arc::clone(&asset_service),
-                    Arc::clone(&fetch_guard),
-                    Arc::clone(&dispatcher),
-                ));
-                app_handle.manage(fetch_all_uc);
-                app_handle.manage(fetch_account_uc);
+                app_handle.manage(asset_price_fetch_uc);
                 app_handle.manage(Arc::clone(&fetch_guard));
 
                 let transaction_manager =

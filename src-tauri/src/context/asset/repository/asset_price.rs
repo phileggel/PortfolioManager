@@ -1,7 +1,31 @@
 use super::super::domain::{AssetPrice, AssetPriceRepository, AssetPriceSource};
+use crate::core::logger::BACKEND;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use sqlx::{Pool, Sqlite};
+use std::str::FromStr;
+
+#[derive(sqlx::FromRow)]
+struct AssetPriceRow {
+    asset_id: String,
+    date: String,
+    price: i64,
+    source: String,
+}
+
+impl From<AssetPriceRow> for AssetPrice {
+    fn from(row: AssetPriceRow) -> Self {
+        let source = AssetPriceSource::from_str(&row.source).unwrap_or_else(|_| {
+            tracing::warn!(
+                target: BACKEND,
+                value = %row.source,
+                "unknown asset_prices.source value, falling back to Manual"
+            );
+            AssetPriceSource::Manual
+        });
+        AssetPrice::restore(row.asset_id, row.date, row.price, source)
+    }
+}
 
 /// SQLite implementation of AssetPriceRepository.
 pub struct SqliteAssetPriceRepository {
@@ -18,7 +42,7 @@ impl SqliteAssetPriceRepository {
 #[async_trait]
 impl AssetPriceRepository for SqliteAssetPriceRepository {
     async fn upsert(&self, price: AssetPrice) -> Result<()> {
-        let source = price.source.as_str();
+        let source = price.source.to_string();
         sqlx::query!(
             "INSERT INTO asset_prices (asset_id, date, price, source) VALUES (?, ?, ?, ?)
              ON CONFLICT(asset_id, date) DO UPDATE SET price = excluded.price, source = excluded.source",
@@ -34,7 +58,8 @@ impl AssetPriceRepository for SqliteAssetPriceRepository {
     }
 
     async fn get_latest(&self, asset_id: &str) -> Result<Option<AssetPrice>> {
-        let row = sqlx::query!(
+        let row = sqlx::query_as!(
+            AssetPriceRow,
             "SELECT asset_id, date, price, source FROM asset_prices WHERE asset_id = ? ORDER BY date DESC LIMIT 1",
             asset_id,
         )
@@ -42,18 +67,12 @@ impl AssetPriceRepository for SqliteAssetPriceRepository {
         .await
         .context("Failed to fetch latest asset price")?;
 
-        Ok(row.map(|r| {
-            AssetPrice::restore(
-                r.asset_id,
-                r.date,
-                r.price,
-                AssetPriceSource::from_storage(&r.source),
-            )
-        }))
+        Ok(row.map(AssetPrice::from))
     }
 
     async fn get_all_for_asset(&self, asset_id: &str) -> Result<Vec<AssetPrice>> {
-        let rows = sqlx::query!(
+        let rows = sqlx::query_as!(
+            AssetPriceRow,
             "SELECT asset_id, date, price, source FROM asset_prices WHERE asset_id = ? ORDER BY date DESC",
             asset_id,
         )
@@ -61,17 +80,7 @@ impl AssetPriceRepository for SqliteAssetPriceRepository {
         .await
         .context("Failed to fetch asset prices")?;
 
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                AssetPrice::restore(
-                    r.asset_id,
-                    r.date,
-                    r.price,
-                    AssetPriceSource::from_storage(&r.source),
-                )
-            })
-            .collect())
+        Ok(rows.into_iter().map(AssetPrice::from).collect())
     }
 
     async fn get_by_asset_and_date(
@@ -79,7 +88,8 @@ impl AssetPriceRepository for SqliteAssetPriceRepository {
         asset_id: &str,
         date: &str,
     ) -> Result<Option<AssetPrice>> {
-        let row = sqlx::query!(
+        let row = sqlx::query_as!(
+            AssetPriceRow,
             "SELECT asset_id, date, price, source FROM asset_prices WHERE asset_id = ? AND date = ?",
             asset_id,
             date,
@@ -88,14 +98,7 @@ impl AssetPriceRepository for SqliteAssetPriceRepository {
         .await
         .context("Failed to fetch asset price by date")?;
 
-        Ok(row.map(|r| {
-            AssetPrice::restore(
-                r.asset_id,
-                r.date,
-                r.price,
-                AssetPriceSource::from_storage(&r.source),
-            )
-        }))
+        Ok(row.map(AssetPrice::from))
     }
 
     async fn delete(&self, asset_id: &str, date: &str) -> Result<()> {
@@ -135,7 +138,7 @@ impl AssetPriceRepository for SqliteAssetPriceRepository {
         .await
         .context("Failed to delete original asset price")?;
 
-        let source = new_price.source.as_str();
+        let source = new_price.source.to_string();
         sqlx::query!(
             "INSERT INTO asset_prices (asset_id, date, price, source) VALUES (?, ?, ?, ?)
              ON CONFLICT(asset_id, date) DO UPDATE SET price = excluded.price, source = excluded.source",

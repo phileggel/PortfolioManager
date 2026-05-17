@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::super::error::FetchPriceTask;
-    use super::super::FetchAllAssetPricesError;
+    use super::super::{FetchAllAssetPricesError, FetchPriceTask};
     use crate::context::account::AccountApplicationError;
     use crate::context::asset::AssetError;
 

@@ -3,8 +3,8 @@
 use std::sync::Arc;
 use tauri::State;
 
-use super::account::{FetchAccountAssetPricesError, FetchAccountAssetPricesUseCase};
-use super::all::{FetchAllAssetPricesError, FetchAllAssetPricesUseCase};
+use super::error::{FetchAccountAssetPricesError, FetchAllAssetPricesError};
+use super::orchestrator::AssetPriceFetchUseCase;
 
 /// Dispatches an all-accounts auto-fetch task (MKT-122, MKT-130).
 /// Returns `Ok(())` immediately after successful dispatch; per-asset results
@@ -12,9 +12,9 @@ use super::all::{FetchAllAssetPricesError, FetchAllAssetPricesUseCase};
 #[tauri::command]
 #[specta::specta]
 pub async fn fetch_all_asset_prices(
-    uc: State<'_, Arc<FetchAllAssetPricesUseCase>>,
+    uc: State<'_, Arc<AssetPriceFetchUseCase>>,
 ) -> Result<(), FetchAllAssetPricesError> {
-    uc.run().await
+    uc.fetch_all().await
 }
 
 /// Dispatches a per-account price-fetch task (MKT-132, MKT-131).
@@ -22,8 +22,8 @@ pub async fn fetch_all_asset_prices(
 #[tauri::command]
 #[specta::specta]
 pub async fn fetch_account_asset_prices(
-    uc: State<'_, Arc<FetchAccountAssetPricesUseCase>>,
+    uc: State<'_, Arc<AssetPriceFetchUseCase>>,
     account_id: String,
 ) -> Result<(), FetchAccountAssetPricesError> {
-    uc.run(&account_id).await
+    uc.fetch_for_account(&account_id).await
 }
