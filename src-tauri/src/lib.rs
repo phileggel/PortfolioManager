@@ -15,7 +15,8 @@ use crate::context::account::{
     AccountService, SqliteAccountRepository, SqliteHoldingRepository, SqliteTransactionRepository,
 };
 use crate::context::asset::{
-    AssetService, SqliteAssetCategoryRepository, SqliteAssetPriceRepository, SqliteAssetRepository,
+    AssetPriceRepository, AssetService, PriceProvider, ReqwestStooqClient,
+    SqliteAssetCategoryRepository, SqliteAssetPriceRepository, SqliteAssetRepository,
 };
 use crate::core::event_bus::Event;
 use crate::core::{
@@ -24,6 +25,8 @@ use crate::core::{
 use crate::use_cases::account_deletion::AccountDeletionUseCase;
 use crate::use_cases::account_details::AccountDetailsUseCase;
 use crate::use_cases::archive_asset::ArchiveAssetUseCase;
+use crate::use_cases::asset_price_fetch::dispatcher::Dispatcher as PriceFetchDispatcher;
+use crate::use_cases::asset_price_fetch::{AssetPriceFetchUseCase, FetchGuard};
 use crate::use_cases::asset_web_lookup::{AssetWebLookupUseCase, ReqwestOpenFigiClient};
 use crate::use_cases::delete_asset::DeleteAssetUseCase;
 use crate::use_cases::holding_transaction::HoldingTransactionUseCase;
@@ -132,6 +135,8 @@ pub fn run() {
                 let asset_repo = SqliteAssetRepository::new(db.pool.clone());
                 let category_repo = SqliteAssetCategoryRepository::new(db.pool.clone());
                 let price_repo = SqliteAssetPriceRepository::new(db.pool.clone());
+                let price_repo_for_fetch: Arc<dyn AssetPriceRepository> =
+                    Arc::new(SqliteAssetPriceRepository::new(db.pool.clone()));
 
                 let asset_service = Arc::new(
                     AssetService::new(
@@ -184,6 +189,23 @@ pub fn run() {
                 app_handle.manage(holding_transaction_uc);
 
                 app_handle.manage(AssetWebLookupUseCase::new(Arc::new(ReqwestOpenFigiClient::new())));
+
+                let price_provider: Arc<dyn PriceProvider> = Arc::new(ReqwestStooqClient::new());
+                let fetch_guard = Arc::new(FetchGuard::new());
+                let dispatcher = Arc::new(PriceFetchDispatcher::new(
+                    price_provider,
+                    price_repo_for_fetch,
+                    Arc::clone(&event_bus),
+                    Arc::new(|| chrono::Local::now().date_naive()),
+                ));
+                let asset_price_fetch_uc = Arc::new(AssetPriceFetchUseCase::new(
+                    Arc::clone(&account_service),
+                    Arc::clone(&asset_service),
+                    Arc::clone(&fetch_guard),
+                    Arc::clone(&dispatcher),
+                ));
+                app_handle.manage(asset_price_fetch_uc);
+                app_handle.manage(Arc::clone(&fetch_guard));
 
                 let transaction_manager =
                     Arc::new(SqlxTransactionManager::new(db.pool.clone()));

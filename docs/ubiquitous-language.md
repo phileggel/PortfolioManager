@@ -52,7 +52,13 @@ The aggregate root of the asset context. Represents a financial instrument
 
 ### AssetPrice
 
-An internal entity of `Asset`. A price observation for an asset on a given date.
+An internal entity of `Asset`. A price observation for an asset on a given date, with a `source` field (see `AssetPriceSource`) qualifying its provenance.
+
+> Status: confirmed
+
+### AssetPriceSource
+
+A value-object enum qualifying the provenance of an `AssetPrice` record. Variants in v1: `Manual` (user-entered via manual entry or transaction auto-record), `Stooq` (auto-fetched from the Stooq provider). `Finnhub` reserved for the KEY spec. Metadata for traceability per ADR-012 — does not influence read/write precedence (latest-write-wins).
 
 > Status: confirmed
 
@@ -135,6 +141,40 @@ to pre-fill the Add Asset form.
 | Name           | Intent                                                                                                             | Status    |
 | -------------- | ------------------------------------------------------------------------------------------------------------------ | --------- |
 | `lookup_asset` | Query OpenFIGI with a name, ticker, or ISIN and return up to 10 `AssetLookupResult` values. Errors: `NetworkError` | confirmed |
+
+---
+
+## Asset Price Fetch Tasks
+
+### Fetch task
+
+A backend job that retrieves current prices from an external provider and upserts `AssetPrice` records. Umbrella term for the three named instances below.
+
+> Status: confirmed
+
+### Auto-fetch
+
+A fetch task triggered automatically at application launch when the user has enabled the auto-fetch setting. Scope: all active holdings across all accounts.
+
+> Status: confirmed
+
+### Global refresh
+
+A fetch task triggered manually by the user from the global dashboard. Scope: all active holdings across all accounts. Shares the same backend entry point as auto-fetch.
+
+> Status: confirmed
+
+### Account refresh
+
+A fetch task triggered manually by the user from an account detail page. Scope: active holdings of the specified account.
+
+> Status: confirmed
+
+### External provider
+
+A third-party HTTP service that returns current asset prices, configured per ADR-008. v1: Stooq.
+
+> Status: confirmed
 
 ---
 

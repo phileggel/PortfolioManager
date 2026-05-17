@@ -1,5 +1,5 @@
 use crate::context::account::{AccountApplicationError, AccountService};
-use crate::context::asset::AssetService;
+use crate::context::asset::{AssetPriceSource, AssetService};
 use crate::core::logger::BACKEND;
 use serde::Serialize;
 use specta::Type;
@@ -29,6 +29,8 @@ pub struct HoldingDetail {
     pub current_price: Option<i64>,
     /// ISO date string of the price observation. None when current_price is None (MKT-031).
     pub current_price_date: Option<String>,
+    /// Provenance of `current_price`. None when current_price is None (MKT-142).
+    pub current_price_source: Option<AssetPriceSource>,
     /// Unrealized gain/loss in account currency (i64 micros). None on currency mismatch or no price (MKT-033/034).
     /// 0 (not None) when current price equals average price (MKT-033).
     pub unrealized_pnl: Option<i64>,
@@ -155,10 +157,10 @@ impl AccountDetailsUseCase {
             let cost_basis = if is_cash {
                 0
             } else {
-                let cb =
+                let computed =
                     (holding.quantity as i128 * holding.average_price as i128 / 1_000_000) as i64;
-                total_cost_basis = total_cost_basis.saturating_add(cb);
-                cb
+                total_cost_basis = total_cost_basis.saturating_add(computed);
+                computed
             };
 
             // MKT-031 — fetch latest price, degrade gracefully on failure
@@ -169,29 +171,41 @@ impl AccountDetailsUseCase {
                 .ok()
                 .flatten();
 
-            let (current_price, current_price_date, unrealized_pnl, performance_pct) =
-                if let Some(ref lp) = latest_price {
-                    let cp = lp.price;
-                    let cp_date = lp.date.clone();
-                    // MKT-033/034 — only compute P&L when currencies match
-                    let (upnl, perf) = if asset.currency == account.currency {
-                        // MKT-033 — widen to i128 before subtraction to prevent i64 overflow
-                        let upnl = ((cp as i128 - holding.average_price as i128)
-                            * holding.quantity as i128
-                            / 1_000_000) as i64;
-                        let perf = if cost_basis != 0 {
-                            Some((upnl as i128 * 100_000_000 / cost_basis as i128) as i64)
-                        } else {
-                            None
-                        };
-                        (Some(upnl), perf)
+            let (
+                current_price,
+                current_price_date,
+                current_price_source,
+                unrealized_pnl,
+                performance_pct,
+            ) = if let Some(ref latest) = latest_price {
+                let current_price = latest.price;
+                let current_price_date = latest.date.clone();
+                let current_price_source = latest.source.clone();
+                // MKT-033/034 — only compute P&L when currencies match
+                let (unrealized_pnl, performance_pct) = if asset.currency == account.currency {
+                    // MKT-033 — widen to i128 before subtraction to prevent i64 overflow
+                    let unrealized_pnl = ((current_price as i128 - holding.average_price as i128)
+                        * holding.quantity as i128
+                        / 1_000_000) as i64;
+                    let performance_pct = if cost_basis != 0 {
+                        Some((unrealized_pnl as i128 * 100_000_000 / cost_basis as i128) as i64)
                     } else {
-                        (None, None)
+                        None
                     };
-                    (Some(cp), Some(cp_date), upnl, perf)
+                    (Some(unrealized_pnl), performance_pct)
                 } else {
-                    (None, None, None, None)
+                    (None, None)
                 };
+                (
+                    Some(current_price),
+                    Some(current_price_date),
+                    Some(current_price_source),
+                    unrealized_pnl,
+                    performance_pct,
+                )
+            } else {
+                (None, None, None, None, None)
+            };
 
             // CSH-094 — same-currency priced non-cash holding contributes its market value.
             if asset.class != crate::context::asset::AssetClass::Cash
@@ -214,6 +228,7 @@ impl AccountDetailsUseCase {
                 asset_currency: asset.currency,
                 current_price,
                 current_price_date,
+                current_price_source,
                 unrealized_pnl,
                 performance_pct,
             });

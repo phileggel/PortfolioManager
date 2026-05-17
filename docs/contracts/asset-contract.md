@@ -1,36 +1,11 @@
 # Contract — Asset
 
 > Domain: `asset`
-> Last updated by: `asset` spec, `market-price` spec, `asset-web-lookup` spec, `archive-asset` use case, `delete-asset` use case
+> Last updated by: `asset` spec, `market-price` spec (auto-fetch amendment), `asset-web-lookup` spec, `archive-asset` use case, `delete-asset` use case
 
-> **Error model**: every command returns `Result<T, E>` where `E` is a typed Rust enum.
-> Each leaf serializes as a flat `{ code: "VariantName", ...payload }` shape via `#[serde(tag = "code")]`.
-> Composite enums use `#[serde(untagged)]` to flatten their leaves into a single FE-visible union.
-> All infrastructure failures translate at the application layer to per-BC `*ApplicationError::DatabaseError`
-> (unit variant — no payload on the wire; the diagnostic chain is preserved server-side via `tracing::error!`).
+> **Error model on the wire**: each command's error serializes as a flat `{ code: "VariantName", ...payload }` object. The FE matches on `code`. Per-command reachable codes are listed in the "Errors" column of each table below. Infrastructure failures surface as `{ code: "DatabaseError" }` (no payload; diagnostic chain preserved server-side via `tracing::error!`).
 >
-> **Composites by command surface**:
->
-> - **Asset read** (`get_assets`, `get_assets_with_archived`) → `AssetApplicationError` directly (single-leaf surface)
-> - **Asset CRUD writes** (`add_asset`, `update_asset`, `unarchive_asset`) → `AssetCrudError` = `AssetApplicationError | AssetDomainError | CategoryApplicationError`
-> - **Category read** (`get_categories`) → `CategoryApplicationError` directly
-> - **Category CRUD writes** (`add_category`, `update_category`, `delete_category`) → `CategoryCrudError` = `CategoryApplicationError | CategoryDomainError`
-> - **Asset prices** (`record_asset_price`, `get_asset_prices`, `update_asset_price`, `delete_asset_price`) → `AssetPriceError` = `AssetApplicationError | AssetPriceApplicationError | AssetPriceDomainError`
-> - **Archive use case** (`archive_asset`) → `ArchiveAssetError` = `AssetCrudError | AccountApplicationError | ArchiveAssetApplicationError`
-> - **Delete use case** (`delete_asset`) → `DeleteAssetError` = `AssetCrudError | AccountApplicationError | DeleteAssetApplicationError`
-> - **Web lookup** (`lookup_asset`) → `WebLookupApplicationError` (single variant: `NetworkError`)
->
-> **Leaf variants** (full set; per-command reachable subsets are in the tables below):
->
-> - `AssetApplicationError`: `NotFound { id }`, `DatabaseError`
-> - `AssetDomainError`: `NameEmpty`, `ReferenceEmpty`, `InvalidRiskLevel { received }`, `InvalidCurrency { currency }`, `Archived`, `CashAssetNotEditable` (CSH-016)
-> - `CategoryApplicationError`: `NotFound { id }`, `DuplicateName`, `DatabaseError`
-> - `CategoryDomainError`: `LabelEmpty`, `SystemReadonly`, `SystemProtected`
-> - `AssetPriceApplicationError`: `PriceNotFound { asset_id, date }`, `DatabaseError`
-> - `AssetPriceDomainError`: `NotPositive`, `NonFinite`, `DateInFuture`, `InvalidDateFormat { date }`
-> - `ArchiveAssetApplicationError`: `ActiveHoldings`
-> - `DeleteAssetApplicationError`: `ExistingTransactions`
-> - `WebLookupApplicationError`: `NetworkError`
+> Rust-internal type organization (per-BC enums, use-case composites, serde tagging) is out of scope for this contract — it documents the BE↔FE frontier, not Rust internals.
 
 ---
 
@@ -38,42 +13,53 @@
 
 ### Asset CRUD
 
-| Command                    | Args                                                                                                                                              | Return       | Error type              | Reachable codes                                                                                                                                                                                                                                                                                                           |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `get_assets`               | —                                                                                                                                                 | `Vec<Asset>` | `AssetApplicationError` | `DatabaseError` _(returns active assets only)_                                                                                                                                                                                                                                                                            |
-| `get_assets_with_archived` | —                                                                                                                                                 | `Vec<Asset>` | `AssetApplicationError` | `DatabaseError` _(returns all assets including archived)_                                                                                                                                                                                                                                                                 |
-| `add_asset`                | `CreateAssetDTO { name: String, class: AssetClass, category_id: String, currency: String, risk_level: i32, reference: String }`                   | `Asset`      | `AssetCrudError`        | `NameEmpty (R1)`, `ReferenceEmpty (R1)`, `InvalidRiskLevel { received } (AST-002)`, `InvalidCurrency { currency } (TRX-021)`, `NotFound { id } (CategoryApplicationError — when category_id missing)`, `DatabaseError`                                                                                                    |
-| `update_asset`             | `UpdateAssetDTO { asset_id: String, name: String, reference: String, class: AssetClass, currency: String, risk_level: i32, category_id: String }` | `Asset`      | `AssetCrudError`        | `NotFound { id } (AssetApplicationError)`, `Archived (R18 — archived asset cannot be edited)`, `CashAssetNotEditable (CSH-016)`, `NameEmpty`, `ReferenceEmpty`, `InvalidRiskLevel { received }`, `InvalidCurrency { currency }`, `NotFound { id } (CategoryApplicationError — when category_id missing)`, `DatabaseError` |
-| `unarchive_asset`          | `id: String`                                                                                                                                      | `()`         | `AssetCrudError`        | `NotFound { id } (AssetApplicationError)`, `CashAssetNotEditable (CSH-016)`, `DatabaseError`                                                                                                                                                                                                                              |
+| Command                    | Args                                                                                                                                              | Return       | Errors                                                                                                                                                                                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_assets`               | —                                                                                                                                                 | `Vec<Asset>` | `DatabaseError` _(returns active assets only)_                                                                                                                                                                                                            |
+| `get_assets_with_archived` | —                                                                                                                                                 | `Vec<Asset>` | `DatabaseError` _(returns all assets including archived)_                                                                                                                                                                                                 |
+| `add_asset`                | `CreateAssetDTO { name: String, class: AssetClass, category_id: String, currency: String, risk_level: i32, reference: String }`                   | `Asset`      | `NameEmpty` (R1), `ReferenceEmpty` (R1), `InvalidRiskLevel { received: i32 }` (AST-002), `InvalidCurrency { currency }` (TRX-021), `NotFound { id }` (when `category_id` missing), `DatabaseError`                                                        |
+| `update_asset`             | `UpdateAssetDTO { asset_id: String, name: String, reference: String, class: AssetClass, currency: String, risk_level: i32, category_id: String }` | `Asset`      | `NotFound { id }` (asset or category missing), `Archived` (R18 — archived asset cannot be edited), `CashAssetNotEditable` (CSH-016), `NameEmpty`, `ReferenceEmpty`, `InvalidRiskLevel { received: i32 }`, `InvalidCurrency { currency }`, `DatabaseError` |
+| `unarchive_asset`          | `id: String`                                                                                                                                      | `()`         | `NotFound { id }`, `CashAssetNotEditable` (CSH-016), `DatabaseError`                                                                                                                                                                                      |
 
 ### Categories
 
 > All category commands are owned by the asset BC. The system default category cannot be renamed (`SystemReadonly`) or deleted (`SystemProtected`).
 
-| Command           | Args                        | Return               | Error type                 | Reachable codes                                                                               |
-| ----------------- | --------------------------- | -------------------- | -------------------------- | --------------------------------------------------------------------------------------------- |
-| `get_categories`  | —                           | `Vec<AssetCategory>` | `CategoryApplicationError` | `DatabaseError` _(read-only; `NotFound` and `DuplicateName` are unreachable on a list query)_ |
-| `add_category`    | `label: String`             | `AssetCategory`      | `CategoryCrudError`        | `LabelEmpty`, `DuplicateName`, `DatabaseError`                                                |
-| `update_category` | `id: String, label: String` | `AssetCategory`      | `CategoryCrudError`        | `NotFound { id }`, `LabelEmpty`, `DuplicateName`, `SystemReadonly`, `DatabaseError`           |
-| `delete_category` | `id: String`                | `()`                 | `CategoryCrudError`        | `NotFound { id }`, `SystemProtected`, `DatabaseError`                                         |
+| Command           | Args                        | Return               | Errors                                                                              |
+| ----------------- | --------------------------- | -------------------- | ----------------------------------------------------------------------------------- |
+| `get_categories`  | —                           | `Vec<AssetCategory>` | `DatabaseError` _(read-only)_                                                       |
+| `add_category`    | `label: String`             | `AssetCategory`      | `LabelEmpty`, `DuplicateName`, `DatabaseError`                                      |
+| `update_category` | `id: String, label: String` | `AssetCategory`      | `NotFound { id }`, `LabelEmpty`, `DuplicateName`, `SystemReadonly`, `DatabaseError` |
+| `delete_category` | `id: String`                | `()`                 | `NotFound { id }`, `SystemProtected`, `DatabaseError`                               |
 
 ### Archive / Delete (use cases)
 
-> Both live in `use_cases/{archive_asset,delete_asset}/`. Each composes the asset BC's `AssetCrudError` (carrying the asset-existence check + the cash-asset guard), an `AccountApplicationError` leaf (the cross-BC check that no active holdings or transactions reference the asset), and a use-case-owned application error for the orchestrator's verdict.
+> Both are cross-BC use cases that check asset existence + cash-asset guard, then check the account BC for holdings/transactions referencing the asset.
 
-| Command         | Args         | Return | Error type          | Reachable codes                                                                                                                                                                                                          |
-| --------------- | ------------ | ------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `archive_asset` | `id: String` | `()`   | `ArchiveAssetError` | `NotFound { id } (AssetApplicationError)`, `CashAssetNotEditable (AssetDomainError, CSH-016)`, `DatabaseError (AssetApplicationError or AccountApplicationError)`, `ActiveHoldings (ArchiveAssetApplicationError, OQ-6)` |
-| `delete_asset`  | `id: String` | `()`   | `DeleteAssetError`  | `NotFound { id } (AssetApplicationError)`, `CashAssetNotEditable (AssetDomainError, CSH-016)`, `DatabaseError (AssetApplicationError or AccountApplicationError)`, `ExistingTransactions (DeleteAssetApplicationError)`  |
+| Command         | Args         | Return | Errors                                                                                        |
+| --------------- | ------------ | ------ | --------------------------------------------------------------------------------------------- |
+| `archive_asset` | `id: String` | `()`   | `NotFound { id }`, `CashAssetNotEditable` (CSH-016), `ActiveHoldings` (OQ-6), `DatabaseError` |
+| `delete_asset`  | `id: String` | `()`   | `NotFound { id }`, `CashAssetNotEditable` (CSH-016), `ExistingTransactions`, `DatabaseError`  |
 
 ### Asset Prices
 
-| Command              | Args                                                                        | Return            | Error type        | Reachable codes                                                                                                                                                             |
-| -------------------- | --------------------------------------------------------------------------- | ----------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `record_asset_price` | `asset_id: String, date: String, price: f64`                                | `()`              | `AssetPriceError` | `NotFound { id } (AssetApplicationError, MKT-043)`, `NotPositive (MKT-021)`, `NonFinite (MKT-021)`, `DateInFuture (MKT-022)`, `InvalidDateFormat { date }`, `DatabaseError` |
-| `get_asset_prices`   | `asset_id: String`                                                          | `Vec<AssetPrice>` | `AssetPriceError` | `NotFound { id } (AssetApplicationError, MKT-072)`, `DatabaseError`                                                                                                         |
-| `update_asset_price` | `asset_id: String, original_date: String, new_date: String, new_price: f64` | `()`              | `AssetPriceError` | `PriceNotFound { asset_id, date } (MKT-083)`, `NotPositive (MKT-082)`, `NonFinite (MKT-082)`, `DateInFuture (MKT-082)`, `InvalidDateFormat { date }`, `DatabaseError`       |
-| `delete_asset_price` | `asset_id: String, date: String`                                            | `()`              | `AssetPriceError` | `PriceNotFound { asset_id, date } (MKT-090)`, `DatabaseError`                                                                                                               |
+> All `date` / `original_date` / `new_date` arguments use ISO 8601 calendar format (e.g. `"2026-04-29"`), matching the `AssetPrice.date` shared-type convention.
+
+| Command              | Args                                                                        | Return            | Errors                                                                                                                                                                |
+| -------------------- | --------------------------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `record_asset_price` | `asset_id: String, date: String, price: f64`                                | `()`              | `NotFound { id }` (MKT-043), `NotPositive` (MKT-021), `NonFinite` (MKT-021), `DateInFuture` (MKT-022), `InvalidDateFormat { date }`, `DatabaseError`                  |
+| `get_asset_prices`   | `asset_id: String`                                                          | `Vec<AssetPrice>` | `NotFound { id }` (MKT-072), `DatabaseError`                                                                                                                          |
+| `update_asset_price` | `asset_id: String, original_date: String, new_date: String, new_price: f64` | `()`              | `PriceNotFound { asset_id, date }` (MKT-083), `NotPositive` (MKT-082), `NonFinite` (MKT-082), `DateInFuture` (MKT-082), `InvalidDateFormat { date }`, `DatabaseError` |
+| `delete_asset_price` | `asset_id: String, date: String`                                            | `()`              | `PriceNotFound { asset_id, date }` (MKT-090), `DatabaseError`                                                                                                         |
+
+### Asset Price Fetch Tasks
+
+> `fetch_all_asset_prices` is the single BE entry point shared by auto-fetch on launch (MKT-121, MKT-122) and global refresh on the dashboard (MKT-130). Both commands are acknowledged synchronously (return `()` once dispatched); per-asset results are signaled asynchronously via `AssetPriceUpdated` (MKT-112). Per-asset failures during the fetch degrade silently per MKT-114; the in-flight guard (MKT-113) rejects concurrent calls across both commands. System cash assets are excluded from scope per MKT-116.
+
+| Command                      | Args                 | Return | Errors                                                                                                                                        |
+| ---------------------------- | -------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fetch_all_asset_prices`     | —                    | `()`   | `FetchAlreadyRunning` (MKT-113), `NoFetchableHoldings` (MKT-111), `DatabaseError`, `UnknownError`                                             |
+| `fetch_account_asset_prices` | `account_id: String` | `()`   | `AccountNotFound { account_id }` (MKT-132), `FetchAlreadyRunning` (MKT-113), `NoFetchableHoldings` (MKT-111), `DatabaseError`, `UnknownError` |
 
 ### Web Lookup
 
@@ -81,9 +67,9 @@
 > API and returns transient value objects; it does not persist anything. Owned here as the asset
 > aggregate is the primary subject.
 
-| Command        | Args            | Return                   | Error type                  | Reachable codes          |
-| -------------- | --------------- | ------------------------ | --------------------------- | ------------------------ |
-| `lookup_asset` | `query: String` | `Vec<AssetLookupResult>` | `WebLookupApplicationError` | `NetworkError (WEB-025)` |
+| Command        | Args            | Return                   | Errors                   |
+| -------------- | --------------- | ------------------------ | ------------------------ |
+| `lookup_asset` | `query: String` | `Vec<AssetLookupResult>` | `NetworkError` (WEB-025) |
 
 ---
 
@@ -96,7 +82,7 @@ struct Asset {
     class: AssetClass,           // AST-003
     category: AssetCategory,     // nested category (id + name); read responses include the resolved category, not just the id
     currency: String,            // ISO 4217 (TRX-021)
-    risk_level: u8,              // 1..=5 (AST-002)
+    risk_level: u8,              // 1..=5 (AST-002); DTOs accept `i32` input and the backend validates with `InvalidRiskLevel { received: i32 }`
     reference: String,           // ticker / ISIN / freeform reference (mandatory — R1)
     is_archived: bool,           // R18
 }
@@ -136,31 +122,28 @@ struct AssetLookupResult {
 // transport-layer exception; the f64 → i64 conversion inside the command handler is the ADR-001 compliance point.
 
 struct AssetPrice {
-    asset_id: String,  // asset this price belongs to
-    date: String,      // ISO 8601 calendar date (e.g. "2026-04-29")
-    price: i64,        // market price in asset's native currency, i64 micros (ADR-001)
+    asset_id: String,            // asset this price belongs to
+    date: String,                // ISO 8601 calendar date (e.g. "2026-04-29")
+    price: i64,                  // market price in asset's native currency, i64 micros (ADR-001)
+    source: AssetPriceSource,    // MKT-100 — provenance qualifier
 }
+```
+
+```rust
+// AssetPriceSource variants (MKT-100) — Finnhub reserved for the KEY spec
+enum AssetPriceSource { Manual, Stooq }
+// Manual: every user-driven write — manual entry (MKT-020+), transaction
+//         auto-record follow-up (MKT-050+), price-history edit (MKT-083+);
+//         set by record_asset_price / update_asset_price per MKT-101.
+// Stooq:  fetch-task write (fetch_all_asset_prices, fetch_account_asset_prices)
+//         per MKT-102.
 ```
 
 ---
 
 ## Events
 
-| Event               | Payload | Direction                                                                                                                                                                                                                                                         |
-| ------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AssetUpdated`      | none    | published — fired after any successful asset CRUD write or archive/unarchive/delete (R18, R23)                                                                                                                                                                    |
-| `AssetPriceUpdated` | none    | published — fired after successful `record_asset_price` (MKT-026), `update_asset_price` (MKT-085), `delete_asset_price` (MKT-091), or auto-record on `buy_holding`/`sell_holding`/`correct_transaction` when `record_price = true` and `unit_price > 0` (MKT-057) |
-
----
-
-## Changelog
-
-- 2026-04-26 — Added by `market-price` spec: `record_asset_price`
-- 2026-04-26 — Typed errors: all commands now return discriminated-union enums instead of `String`
-- 2026-04-26 — Added `CategoryNotFound` (now reachable via `CategoryApplicationError::NotFound { id }` propagated through `AssetCrudError`)
-- 2026-04-27 — Updated by `market-price` spec (MKT-050+): `AssetPriceUpdated` event now also fires from the auto-record path on `add_transaction` / `update_transaction`; no new commands
-- 2026-04-29 — Added by `market-price` spec (MKT-070+): `get_asset_prices`, `update_asset_price`, `delete_asset_price`; `AssetPrice` shared type
-- 2026-05-03 — Merged from `asset_web_lookup-contract.md`: `lookup_asset`; added `AssetLookupResult` shared type
-- 2026-05-03 — WEB-048/049: added `exchange` field to `AssetLookupResult`; added `Derivatives` AssetClass variant (AST-003); WEB-023 extended to map Warrant/Option/Future/Rights → Derivatives
-- 2026-05-06 — CSH-016: added `CashAssetNotEditable` to `AssetDomainError`; `archive_asset` and `delete_asset` now also surface `NotFound` (commands now load the asset to enforce the cash guard)
-- 2026-05-11 — Refreshed contract after the 13-PR error-model arc: replaced legacy `*CommandError` boundary types with the current composite shape (`AssetCrudError`, `CategoryCrudError`, `AssetPriceError`, `ArchiveAssetError`, `DeleteAssetError`) and per-leaf typed enums; renamed wire variants `Unknown` → `DatabaseError`; added previously-undocumented commands `get_assets`, `get_assets_with_archived`, `add_asset`, `update_asset`, `unarchive_asset`, `get_categories`, `add_category`, `update_category`, `delete_category`, `archive_asset`, `delete_asset`; per-command tables now show both the error type and the reachable code subset; corrected `Asset` shared type — read shape carries nested `category: AssetCategory`, not `category_id: String` (the FK form is on the write DTOs only); fixed `risk_level` type `i32` → `u8` to match Rust + bindings.
+| Event               | Payload | Direction                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AssetUpdated`      | none    | published — fired after any successful asset CRUD write or archive/unarchive/delete (R18, R23)                                                                                                                                                                                                                                                                                                                         |
+| `AssetPriceUpdated` | none    | published — fired after successful `record_asset_price` (MKT-026), `update_asset_price` (MKT-085), `delete_asset_price` (MKT-091), or per-asset write success during a fetch task — `fetch_all_asset_prices` / `fetch_account_asset_prices` (MKT-112). The transaction auto-record path (MKT-055/057) emits via the same `record_asset_price` call the FE issues after the transaction commits — no separate producer. |

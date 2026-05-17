@@ -23,6 +23,7 @@ const TARGET: AssetPrice = {
   asset_id: "asset-1",
   date: "2026-04-01",
   price: 100_500_000,
+  source: "Manual",
 };
 
 // ── Hook import (does not exist yet — tests must fail) ────────────────────────

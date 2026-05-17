@@ -129,6 +129,7 @@ const makeHolding = (overrides: Partial<HoldingDetail> = {}): HoldingDetail => (
   asset_currency: "EUR",
   current_price: null,
   current_price_date: null,
+  current_price_source: null,
   unrealized_pnl: null,
   performance_pct: null,
   ...overrides,
