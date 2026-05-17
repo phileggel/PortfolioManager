@@ -2,8 +2,8 @@ use crate::{
     context::{account, asset},
     core::{logger, Event},
     use_cases::{
-        account_deletion, account_details, archive_asset, asset_web_lookup, delete_asset,
-        holding_transaction, update_checker,
+        account_deletion, account_details, archive_asset, asset_price_fetch, asset_web_lookup,
+        delete_asset, holding_transaction, update_checker,
     },
 };
 
@@ -20,9 +20,11 @@ pub fn create_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .typ::<asset::CategoryCrudError>()
         .typ::<asset::CategoryApplicationError>()
         .typ::<asset::AssetPrice>()
+        .typ::<asset::AssetPriceSource>()
         .typ::<asset::AssetPriceDomainError>()
         .typ::<asset::AssetPriceApplicationError>()
         .typ::<asset::AssetPriceError>()
+        .typ::<asset::AssetError>()
         // ----- account BC -----
         .typ::<account::Account>()
         .typ::<account::UpdateFrequency>()
@@ -51,6 +53,9 @@ pub fn create_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .typ::<account_deletion::AccountDeletionSummary>()
         .typ::<asset_web_lookup::AssetLookupResult>()
         .typ::<asset_web_lookup::WebLookupApplicationError>()
+        .typ::<asset_price_fetch::FetchAllAssetPricesError>()
+        .typ::<asset_price_fetch::FetchAccountAssetPricesError>()
+        .typ::<asset_price_fetch::FetchPriceTask>()
         .typ::<update_checker::UpdateInfo>()
         .commands(tauri_specta::collect_commands![
             // ----- asset BC -----
@@ -87,6 +92,8 @@ pub fn create_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             account_details::get_account_details,
             account_deletion::get_account_deletion_summary,
             asset_web_lookup::lookup_asset,
+            asset_price_fetch::fetch_all_asset_prices,
+            asset_price_fetch::fetch_account_asset_prices,
             update_checker::check_for_update,
             update_checker::download_update,
             update_checker::install_update,

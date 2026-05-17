@@ -70,3 +70,7 @@ clean:
 # ⚠️  Destructive: resets database and restarts app in dev mode
 reset-db:
     ./scripts/start-app.sh --reset-db
+
+# Run pending database migrations. Override `URL=...` to target a different DB.
+db-migrate URL="sqlite:.local/dev_check.sqlite":
+    cd src-tauri && DATABASE_URL={{URL}} sqlx migrate run

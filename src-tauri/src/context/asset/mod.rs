@@ -4,6 +4,8 @@ mod api;
 mod application;
 /// Core business entities and repository traits.
 mod domain;
+/// Flat BC error enum for the fetch surface (error-model.md).
+pub mod error;
 /// Data persistence implementations.
 mod repository;
 /// Coordination layer for business operations.
@@ -15,5 +17,11 @@ pub use application::{
     CategoryApplicationError, CategoryCrudError,
 };
 pub use domain::*;
+pub use error::AssetError;
 pub use repository::*;
 pub use service::*;
+
+#[cfg(test)]
+pub use domain::{
+    MockAssetCategoryRepository, MockAssetPriceRepository, MockAssetRepository, MockPriceProvider,
+};

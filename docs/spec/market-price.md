@@ -33,14 +33,14 @@ Represents a manually recorded market price for a financial asset on a specific 
 
 The `HoldingDetail` DTO defined in the ACD spec gains five new fields populated by this feature.
 
-| Field                | Business meaning                                                                                                                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `asset_currency`     | ISO 4217 currency code of the asset (e.g. `"USD"`). Required for the price label in the modal (MKT-023) and for the currency-mismatch check (MKT-034). Always present.                                 |
-| `current_price`      | Most recently dated `AssetPrice.price` for this asset, in asset currency (i64 micros). `None` if no price has ever been recorded.                                                                      |
-| `current_price_date`   | ISO date string of the price observation used as `current_price`. `None` when `current_price` is `None`.                                                                                               |
+| Field                  | Business meaning                                                                                                                                                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `asset_currency`       | ISO 4217 currency code of the asset (e.g. `"USD"`). Required for the price label in the modal (MKT-023) and for the currency-mismatch check (MKT-034). Always present.                                                               |
+| `current_price`        | Most recently dated `AssetPrice.price` for this asset, in asset currency (i64 micros). `None` if no price has ever been recorded.                                                                                                    |
+| `current_price_date`   | ISO date string of the price observation used as `current_price`. `None` when `current_price` is `None`.                                                                                                                             |
 | `current_price_source` | Provenance of the price observation used as `current_price` (see `AssetPriceSource` — `Manual` or `Stooq`). `None` when `current_price` is `None`. Surfaced so the FE can render the source badge per MKT-142 without a per-row IPC. |
-| `unrealized_pnl`     | Unrealized gain or loss in account currency (i64 micros). `None` when no price exists or when asset and account currencies differ (MKT-034). `0` when current price equals average price (not `None`). |
-| `performance_pct`    | `unrealized_pnl / cost_basis × 100`, expressed as i64 micros (e.g. 5.25 % = 5 250 000). `None` when `unrealized_pnl` is `None` or `cost_basis` is zero. `0` when `unrealized_pnl` is zero.             |
+| `unrealized_pnl`       | Unrealized gain or loss in account currency (i64 micros). `None` when no price exists or when asset and account currencies differ (MKT-034). `0` when current price equals average price (not `None`).                               |
+| `performance_pct`      | `unrealized_pnl / cost_basis × 100`, expressed as i64 micros (e.g. 5.25 % = 5 250 000). `None` when `unrealized_pnl` is `None` or `cost_basis` is zero. `0` when `unrealized_pnl` is zero.                                           |
 
 ### AccountDetailsResponse (extended)
 

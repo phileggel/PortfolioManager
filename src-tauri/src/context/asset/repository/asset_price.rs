@@ -1,4 +1,4 @@
-use super::super::domain::{AssetPrice, AssetPriceRepository};
+use super::super::domain::{AssetPrice, AssetPriceRepository, AssetPriceSource};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use sqlx::{Pool, Sqlite};
@@ -18,12 +18,14 @@ impl SqliteAssetPriceRepository {
 #[async_trait]
 impl AssetPriceRepository for SqliteAssetPriceRepository {
     async fn upsert(&self, price: AssetPrice) -> Result<()> {
+        let source = price.source.as_str();
         sqlx::query!(
-            "INSERT INTO asset_prices (asset_id, date, price) VALUES (?, ?, ?)
-             ON CONFLICT(asset_id, date) DO UPDATE SET price = excluded.price",
+            "INSERT INTO asset_prices (asset_id, date, price, source) VALUES (?, ?, ?, ?)
+             ON CONFLICT(asset_id, date) DO UPDATE SET price = excluded.price, source = excluded.source",
             price.asset_id,
             price.date,
             price.price,
+            source,
         )
         .execute(&self.pool)
         .await
@@ -33,19 +35,26 @@ impl AssetPriceRepository for SqliteAssetPriceRepository {
 
     async fn get_latest(&self, asset_id: &str) -> Result<Option<AssetPrice>> {
         let row = sqlx::query!(
-            "SELECT asset_id, date, price FROM asset_prices WHERE asset_id = ? ORDER BY date DESC LIMIT 1",
+            "SELECT asset_id, date, price, source FROM asset_prices WHERE asset_id = ? ORDER BY date DESC LIMIT 1",
             asset_id,
         )
         .fetch_optional(&self.pool)
         .await
         .context("Failed to fetch latest asset price")?;
 
-        Ok(row.map(|r| AssetPrice::restore(r.asset_id, r.date, r.price)))
+        Ok(row.map(|r| {
+            AssetPrice::restore(
+                r.asset_id,
+                r.date,
+                r.price,
+                AssetPriceSource::from_storage(&r.source),
+            )
+        }))
     }
 
     async fn get_all_for_asset(&self, asset_id: &str) -> Result<Vec<AssetPrice>> {
         let rows = sqlx::query!(
-            "SELECT asset_id, date, price FROM asset_prices WHERE asset_id = ? ORDER BY date DESC",
+            "SELECT asset_id, date, price, source FROM asset_prices WHERE asset_id = ? ORDER BY date DESC",
             asset_id,
         )
         .fetch_all(&self.pool)
@@ -54,7 +63,14 @@ impl AssetPriceRepository for SqliteAssetPriceRepository {
 
         Ok(rows
             .into_iter()
-            .map(|r| AssetPrice::restore(r.asset_id, r.date, r.price))
+            .map(|r| {
+                AssetPrice::restore(
+                    r.asset_id,
+                    r.date,
+                    r.price,
+                    AssetPriceSource::from_storage(&r.source),
+                )
+            })
             .collect())
     }
 
@@ -64,7 +80,7 @@ impl AssetPriceRepository for SqliteAssetPriceRepository {
         date: &str,
     ) -> Result<Option<AssetPrice>> {
         let row = sqlx::query!(
-            "SELECT asset_id, date, price FROM asset_prices WHERE asset_id = ? AND date = ?",
+            "SELECT asset_id, date, price, source FROM asset_prices WHERE asset_id = ? AND date = ?",
             asset_id,
             date,
         )
@@ -72,7 +88,14 @@ impl AssetPriceRepository for SqliteAssetPriceRepository {
         .await
         .context("Failed to fetch asset price by date")?;
 
-        Ok(row.map(|r| AssetPrice::restore(r.asset_id, r.date, r.price)))
+        Ok(row.map(|r| {
+            AssetPrice::restore(
+                r.asset_id,
+                r.date,
+                r.price,
+                AssetPriceSource::from_storage(&r.source),
+            )
+        }))
     }
 
     async fn delete(&self, asset_id: &str, date: &str) -> Result<()> {
@@ -112,12 +135,14 @@ impl AssetPriceRepository for SqliteAssetPriceRepository {
         .await
         .context("Failed to delete original asset price")?;
 
+        let source = new_price.source.as_str();
         sqlx::query!(
-            "INSERT INTO asset_prices (asset_id, date, price) VALUES (?, ?, ?)
-             ON CONFLICT(asset_id, date) DO UPDATE SET price = excluded.price",
+            "INSERT INTO asset_prices (asset_id, date, price, source) VALUES (?, ?, ?, ?)
+             ON CONFLICT(asset_id, date) DO UPDATE SET price = excluded.price, source = excluded.source",
             new_price.asset_id,
             new_price.date,
             new_price.price,
+            source,
         )
         .execute(&mut *tx)
         .await
@@ -160,6 +185,124 @@ mod tests {
         .expect("seed asset");
     }
 
+    // -------------------------------------------------------------------------
+    // MKT-100 — source column round-trips through upsert → get_latest / get_all_for_asset
+    // / get_by_asset_and_date. These fail until the migration adds the column and
+    // the repository methods read/write it.
+    // -------------------------------------------------------------------------
+
+    // MKT-100 / MKT-102 — upsert with source=Stooq and read back via get_latest
+    #[tokio::test]
+    async fn upsert_and_get_latest_roundtrip_source_stooq() {
+        use crate::context::asset::AssetPriceSource;
+        let pool = setup_pool().await;
+        seed_asset(&pool, "asset-1").await;
+        let repo = SqliteAssetPriceRepository::new(pool);
+
+        repo.upsert(AssetPrice::restore(
+            "asset-1".into(),
+            "2026-01-01".into(),
+            100_000_000,
+            AssetPriceSource::Stooq,
+        ))
+        .await
+        .unwrap();
+
+        let price = repo.get_latest("asset-1").await.unwrap().unwrap();
+        assert_eq!(price.source, AssetPriceSource::Stooq);
+    }
+
+    // MKT-100 / MKT-101 — upsert with source=Manual and read back via get_by_asset_and_date
+    #[tokio::test]
+    async fn upsert_and_get_by_date_roundtrip_source_manual() {
+        use crate::context::asset::AssetPriceSource;
+        let pool = setup_pool().await;
+        seed_asset(&pool, "asset-1").await;
+        let repo = SqliteAssetPriceRepository::new(pool);
+
+        repo.upsert(AssetPrice::restore(
+            "asset-1".into(),
+            "2026-01-01".into(),
+            50_000_000,
+            AssetPriceSource::Manual,
+        ))
+        .await
+        .unwrap();
+
+        let price = repo
+            .get_by_asset_and_date("asset-1", "2026-01-01")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(price.source, AssetPriceSource::Manual);
+    }
+
+    // MKT-100 — get_all_for_asset includes source on every returned row
+    #[tokio::test]
+    async fn get_all_for_asset_includes_source_field() {
+        use crate::context::asset::AssetPriceSource;
+        let pool = setup_pool().await;
+        seed_asset(&pool, "asset-1").await;
+        let repo = SqliteAssetPriceRepository::new(pool);
+
+        repo.upsert(AssetPrice::restore(
+            "asset-1".into(),
+            "2026-01-01".into(),
+            100_000_000,
+            AssetPriceSource::Manual,
+        ))
+        .await
+        .unwrap();
+        repo.upsert(AssetPrice::restore(
+            "asset-1".into(),
+            "2026-01-02".into(),
+            110_000_000,
+            AssetPriceSource::Stooq,
+        ))
+        .await
+        .unwrap();
+
+        let prices = repo.get_all_for_asset("asset-1").await.unwrap();
+        assert_eq!(prices.len(), 2);
+        // Sorted date desc: 2026-01-02 first
+        assert_eq!(prices[0].source, AssetPriceSource::Stooq);
+        assert_eq!(prices[1].source, AssetPriceSource::Manual);
+    }
+
+    // MKT-100 — replace_atomic preserves source on the new price row
+    #[tokio::test]
+    async fn replace_atomic_preserves_source_on_new_row() {
+        use crate::context::asset::AssetPriceSource;
+        let pool = setup_pool().await;
+        seed_asset(&pool, "asset-1").await;
+        let repo = SqliteAssetPriceRepository::new(pool);
+
+        repo.upsert(AssetPrice::restore(
+            "asset-1".into(),
+            "2026-01-01".into(),
+            100_000_000,
+            AssetPriceSource::Stooq,
+        ))
+        .await
+        .unwrap();
+
+        let new_price = AssetPrice::restore(
+            "asset-1".into(),
+            "2026-01-02".into(),
+            110_000_000,
+            AssetPriceSource::Manual,
+        );
+        repo.replace_atomic("asset-1", "2026-01-01", new_price)
+            .await
+            .unwrap();
+
+        let price = repo.get_latest("asset-1").await.unwrap().unwrap();
+        assert_eq!(price.source, AssetPriceSource::Manual);
+        assert_eq!(price.date, "2026-01-02");
+    }
+
+    // -------------------------------------------------------------------------
+
     // get_all_for_asset — returns all rows for the given asset, sorted date descending (MKT-072)
     #[tokio::test]
     async fn get_all_for_asset_returns_rows_date_descending() {
@@ -171,6 +314,7 @@ mod tests {
             "asset-1".into(),
             "2026-01-01".into(),
             100_000_000,
+            AssetPriceSource::Manual,
         ))
         .await
         .unwrap();
@@ -178,6 +322,7 @@ mod tests {
             "asset-1".into(),
             "2026-01-03".into(),
             130_000_000,
+            AssetPriceSource::Manual,
         ))
         .await
         .unwrap();
@@ -185,6 +330,7 @@ mod tests {
             "asset-1".into(),
             "2026-01-02".into(),
             120_000_000,
+            AssetPriceSource::Manual,
         ))
         .await
         .unwrap();
@@ -219,6 +365,7 @@ mod tests {
             "asset-1".into(),
             "2026-01-01".into(),
             100_000_000,
+            AssetPriceSource::Manual,
         ))
         .await
         .unwrap();
@@ -226,6 +373,7 @@ mod tests {
             "asset-2".into(),
             "2026-01-01".into(),
             200_000_000,
+            AssetPriceSource::Manual,
         ))
         .await
         .unwrap();
@@ -246,6 +394,7 @@ mod tests {
             "asset-1".into(),
             "2026-01-01".into(),
             100_000_000,
+            AssetPriceSource::Manual,
         ))
         .await
         .unwrap();
@@ -286,6 +435,7 @@ mod tests {
             "asset-1".into(),
             "2026-01-01".into(),
             100_000_000,
+            AssetPriceSource::Manual,
         ))
         .await
         .unwrap();
@@ -293,6 +443,7 @@ mod tests {
             "asset-1".into(),
             "2026-01-02".into(),
             110_000_000,
+            AssetPriceSource::Manual,
         ))
         .await
         .unwrap();
@@ -328,11 +479,17 @@ mod tests {
             "asset-1".into(),
             "2026-01-01".into(),
             100_000_000,
+            AssetPriceSource::Manual,
         ))
         .await
         .unwrap();
 
-        let new_price = AssetPrice::restore("asset-1".into(), "2026-01-02".into(), 110_000_000);
+        let new_price = AssetPrice::restore(
+            "asset-1".into(),
+            "2026-01-02".into(),
+            110_000_000,
+            AssetPriceSource::Manual,
+        );
         repo.replace_atomic("asset-1", "2026-01-01", new_price)
             .await
             .unwrap();
@@ -354,6 +511,7 @@ mod tests {
             "asset-1".into(),
             "2026-01-01".into(),
             100_000_000,
+            AssetPriceSource::Manual,
         ))
         .await
         .unwrap();
@@ -361,12 +519,18 @@ mod tests {
             "asset-1".into(),
             "2026-01-02".into(),
             105_000_000,
+            AssetPriceSource::Manual,
         ))
         .await
         .unwrap();
 
         // Move 2026-01-01 to 2026-01-02 — must overwrite 105_000_000
-        let new_price = AssetPrice::restore("asset-1".into(), "2026-01-02".into(), 200_000_000);
+        let new_price = AssetPrice::restore(
+            "asset-1".into(),
+            "2026-01-02".into(),
+            200_000_000,
+            AssetPriceSource::Manual,
+        );
         repo.replace_atomic("asset-1", "2026-01-01", new_price)
             .await
             .unwrap();

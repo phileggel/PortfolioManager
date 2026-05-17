@@ -95,8 +95,8 @@ The auto-fetch surface introduces brand-new error types. They MUST follow `docs/
 
 ## Migrations
 
-| File | Columns / Operations | Notes |
-| --- | --- | --- |
+| File                                                              | Columns / Operations                                                                                                           | Notes                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src-tauri/migrations/{TIMESTAMP}_add_source_to_asset_prices.sql` | `ALTER TABLE asset_prices ADD COLUMN source TEXT NOT NULL DEFAULT 'Manual';` then `UPDATE asset_prices SET source = 'Manual';` | SQLite supports the `ADD COLUMN ... NOT NULL DEFAULT` form. The UPDATE is technically redundant given the DEFAULT, but it documents the backfill intent and is safe (idempotent). Filename `{TIMESTAMP}` follows the existing convention in `src-tauri/migrations/` — inspect the most recent migration file for the exact pattern before authoring. Run `just migrate` then `just prepare-sqlx` to regenerate `.sqlx` cache. |
 
 ---
@@ -106,6 +106,7 @@ The auto-fetch surface introduces brand-new error types. They MUST follow `docs/
 ### Backend — Domain
 
 **`src-tauri/src/context/asset/domain/asset_price.rs`** (modify):
+
 - Add `enum AssetPriceSource { Manual, Stooq }` with `Serialize + Deserialize + specta::Type + Clone + Debug + PartialEq + Eq`. No `Finnhub` variant — deferred to KEY spec per ADR-008.
 - `AssetPrice` struct gains `pub source: AssetPriceSource`.
 - `AssetPrice::new` signature: `(asset_id, date, price, source)`. Validation unchanged.
@@ -113,15 +114,18 @@ The auto-fetch surface introduces brand-new error types. They MUST follow `docs/
 - Add the `PriceProvider` trait at the bottom of the file (mirrors `AssetPriceRepository`), `#[cfg_attr(test, mockall::automock)]`, `async fn fetch_price(&self, symbol: &str) -> Result<i64>`.
 
 **`src-tauri/src/context/asset/domain/stooq_symbol.rs`** (new):
+
 - `pub fn derive_stooq_symbol(reference: &str) -> Option<String>` — v1 implementation: lowercases the reference; if the reference already contains a `.` (already a Stooq-style symbol), passes it through lowercased; otherwise returns `Some(lowercased)` as the bare ticker (US default) — confirm exact heuristic when implementing against ADR-008's "lowercasing the ticker and appending an exchange suffix" guidance. Unmappable inputs (empty / non-ASCII) return `None`. Pure function — no I/O.
 - Unit tests for: bare ticker (`"AAPL"` → `"aapl"`), Euronext-style (per ADR-008 example `TTE` with French context → `"tte.fr"` — confirm during implementation whether v1 carries exchange info), unmappable returns `None`. Re-derive the exact transformation rules from ADR-008 during the implementation step (no spec mandate forces a particular shape beyond "derived from `Asset.reference`").
 
 **`src-tauri/src/context/asset/domain/mod.rs`** (modify):
+
 - Export `AssetPriceSource`, `PriceProvider`, `derive_stooq_symbol`.
 
 ### Backend — Application / Error
 
 **`src-tauri/src/context/asset/error.rs`** (new):
+
 - Flat `pub enum AssetError` per `docs/error-model.md`:
   ```
   #[serde(tag = "code")]
@@ -136,11 +140,13 @@ The auto-fetch surface introduces brand-new error types. They MUST follow `docs/
 - Decide during implementation whether `AssetNotFound { id }` is needed. If the dispatcher silently skips unknown asset ids per MKT-114, it isn't.
 
 **`src-tauri/src/context/asset/mod.rs`** (modify):
+
 - Re-export `AssetError` from `error.rs`.
 
 ### Backend — Infrastructure
 
 **`src-tauri/src/context/asset/repository/asset_price.rs`** (modify):
+
 - All `INSERT ... ON CONFLICT DO UPDATE` and `SELECT` statements include the `source` column.
 - `AssetPrice::restore` call sites pass `r.source.parse::<AssetPriceSource>()?` (use `FromStr`/`TryFrom` — or a small `match` on the TEXT discriminant; pick the simpler path at implementation time).
 - `upsert(price)` writes `price.source.as_str()` into the column (TEXT discriminant matches enum variant name verbatim per ADR-008).
@@ -148,12 +154,14 @@ The auto-fetch surface introduces brand-new error types. They MUST follow `docs/
 - Update existing `#[cfg(test)] mod tests` to seed the new `source` column.
 
 **`src-tauri/src/context/asset/repository/stooq_client.rs`** (new):
+
 - `pub struct ReqwestStooqClient { client: reqwest::Client }`
 - `impl PriceProvider for ReqwestStooqClient`
 - `fetch_price(&self, symbol)` builds `https://stooq.com/q/?s={symbol}&f=sd2t2ohlcv&i=d&e=csv` (confirm field list against ADR-008 / a quick manual probe), parses the CSV, extracts the close price, converts to i64 micros via `decimal_to_micros` (locate or add a helper in `core/` if missing). Non-2xx, parse-failure, or missing-row paths return `Err(anyhow::anyhow!(...))` — the dispatcher translates to a silent per-asset skip (MKT-114).
 - `pub fn new() -> Self` — `reqwest::Client::builder().timeout(Duration::from_secs(10)).build()`.
 
 **`src-tauri/src/context/asset/repository/mod.rs`** (modify):
+
 - Re-export `ReqwestStooqClient`.
 
 ### Backend — Use case
@@ -177,6 +185,7 @@ The auto-fetch surface introduces brand-new error types. They MUST follow `docs/
   ```
 - `account.rs` — `FetchAccountAssetPricesUseCase` + `FetchAccountAssetPricesError`. Mirrors `all.rs` plus the existence-check call `account_service.get_by_id(account_id).await?` whose `AccountApplicationError::AccountNotFound` propagates via the `#[from] AccountApplicationError` arm.
 - `api.rs`:
+
   ```rust
   #[tauri::command] #[specta::specta]
   pub async fn fetch_all_asset_prices(
@@ -191,9 +200,11 @@ The auto-fetch surface introduces brand-new error types. They MUST follow `docs/
   ```
 
 **`src-tauri/src/use_cases/mod.rs`** (modify):
+
 - `pub mod asset_price_fetch;`
 
 **`src-tauri/src/lib.rs`** (modify):
+
 - Construct `let stooq_client: Arc<dyn PriceProvider> = Arc::new(ReqwestStooqClient::new());`
 - Construct `let fetch_guard = Arc::new(FetchGuard::new());`
 - Construct `let dispatcher = Arc::new(Dispatcher::new(stooq_client.clone(), asset_price_repo.clone(), event_bus.clone()));`
@@ -202,62 +213,77 @@ The auto-fetch surface introduces brand-new error types. They MUST follow `docs/
 - `app_handle.manage(fetch_all_uc);`, `app_handle.manage(fetch_account_uc);`, `app_handle.manage(fetch_guard.clone());` (parallel to existing `manage` calls around line 180). Exposing `FetchGuard` via `manage` gives integration tests a direct handle to assert guard behavior without going through a use case.
 
 **`src-tauri/src/core/specta_builder.rs`** (modify):
+
 - Append `fetch_all_asset_prices`, `fetch_account_asset_prices` to the `collect_commands![]` list.
 
 ### Frontend
 
 **`src/features/account_details/gateway.ts`** (modify):
+
 - Add `fetchAllAssetPrices(): Promise<Result<null, FetchAllAssetPricesError>>` → `commands.fetchAllAssetPrices()`.
 - Add `fetchAccountAssetPrices(accountId): Promise<Result<null, FetchAccountAssetPricesError>>` → `commands.fetchAccountAssetPrices(accountId)`.
 - (Note: gateway placement piggy-backs on the existing `account_details` feature since the refresh button on `AccountDetailsView` lives in the same feature. The "global refresh" button placement in `AccountManager` borrows the same gateway via re-export — see `features/accounts/gateway.ts` mod below.)
 
 **`src/features/accounts/gateway.ts`** (modify):
-- Add a thin `fetchAllAssetPrices()` method that calls `commands.fetchAllAssetPrices()` directly. Per F3 ("gateway owns the commands.* call within the feature that triggers it"), do NOT re-export from `accountDetailsGateway` — the AccountManager refresh button belongs to the `accounts` feature and owns its own gateway call.
+
+- Add a thin `fetchAllAssetPrices()` method that calls `commands.fetchAllAssetPrices()` directly. Per F3 ("gateway owns the commands.\* call within the feature that triggers it"), do NOT re-export from `accountDetailsGateway` — the AccountManager refresh button belongs to the `accounts` feature and owns its own gateway call.
 
 **`src/infra/autoFetchStorage.ts`** (new — sits next to `autoRecordPriceStorage.ts` per the `lib/` → `infra/` migration; if `src/lib/autoRecordPriceStorage.ts` still lives in `lib/` at implementation time, follow the existing convention and use `src/lib/autoFetchStorage.ts` to stay surgical):
+
 - `getAutoFetch(): boolean` reads `localStorage` key `"auto_fetch_prices"` (default `false`).
 - `setAutoFetch(enabled: boolean): void` writes it.
 - Mirrors `autoRecordPriceStorage.ts` exactly.
 
 **`src/features/settings/useSettings.ts`** (modify):
+
 - Add `autoFetch: boolean` state and `toggleAutoFetch()` — wired to the new storage helpers (MKT-120).
 
 **`src/features/settings/SettingsPage.tsx`** (modify):
+
 - Add a second `<section>` block above the existing auto-record-price section per the spec's UX draft "Sits above the existing transaction-related toggle to group all price-related settings together". New i18n keys: `settings.auto_fetch_label`, `settings.auto_fetch_description`.
 
 **`src/features/settings/useSettings.test.ts`** (modify):
+
 - Add tests mirroring the existing `autoRecordPrice` set — toggling sets storage, initial read reflects storage.
 
 **`src/features/shell/`** (or wherever app-level mount lifecycle lives) — confirm at implementation time:
+
 - New one-shot effect on mount: if `getAutoFetch()` is `true`, call `accountDetailsGateway.fetchAllAssetPrices()` fire-and-forget (MKT-121). Place it next to the existing event-subscription mount logic — likely in `App.tsx` or `MainLayout.tsx`. **DO NOT** place inside `AccountManager` (the page may not be the first route the user lands on; auto-fetch must be session-wide).
 
 **`src/features/accounts/AccountManager.tsx`** (modify):
+
 - Add a "Refresh prices" `Button` to the manager layout header. Wire to a new colocated hook `useRefreshGlobalPrices.ts`:
   - `useRefreshGlobalPrices()` — `isPending` state; `refresh()` calls gateway, narrows the error on `code`, dispatches snackbar: success (`mkt.fetch_dispatched`), `FetchAlreadyRunning` (`mkt.fetch_already_running`), `NoFetchableHoldings` (`mkt.fetch_no_holdings`), `DatabaseError`/`UnknownError` (`error.DatabaseError`). MKT-115 / MKT-133. Button disabled + spinner while `isPending` (MKT-133).
 - New file: `src/features/accounts/refresh_prices/useRefreshGlobalPrices.ts` + `.test.ts`. (Sub-feature folder under `features/accounts/` per F1.)
 
 **`src/features/account_details/refresh_prices/`** (new sub-feature folder):
+
 - `useRefreshAccountPrices.ts(accountId)` mirrors the global hook but calls `fetchAccountAssetPrices(accountId)`. Adds `AccountNotFound` narrow → snackbar `error.AccountNotFound` (already an established key — confirm at implementation time, fall back to `error.DatabaseError` if absent).
 - `useRefreshAccountPrices.test.ts` mirrors the global test.
 
 **`src/features/account_details/account_details_view/AccountDetailsView.tsx`** (modify):
+
 - Add the refresh button to the page header (next to "Open balance" / "Add transaction"). Wire to `useRefreshAccountPrices(accountId)`.
 
 **`src/features/account_details/shared/presenter.ts`** (modify):
+
 - `toHoldingRow` now formats:
   - **Staleness label** (MKT-140) — computes day delta between `current_price_date` and today's local date. Returns `"—"` when no date, `"Updated today"` when delta is 0, `"Updated Nd ago"` otherwise. Add a pure helper `formatStaleness(currentPriceDate: string | null, today: Date)` for testability.
   - **Source badge** (MKT-142) — formats `current_price_source` (newly added field on `HoldingDetail` if the BE chooses to surface it; confirm during BE implementation whether `current_price_source` is added to the `HoldingDetail` DTO or whether the FE refetches via `getAssetPrices` for the badge). **Default approach**: extend `HoldingDetail` BE-side to include `current_price_source: Option<AssetPriceSource>` so the FE doesn't need a second IPC call per row. This is the lower-friction path — note this as a BE Phase 1 task addition if the spec/contract requires it (re-read MKT-142 to confirm).
 - New i18n keys: `mkt.staleness_today`, `mkt.staleness_days_ago`, `mkt.source_manual`, `mkt.source_stooq`.
 
 **`src/features/account_details/price_history/PriceHistoryModal.tsx`** (modify):
+
 - Each row gains a source badge to the right of the date (MKT-141). Reuse the same badge component used for MKT-142 — extract to `account_details/shared/SourceBadge.tsx` if it's the second consumer.
 
 **i18n updates** (`src/i18n/locales/{en,fr}/common.json`):
+
 - New keys: `settings.auto_fetch_label`, `settings.auto_fetch_description`, `mkt.fetch_dispatched`, `mkt.fetch_already_running`, `mkt.fetch_no_holdings`, `mkt.staleness_today`, `mkt.staleness_days_ago`, `mkt.source_manual`, `mkt.source_stooq`, `account.refresh_prices`, `account_details.refresh_prices`.
 
 ### E2E
 
 **`e2e/account_details/auto_fetch.test.ts`** (new, location confirmed by test-writer-e2e):
+
 - Setup: seed an account with two priced active holdings + one cash holding; install a fake `PriceProvider` registered via a test-mode toggle in `lib.rs` (confirm pattern with reviewer-infra). Alternative: mount a local HTTP fixture for Stooq via `wiremock` or a Rust test fixture (test-writer-e2e decides).
 - Happy path: click "Refresh prices" on AccountDetails → snackbar "Fetching prices…" → wait for `AssetPriceUpdated` → assert badge updates to "Stooq" + staleness "Updated today".
 - In-flight rejection: trigger two refreshes back-to-back → second one yields snackbar "Fetch already in progress".
@@ -268,30 +294,31 @@ The auto-fetch surface introduces brand-new error types. They MUST follow `docs/
 
 ## Rules Coverage
 
-| Rule | Layer | Task | Notes |
-| ---- | ----- | ---- | ----- |
-| MKT-100 | backend | `AssetPriceSource` enum in `domain/asset_price.rs` | Variants `Manual | Stooq`; `Finnhub` deferred to KEY |
-| MKT-101 | backend | `AssetService::record_asset_price`, `update_asset_price` hardcode `source = Manual` | Existing-method touch; covered by adjusted existing tests |
-| MKT-102 | backend | `dispatcher.rs` upsert writes `source = Stooq` | New code |
-| MKT-110 | backend | `derive_stooq_symbol` in `domain/stooq_symbol.rs`; called by the use cases when building the dispatch scope | Pure fn — unit-testable |
-| MKT-111 | backend | Both use cases reject `NoFetchableHoldings` after pre-deriving symbols and discarding non-derivable entries (so "active AND derivable" matches the spec wording) | Composite flat variant |
-| MKT-112 | backend | `dispatcher.rs` publishes `AssetPriceUpdated` per write | Reuses existing event |
-| MKT-113 | backend | `FetchGuard::try_acquire` returns `None` → composite `FetchAlreadyRunning` | RAII lease for panic safety |
-| MKT-114 | backend | `dispatcher.rs` per-asset HTTP / parse / upsert try/catch → `tracing::warn!` + continue | Silent skip; no FE surface |
-| MKT-115 | frontend | `useRefreshGlobalPrices` / `useRefreshAccountPrices` narrow + snackbar (3 branches: dispatch-success "Fetching prices…", in-flight rejection "Fetch already in progress", no-fetchable-holdings rejection "No holdings to fetch") | `[unit-test-needed]` — one test per branch |
-| MKT-116 | backend | Both use cases filter `system-cash-*` prefix from the scope via `core::cash` helper before symbol derivation | New code |
-| MKT-120 | frontend | `useSettings.autoFetch` + storage helper | `[unit-test-needed]` |
-| MKT-121 | frontend | Mount-once effect in `App.tsx` / `MainLayout.tsx` | Fire-and-forget; conditional on `getAutoFetch()` |
-| MKT-122 | backend | `FetchAllAssetPricesUseCase::run` | New code |
-| MKT-130 | frontend | "Refresh prices" button on `AccountManager` header | New sub-feature `refresh_prices/` |
-| MKT-131 | frontend | "Refresh prices" button on `AccountDetailsView` header | New sub-feature `refresh_prices/` |
-| MKT-132 | backend | `FetchAccountAssetPricesUseCase::run` rejects via `AccountApplicationError::AccountNotFound` (from `get_by_id` on `Ok(None)`) | Wrapped in composite |
-| MKT-133 | frontend | `isPending` state in both refresh hooks disables button + shows spinner | `[unit-test-needed]` |
-| MKT-140 | frontend | `presenter.ts:formatStaleness` + Current Price secondary label | `[unit-test-needed]` (pure fn; new file or new export) |
-| MKT-141 | frontend | `PriceHistoryModal.tsx` row badge | New component / reuse |
-| MKT-142 | frontend | `AccountDetailsView` Current Price column source badge | `[unit-test-needed]` — `presenter.ts:toHoldingRow` derives the badge label from `current_price_source`; requires `current_price_source` on `HoldingDetail` (BE Phase 1) |
+| Rule    | Layer    | Task                                                                                                                                                                                                                              | Notes                                                                                                                                                                   |
+| ------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| MKT-100 | backend  | `AssetPriceSource` enum in `domain/asset_price.rs`                                                                                                                                                                                | Variants `Manual                                                                                                                                                        | Stooq`; `Finnhub` deferred to KEY |
+| MKT-101 | backend  | `AssetService::record_asset_price`, `update_asset_price` hardcode `source = Manual`                                                                                                                                               | Existing-method touch; covered by adjusted existing tests                                                                                                               |
+| MKT-102 | backend  | `dispatcher.rs` upsert writes `source = Stooq`                                                                                                                                                                                    | New code                                                                                                                                                                |
+| MKT-110 | backend  | `derive_stooq_symbol` in `domain/stooq_symbol.rs`; called by the use cases when building the dispatch scope                                                                                                                       | Pure fn — unit-testable                                                                                                                                                 |
+| MKT-111 | backend  | Both use cases reject `NoFetchableHoldings` after pre-deriving symbols and discarding non-derivable entries (so "active AND derivable" matches the spec wording)                                                                  | Composite flat variant                                                                                                                                                  |
+| MKT-112 | backend  | `dispatcher.rs` publishes `AssetPriceUpdated` per write                                                                                                                                                                           | Reuses existing event                                                                                                                                                   |
+| MKT-113 | backend  | `FetchGuard::try_acquire` returns `None` → composite `FetchAlreadyRunning`                                                                                                                                                        | RAII lease for panic safety                                                                                                                                             |
+| MKT-114 | backend  | `dispatcher.rs` per-asset HTTP / parse / upsert try/catch → `tracing::warn!` + continue                                                                                                                                           | Silent skip; no FE surface                                                                                                                                              |
+| MKT-115 | frontend | `useRefreshGlobalPrices` / `useRefreshAccountPrices` narrow + snackbar (3 branches: dispatch-success "Fetching prices…", in-flight rejection "Fetch already in progress", no-fetchable-holdings rejection "No holdings to fetch") | `[unit-test-needed]` — one test per branch                                                                                                                              |
+| MKT-116 | backend  | Both use cases filter `system-cash-*` prefix from the scope via `core::cash` helper before symbol derivation                                                                                                                      | New code                                                                                                                                                                |
+| MKT-120 | frontend | `useSettings.autoFetch` + storage helper                                                                                                                                                                                          | `[unit-test-needed]`                                                                                                                                                    |
+| MKT-121 | frontend | Mount-once effect in `App.tsx` / `MainLayout.tsx`                                                                                                                                                                                 | Fire-and-forget; conditional on `getAutoFetch()`                                                                                                                        |
+| MKT-122 | backend  | `FetchAllAssetPricesUseCase::run`                                                                                                                                                                                                 | New code                                                                                                                                                                |
+| MKT-130 | frontend | "Refresh prices" button on `AccountManager` header                                                                                                                                                                                | New sub-feature `refresh_prices/`                                                                                                                                       |
+| MKT-131 | frontend | "Refresh prices" button on `AccountDetailsView` header                                                                                                                                                                            | New sub-feature `refresh_prices/`                                                                                                                                       |
+| MKT-132 | backend  | `FetchAccountAssetPricesUseCase::run` rejects via `AccountApplicationError::AccountNotFound` (from `get_by_id` on `Ok(None)`)                                                                                                     | Wrapped in composite                                                                                                                                                    |
+| MKT-133 | frontend | `isPending` state in both refresh hooks disables button + shows spinner                                                                                                                                                           | `[unit-test-needed]`                                                                                                                                                    |
+| MKT-140 | frontend | `presenter.ts:formatStaleness` + Current Price secondary label                                                                                                                                                                    | `[unit-test-needed]` (pure fn; new file or new export)                                                                                                                  |
+| MKT-141 | frontend | `PriceHistoryModal.tsx` row badge                                                                                                                                                                                                 | New component / reuse                                                                                                                                                   |
+| MKT-142 | frontend | `AccountDetailsView` Current Price column source badge                                                                                                                                                                            | `[unit-test-needed]` — `presenter.ts:toHoldingRow` derives the badge label from `current_price_source`; requires `current_price_source` on `HoldingDetail` (BE Phase 1) |
 
 **Modified-function coverage** (`[unit-test-needed]` summary for `test-writer-frontend`):
+
 - `useSettings.ts:toggleAutoFetch` (new sibling of `toggleAutoRecordPrice`)
 - `presenter.ts:formatStaleness`
 - `presenter.ts:toHoldingRow` (now consumes `current_price_source`)
@@ -305,6 +332,7 @@ The auto-fetch surface introduces brand-new error types. They MUST follow `docs/
 **Strategy**: `3 PRs` (recommended by user; matches the BE → FE → E2E split convention from § PR strategy in `CLAUDE.md`)
 
 **Estimate** (rough — verify after Phase 1 stubs land):
+
 - **BE (Phase 1)**: ~14 files, ~600 LOC churn (migration + 1 enum + 1 trait + 1 pure fn + 1 Reqwest client + 5 use-case files + lib.rs/specta_builder wiring + existing service / repo touches + AssetPrice DTO field add)
 - **FE (Phase 2)**: ~12 files, ~450 LOC churn (gateway methods + 2 new sub-feature folders × 2 files + settings toggle + presenter staleness + source badge + i18n bilingual keys + tests)
 - **E2E + closure (Phase 3)**: ~5 files, ~200 LOC (one E2E test file + ARCHITECTURE.md / todo.md / spec-check)
@@ -339,7 +367,7 @@ The BE estimate exceeds the "≥500 LOC OR ≥20 files" trigger; the FE adds eno
 
 ## Follow-ups / Out-of-scope
 
-- **(asset) — Collapse `AssetApplicationError` + `AssetPriceApplicationError` + `CategoryApplicationError` + their composites into one flat `AssetError`** per the new error-model rule. This amendment introduces `AssetError` *additively* for the new fetch surface only; the existing CRUD / price-history / category surfaces keep their per-aggregate enums. File via `/techdebt` after PR 1 lands (or piggy-back on the existing "(contracts) — Migrate account-contract.md and update-contract.md to wire-only framing" entry if a single tracking item makes sense — confirm with the user). The same applies to the account BC: `AccountApplicationError` should eventually become `AccountError` per the gold standard.
+- **(asset) — Collapse `AssetApplicationError` + `AssetPriceApplicationError` + `CategoryApplicationError` + their composites into one flat `AssetError`** per the new error-model rule. This amendment introduces `AssetError` _additively_ for the new fetch surface only; the existing CRUD / price-history / category surfaces keep their per-aggregate enums. File via `/techdebt` after PR 1 lands (or piggy-back on the existing "(contracts) — Migrate account-contract.md and update-contract.md to wire-only framing" entry if a single tracking item makes sense — confirm with the user). The same applies to the account BC: `AccountApplicationError` should eventually become `AccountError` per the gold standard.
 - **(mkt) — Surface fetch-task completion to FE for end-of-task user feedback** — already in `docs/todo.md`; keep open. Today only dispatch-time feedback exists (MKT-115); the "12 prices updated, 3 skipped" summary is a future spec amendment.
 - **(pfd) — Relocate the global "Refresh prices" button from `AccountManager` to the Portfolio Dashboard page header** when PFD ships. The current placement is the closest existing "global" surface; no transition comment about future relocation per the locked decisions.
 - **(asset) — OpenFIGI 429 + Finnhub fallback** — both deferred to KEY spec per ADR-008 / ADR-011 and existing `docs/todo.md` entries. The fetch surface is single-provider in v1.

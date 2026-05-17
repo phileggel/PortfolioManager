@@ -4,7 +4,7 @@ use super::application::{
 };
 use super::domain::{
     Asset, AssetCategory, AssetCategoryRepository, AssetClass, AssetPrice, AssetPriceDomainError,
-    AssetPriceRepository, AssetRepository, SYSTEM_CATEGORY_ID,
+    AssetPriceRepository, AssetPriceSource, AssetRepository, SYSTEM_CATEGORY_ID,
 };
 use crate::{
     context::asset::{CreateAssetDTO, UpdateAssetDTO},
@@ -356,8 +356,13 @@ impl AssetService {
             return Err(AssetPriceDomainError::NonFinite.into());
         }
         let price_micros = Self::f64_to_micros(price_f64);
-        // MKT-021, MKT-022 — validate via domain entity factory
-        let price = AssetPrice::new(asset_id.to_string(), date.to_string(), price_micros)?;
+        // MKT-021, MKT-022 — validate via domain entity factory; MKT-101 — user-driven write stamps source = Manual
+        let price = AssetPrice::new(
+            asset_id.to_string(),
+            date.to_string(),
+            price_micros,
+            AssetPriceSource::Manual,
+        )?;
         // MKT-025 — upsert
         self.price_repo.upsert(price).await.map_err(|e| {
             tracing::error!(target: BACKEND, asset_id = %asset_id, date = %date, err = ?e, "record_asset_price: upsert failure");
@@ -410,8 +415,13 @@ impl AssetService {
             return Err(AssetPriceDomainError::NonFinite.into());
         }
         let price_micros = Self::f64_to_micros(price_f64);
-        // MKT-082 — validate via domain factory (NotPositive, DateInFuture, InvalidDateFormat)
-        let new_price = AssetPrice::new(asset_id.to_string(), new_date.to_string(), price_micros)?;
+        // MKT-082 — validate via domain factory (NotPositive, DateInFuture, InvalidDateFormat); MKT-101 — user-driven write stamps source = Manual
+        let new_price = AssetPrice::new(
+            asset_id.to_string(),
+            new_date.to_string(),
+            price_micros,
+            AssetPriceSource::Manual,
+        )?;
         // MKT-083 — reject if original record absent
         ensure_price_exists_for(&*self.price_repo, asset_id, original_date).await?;
         if original_date == new_date {
@@ -648,7 +658,12 @@ mod tests {
     }
 
     fn make_price(asset_id: &str, date: &str, price: i64) -> AssetPrice {
-        AssetPrice::restore(asset_id.to_string(), date.to_string(), price)
+        AssetPrice::restore(
+            asset_id.to_string(),
+            date.to_string(),
+            price,
+            AssetPriceSource::Manual,
+        )
     }
 
     fn base_dto(name: &str) -> CreateAssetDTO {

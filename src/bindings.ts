@@ -369,6 +369,31 @@ async lookupAsset(query: string) : Promise<Result<AssetLookupResult[], WebLookup
 }
 },
 /**
+ * Dispatches an all-accounts auto-fetch task (MKT-122, MKT-130).
+ * Returns `Ok(())` immediately after successful dispatch; per-asset results
+ * arrive asynchronously via `AssetPriceUpdated` events (MKT-112).
+ */
+async fetchAllAssetPrices() : Promise<Result<null, FetchAllAssetPricesError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("fetch_all_asset_prices") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dispatches a per-account price-fetch task (MKT-132, MKT-131).
+ * Returns `Ok(())` immediately after successful dispatch.
+ */
+async fetchAccountAssetPrices(accountId: string) : Promise<Result<null, FetchAccountAssetPricesError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("fetch_account_asset_prices", { accountId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Checks whether a new application version is available (R1, R25).
  * 
  * Returns `None` if the application is up to date or if the check fails due
@@ -829,6 +854,20 @@ export type AssetDomainError =
  */
 { code: "CashAssetNotEditable" }
 /**
+ * Flat error enum for the asset bounded context (per error-model.md).
+ * 
+ * Holds every variant the asset BC can raise on the new fetch surface. The
+ * existing `AssetApplicationError`, `AssetPriceApplicationError`, and the
+ * legacy composites remain untouched on the existing CRUD / price-history
+ * surfaces (see docs/techdebt.md for the planned retrofit).
+ */
+export type AssetError = 
+/**
+ * Application-layer translation of any infrastructure failure from an
+ * asset-repo call on the fetch surface.
+ */
+{ code: "DatabaseError" }
+/**
  * Transient value object returned by the orchestrator's `search` method.
  * Mirrors the shape exposed at the Tauri boundary.
  */
@@ -855,7 +894,7 @@ asset_class: AssetClass | null;
  */
 exchange: string | null }
 /**
- * A manually recorded market price for a financial asset on a specific date.
+ * A recorded market price for a financial asset on a specific date.
  * Owned by the `asset` bounded context (MKT spec).
  */
 export type AssetPrice = { 
@@ -870,7 +909,11 @@ date: string;
 /**
  * Market price per unit in the asset's native currency (i64 micro-units, ADR-001).
  */
-price: number }
+price: number; 
+/**
+ * Provenance of this price record (MKT-100).
+ */
+source: AssetPriceSource }
 /**
  * Application-layer rejections for the AssetPrice sub-aggregate of the Asset
  * BC — concerns raised at the service layer rather than by an aggregate method
@@ -956,6 +999,18 @@ AssetPriceApplicationError |
  * `InvalidDateFormat`).
  */
 AssetPriceDomainError
+/**
+ * Provenance qualifier for an AssetPrice record (MKT-100).
+ */
+export type AssetPriceSource = 
+/**
+ * User-driven write: manual entry or price-history edit (MKT-101).
+ */
+"Manual" | 
+/**
+ * Auto-fetched from Stooq (MKT-102).
+ */
+"Stooq"
 /**
  * Parameters for recording a purchase of an asset into an account.
  */
@@ -1281,6 +1336,66 @@ export type Event =
  */
 { type: "AssetPriceUpdated" }
 /**
+ * Wire-facing error composite for `fetch_account_asset_prices` (MKT-113, MKT-111, MKT-132).
+ * 
+ * See `FetchAllAssetPricesError` for the shared shape rationale.
+ */
+export type FetchAccountAssetPricesError = 
+/**
+ * Propagates asset-BC failures (e.g. `DatabaseError`) via `?`.
+ */
+AssetError | 
+/**
+ * Propagates account-BC failures (`AccountNotFound`, `DatabaseError`) via `?`.
+ */
+AccountApplicationError | 
+/**
+ * Use-case-specific failures (`FetchAlreadyRunning`, `NoFetchableHoldings`, `UnknownError`).
+ */
+FetchPriceTask
+/**
+ * Wire-facing error composite for `fetch_all_asset_prices` (MKT-113, MKT-111, MKT-122).
+ * 
+ * `#[serde(untagged)]` lets every arm surface its inner `{ "code": "..." }` payload
+ * directly on the wire. Each arm carries a tagged inner type (BC enum or
+ * `FetchPriceTask`) so the discriminator survives the untagging.
+ */
+export type FetchAllAssetPricesError = 
+/**
+ * Propagates asset-BC failures (e.g. `DatabaseError`) via `?`.
+ */
+AssetError | 
+/**
+ * Propagates account-BC failures (`AccountNotFound`, `DatabaseError`) via `?`.
+ */
+AccountApplicationError | 
+/**
+ * Use-case-specific failures (`FetchAlreadyRunning`, `NoFetchableHoldings`, `UnknownError`).
+ */
+FetchPriceTask
+/**
+ * Use-case-specific outcomes for the asset-price fetch tasks shared by
+ * `FetchAllAssetPricesError` and `FetchAccountAssetPricesError`.
+ * 
+ * Carried inside each composite as a single `Failure(#[from] FetchPriceTask)` arm.
+ * `#[serde(tag = "code")]` gives every variant a `{ "code": "..." }` payload so the
+ * surrounding `#[serde(untagged)]` composite emits a flat, narrowable shape on the
+ * wire.
+ */
+export type FetchPriceTask = 
+/**
+ * A fetch task is already in progress (MKT-113).
+ */
+{ code: "FetchAlreadyRunning" } | 
+/**
+ * No active holdings with a derivable provider symbol found in scope (MKT-111).
+ */
+{ code: "NoFetchableHoldings" } | 
+/**
+ * Catch-all for unexpected runtime failures not attributable to a specific BC.
+ */
+{ code: "UnknownError" }
+/**
  * Current state of a financial position: an asset held within an account (ADR-002).
  * All financial fields are stored as i64 micro-units (ADR-001).
  */
@@ -1357,6 +1472,10 @@ current_price: number | null;
  * ISO date string of the price observation. None when current_price is None (MKT-031).
  */
 current_price_date: string | null; 
+/**
+ * Provenance of `current_price`. None when current_price is None (MKT-142).
+ */
+current_price_source: AssetPriceSource | null; 
 /**
  * Unrealized gain/loss in account currency (i64 micros). None on currency mismatch or no price (MKT-033/034).
  * 0 (not None) when current price equals average price (MKT-033).
