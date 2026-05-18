@@ -59,8 +59,8 @@ async fn build_ctx() -> Ctx {
         struct NoOpProvider;
         #[async_trait::async_trait]
         impl vault_compass_lib::context::asset::PriceProvider for NoOpProvider {
-            async fn fetch_price(&self, _symbol: &str) -> anyhow::Result<i64> {
-                Ok(100_000_000)
+            async fn fetch_price(&self, _symbol: &str) -> anyhow::Result<Option<i64>> {
+                Ok(Some(100_000_000))
             }
         }
 

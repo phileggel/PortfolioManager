@@ -85,9 +85,14 @@ pub enum AssetPriceSource {
 #[async_trait::async_trait]
 pub trait PriceProvider: Send + Sync {
     /// Fetches the latest price for the given provider symbol.
-    /// Returns `Ok(i64_micros)` on success; `Err` on any HTTP / parse failure
-    /// (the caller treats any error as a per-asset skip per MKT-114).
-    async fn fetch_price(&self, symbol: &str) -> anyhow::Result<i64>;
+    ///
+    /// - `Ok(Some(price_micros))` — the provider returned a usable quote.
+    /// - `Ok(None)` — the provider explicitly reports "no data" for this symbol
+    ///   (e.g. Stooq's `N/D` sentinel). Treated as a quiet per-asset skip with a
+    ///   `tracing::debug!` line; not a fetch failure.
+    /// - `Err(_)` — transient HTTP / parse / IO failure. The dispatcher logs at
+    ///   `tracing::warn!` and continues with the next asset (MKT-114).
+    async fn fetch_price(&self, symbol: &str) -> anyhow::Result<Option<i64>>;
 }
 
 /// Interface for AssetPrice persistence (upsert by (asset_id, date), MKT-025).
