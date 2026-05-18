@@ -52,20 +52,20 @@ OpenFIGI's no-API-key tier caps `/v3/search` at 5 requests/minute. Today every 4
 
 Surfaced 2026-05-16 during a manual test session (`api.openfigi.com 429 Too Many Requests`).
 
-## (spec) — Amend MKT spec: add source field + Stooq auto-fetch rules
+## (asset) — Amend MKT spec: add explicit `stooq_symbol` field on Asset
 
-ADR-008 introduces `AssetPrice.source` (variants `Manual | Stooq` in v1; `Finnhub` deferred to KEY phase). ADR-012 (supersedes ADR-010) establishes latest-write-wins regardless of source; `source` is metadata for traceability and does NOT influence read/write precedence. The current MKT spec (`docs/spec/market-price.md`) has no `source` field on `AssetPrice` but its precedence story (MKT-025 last-write-wins, MKT-058 silent overwrite) already matches ADR-012 — no precedence reconciliation needed.
+Auto-fetch shipped (MKT-100..MKT-142 across PRs #29, #30, and the E2E + closure PR). The `derive_stooq_symbol` helper currently lowercases the asset's `reference` field, which works for US tickers (`AAPL` → `aapl`) but fails for Euronext / LSE / Frankfurt listings where Stooq expects a suffix (e.g. `ai.fr` for Air Liquide on Paris, `bmw.de` for BMW on Frankfurt). N/D responses degrade silently per MKT-114, so non-US assets quietly never get a price.
 
-**Required spec edits**:
+**Proposed shape**:
 
-- Add `source: AssetPriceSource` to the AssetPrice entity table (text discriminant per ADR-008)
-- Annotate MKT-025 / MKT-058 to note the new `source` field is written alongside the price (no behavioral change — confirm via spec-reviewer)
-- New MKT-100+ rules covering: on-app-launch auto-fetch via Stooq, per-day cache (≤24h fresh), manual refresh button (global on dashboard + per-asset on detail), staleness indicator copy, Stooq symbol derivation from `(ticker, exchange_code)`
-- Confirm: `record_asset_price` writes `source: Manual` (both MKT modal entry and transaction `record_price=true` paths)
+- New nullable `stooq_symbol: Option<String>` column on `Asset` (migration)
+- Add/Edit Asset form gains an optional "Stooq symbol" field with a help link / examples
+- `derive_stooq_symbol` prefers `asset.stooq_symbol` when set, falls back to current behaviour
+- Spec amendment to MKT-110 covering the user-provided symbol; UL entry for "Stooq symbol"
 
-Workflow-A: `/spec-writer market-price` (amend) → `spec-reviewer` → `/contract` refresh → `feature-planner` → implementation (migration + Stooq client + repository + new auto-fetch use case + UI). Per Option B sequencing: this is step 1 of PFD enablement; FXR is step 2; PFD is step 3; KEY (Finnhub fallback + OpenFIGI key) is the QoL follow-up.
+**Why separate from the auto-fetch walk**: shipping the auto-fetch core without this means US-only users still benefit immediately; non-US users get a follow-up patch that improves coverage. Surfaced 2026-05-18 after a manual test against `FR0000120073` (Air Liquide ISIN — Stooq returned all-N/D) and `ai.fr` (Stooq returned real price).
 
-Surfaced 2026-05-16 by `adr-reviewer`; simplified 2026-05-17 after ADR-010 was superseded by ADR-012.
+Workflow-A: `/spec-writer market-price` (amend MKT-110) → `spec-reviewer` → `/contract` refresh → `feature-planner` → implementation.
 
 ## (spec) — Write KEY spec (User API Key Management)
 
