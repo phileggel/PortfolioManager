@@ -32,7 +32,7 @@ impl ReqwestStooqClient {
 
 #[async_trait]
 impl PriceProvider for ReqwestStooqClient {
-    async fn fetch_price(&self, symbol: &str) -> Result<i64> {
+    async fn fetch_price(&self, symbol: &str) -> Result<Option<i64>> {
         let url = STOOQ_URL_TEMPLATE.replace("{symbol}", symbol);
         let resp = self
             .client
@@ -55,7 +55,10 @@ impl PriceProvider for ReqwestStooqClient {
     }
 }
 
-fn parse_close_micros(csv: &str) -> Result<i64> {
+/// Stooq's CSV sentinel for "no data available for this symbol".
+const NO_DATA_SENTINEL: &str = "N/D";
+
+fn parse_close_micros(csv: &str) -> Result<Option<i64>> {
     let data_row = csv
         .lines()
         .nth(1)
@@ -63,15 +66,18 @@ fn parse_close_micros(csv: &str) -> Result<i64> {
     let close = data_row
         .split(',')
         .nth(CSV_CLOSE_COLUMN_INDEX)
-        .ok_or_else(|| anyhow!("missing close column"))?;
+        .ok_or_else(|| anyhow!("missing close column"))?
+        .trim();
+    if close == NO_DATA_SENTINEL {
+        return Ok(None);
+    }
     let price: f64 = close
-        .trim()
         .parse()
         .map_err(|e| anyhow!("close not numeric ({close:?}): {e}"))?;
     if !price.is_finite() || price <= 0.0 {
         return Err(anyhow!("close is non-finite or non-positive: {price}"));
     }
-    Ok((price * MICROS_PER_UNIT).round() as i64)
+    Ok(Some((price * MICROS_PER_UNIT).round() as i64))
 }
 
 #[cfg(test)]
@@ -83,7 +89,7 @@ mod tests {
         let csv = "Symbol,Date,Time,Open,High,Low,Close,Volume\n\
                    AAPL.US,2026-05-16,21:55:00,189.50,190.20,188.75,189.95,12345678";
         let micros = parse_close_micros(csv).unwrap();
-        assert_eq!(micros, 189_950_000);
+        assert_eq!(micros, Some(189_950_000));
     }
 
     #[test]
@@ -92,10 +98,21 @@ mod tests {
         assert!(parse_close_micros(csv).is_err());
     }
 
+    // Stooq returns the N/D sentinel for symbols it does not recognize. This is a
+    // quiet "no data" outcome, not a parse failure — the dispatcher logs at debug
+    // level and continues. See `PriceProvider::fetch_price` doc.
+    #[test]
+    fn returns_ok_none_when_close_is_no_data_sentinel() {
+        let csv = "Symbol,Date,Time,Open,High,Low,Close,Volume\n\
+                   FR0000120073,N/D,N/D,N/D,N/D,N/D,N/D,N/D";
+        let result = parse_close_micros(csv).unwrap();
+        assert_eq!(result, None);
+    }
+
     #[test]
     fn rejects_non_numeric_close() {
         let csv = "Symbol,Date,Time,Open,High,Low,Close,Volume\n\
-                   AAPL.US,2026-05-16,21:55:00,189.50,190.20,188.75,N/D,0";
+                   AAPL.US,2026-05-16,21:55:00,189.50,190.20,188.75,bogus,0";
         assert!(parse_close_micros(csv).is_err());
     }
 

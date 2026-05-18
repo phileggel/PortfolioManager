@@ -139,10 +139,10 @@ export function HoldingRow({
       <td className="m3-td text-right">
         <PnlCell value={row.realizedPnl} raw={row.realizedPnlRaw} />
       </td>
-      {/* MKT-030 — Current price */}
+      {/* MKT-030 — Current price; MKT-140 staleness; MKT-142 source badge */}
       <td className="m3-td text-right tabular-nums">
         {row.currentPrice !== "—" ? (
-          <div className="flex flex-col items-end">
+          <div className="flex flex-col items-end gap-0.5">
             <span>{row.currentPrice}</span>
             {row.currentPriceDate && (
               <span className="text-xs text-m3-on-surface-variant">
@@ -151,6 +151,18 @@ export function HoldingRow({
                 })}
               </span>
             )}
+            <div className="flex items-center gap-1.5">
+              {row.sourceLabel && (
+                <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-m3-surface-container-highest text-m3-on-surface-variant">
+                  {t(row.sourceLabel)}
+                </span>
+              )}
+              {row.staleness && (
+                <span className="text-[10px] text-m3-on-surface-variant">
+                  {t(row.staleness.key, row.staleness.params)}
+                </span>
+              )}
+            </div>
           </div>
         ) : (
           <span className="text-m3-on-surface-variant">{row.currentPrice}</span>

@@ -92,6 +92,7 @@
   "account": {
     "title": "Comptes",
     "fab_label": "Ajouter un compte",
+    "refresh_prices": "Actualiser les prix",
     "search_placeholder": "Rechercher un compte...",
     "column_name": "Nom",
     "column_frequency": "Fréquence",
@@ -180,7 +181,9 @@
     "language_en": "English",
     "language_fr": "Français",
     "auto_record_price_label": "Enregistrer automatiquement le prix de transaction comme prix de marché",
-    "auto_record_price_description": "Si activé, la case d'enregistrement automatique sera pré-cochée dans les nouveaux formulaires de transaction."
+    "auto_record_price_description": "Si activé, la case d'enregistrement automatique sera pré-cochée dans les nouveaux formulaires de transaction.",
+    "auto_fetch_label": "Récupérer automatiquement les prix au démarrage",
+    "auto_fetch_description": "Si activé, l'application récupère les prix actuels depuis Stooq pour toutes les positions actives à chaque démarrage."
   },
   "shell": {
     "sidebar_collapse": "Réduire le menu",
@@ -284,7 +287,17 @@
     "action_open_balance": "Ouvrir un solde",
     "action_deposit": "Dépôt",
     "action_withdraw": "Retrait",
+    "action_refresh_prices": "Actualiser les prix",
     "total_global_value": "Valeur globale"
+  },
+  "mkt": {
+    "fetch_dispatched": "Récupération des prix…",
+    "fetch_already_running": "Une récupération de prix est déjà en cours.",
+    "fetch_no_holdings": "Aucune position à actualiser.",
+    "source_manual": "Manuel",
+    "source_stooq": "Stooq",
+    "staleness_today": "Mis à jour aujourd'hui",
+    "staleness_days_ago": "Mis à jour il y a {{days}} j"
   },
   "cash": {
     "deposit_modal_title": "Enregistrer un dépôt",
@@ -322,6 +335,7 @@
     "empty": "Aucun prix enregistré",
     "column_date": "Date",
     "column_price": "Prix",
+    "column_source": "Source",
     "column_actions": "Actions",
     "action_edit": "Modifier le prix",
     "action_delete": "Supprimer le prix",

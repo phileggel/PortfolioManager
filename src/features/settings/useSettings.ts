@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getLanguageOverride, resolveBrowserLang, setLanguageOverride } from "@/i18n/config";
+import { getAutoFetch, setAutoFetch } from "@/lib/autoFetchStorage";
 import { getAutoRecordPrice, setAutoRecordPrice } from "@/lib/autoRecordPriceStorage";
 
 export type LanguageChoice = "auto" | "en" | "fr";
@@ -13,6 +14,7 @@ export function useSettings() {
   );
 
   const [autoRecordPrice, setAutoRecordPriceState] = useState<boolean>(() => getAutoRecordPrice());
+  const [autoFetch, setAutoFetchState] = useState<boolean>(() => getAutoFetch());
 
   const setLanguage = useCallback(
     (choice: LanguageChoice) => {
@@ -36,5 +38,20 @@ export function useSettings() {
     });
   }, []);
 
-  return { currentChoice, setLanguage, autoRecordPrice, toggleAutoRecordPrice };
+  const toggleAutoFetch = useCallback(() => {
+    setAutoFetchState((current) => {
+      const next = !current;
+      setAutoFetch(next);
+      return next;
+    });
+  }, []);
+
+  return {
+    currentChoice,
+    setLanguage,
+    autoRecordPrice,
+    toggleAutoRecordPrice,
+    autoFetch,
+    toggleAutoFetch,
+  };
 }

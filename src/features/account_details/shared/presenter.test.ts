@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { AccountDetailsResponse, ClosedHoldingDetail, HoldingDetail } from "@/bindings";
-import { toAccountSummary, toClosedHoldingRow, toHoldingRow } from "./presenter";
+import type {
+  AccountDetailsResponse,
+  AssetPriceSource,
+  ClosedHoldingDetail,
+  HoldingDetail,
+} from "@/bindings";
+import {
+  formatSource,
+  formatStaleness,
+  toAccountSummary,
+  toClosedHoldingRow,
+  toHoldingRow,
+} from "./presenter";
 
 const makeHolding = (overrides: Partial<HoldingDetail> = {}): HoldingDetail => ({
   asset_id: "asset-1",
@@ -344,5 +355,104 @@ describe("toAccountSummary — cash totals (CSH-094/098)", () => {
     );
     expect(summary.isAllClosed).toBe(true);
     expect(summary.isEmpty).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatStaleness — pure helper (MKT-140)
+// ---------------------------------------------------------------------------
+
+describe("formatStaleness", () => {
+  const today = new Date("2026-05-17");
+
+  // MKT-140 — no date → null (caller renders no label)
+  it("returns null when currentPriceDate is null", () => {
+    expect(formatStaleness(null, today)).toBeNull();
+  });
+
+  // MKT-140 — same day → today i18n key
+  it("returns the today i18n key when currentPriceDate equals today", () => {
+    expect(formatStaleness("2026-05-17", today)).toEqual({ key: "mkt.staleness_today" });
+  });
+
+  // MKT-140 — one day ago → days_ago i18n key with days=1
+  it("returns the days_ago i18n key with days=1 when currentPriceDate is one day before today", () => {
+    expect(formatStaleness("2026-05-16", today)).toEqual({
+      key: "mkt.staleness_days_ago",
+      params: { days: 1 },
+    });
+  });
+
+  // MKT-140 — multiple days ago → days_ago i18n key with days=N
+  it("returns the days_ago i18n key with days=7 when currentPriceDate is seven days before today", () => {
+    expect(formatStaleness("2026-05-10", today)).toEqual({
+      key: "mkt.staleness_days_ago",
+      params: { days: 7 },
+    });
+  });
+
+  // MKT-140 — large delta (e.g. stale data after holiday)
+  it("returns the days_ago i18n key with days=30 when currentPriceDate is thirty days before today", () => {
+    expect(formatStaleness("2026-04-17", today)).toEqual({
+      key: "mkt.staleness_days_ago",
+      params: { days: 30 },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatSource — pure helper (MKT-141, MKT-142)
+// ---------------------------------------------------------------------------
+
+describe("formatSource", () => {
+  // MKT-142 — null source (no price recorded) → null
+  it("returns null when source is null", () => {
+    expect(formatSource(null)).toBeNull();
+  });
+
+  // MKT-101 — Manual source → i18n key
+  it("returns mkt.source_manual for Manual source", () => {
+    const source: AssetPriceSource = "Manual";
+    expect(formatSource(source)).toBe("mkt.source_manual");
+  });
+
+  // MKT-102 — Stooq source → i18n key
+  it("returns mkt.source_stooq for Stooq source", () => {
+    const source: AssetPriceSource = "Stooq";
+    expect(formatSource(source)).toBe("mkt.source_stooq");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toHoldingRow — staleness + source label derived fields (MKT-140, MKT-142)
+// ---------------------------------------------------------------------------
+
+describe("toHoldingRow — staleness and sourceLabel fields (MKT-140, MKT-142)", () => {
+  // MKT-140 — staleness field: no price → null
+  it("staleness is null when current_price_date is null", () => {
+    const row = toHoldingRow(makeHolding({ current_price_date: null }));
+    expect(row.staleness).toBeNull();
+  });
+
+  // MKT-142 — sourceLabel field: no price → null
+  it("sourceLabel is null when current_price_source is null", () => {
+    const row = toHoldingRow(makeHolding({ current_price_source: null }));
+    expect(row.sourceLabel).toBeNull();
+  });
+
+  // MKT-142 — sourceLabel: Manual source → i18n key
+  it("sourceLabel is mkt.source_manual when current_price_source is Manual", () => {
+    const row = toHoldingRow(
+      makeHolding({ current_price_source: "Manual", current_price: 100_000_000 }),
+    );
+    expect(row.sourceLabel).toBe("mkt.source_manual");
+  });
+
+  // MKT-142 — sourceLabel: Stooq source → i18n key
+  it("sourceLabel is mkt.source_stooq when current_price_source is Stooq", () => {
+    const row = toHoldingRow(
+      makeHolding({ current_price_source: "Stooq", current_price: 100_000_000 }),
+    );
+    expect(row.sourceLabel).toBe("mkt.source_stooq");
   });
 });

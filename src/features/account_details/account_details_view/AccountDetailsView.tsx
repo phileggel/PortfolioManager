@@ -1,5 +1,5 @@
 import { useParams } from "@tanstack/react-router";
-import { ArrowDownToLine, ArrowUpFromLine, Plus } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, Plus, RefreshCw } from "lucide-react";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { logger } from "@/lib/logger";
@@ -8,6 +8,7 @@ import { BuyTransactionModal } from "../buy_transaction/BuyTransactionModal";
 import { DepositTransactionModal } from "../deposit_transaction/DepositTransactionModal";
 import { OpenBalanceModal } from "../open_balance/OpenBalanceModal";
 import { PriceHistoryModal } from "../price_history/PriceHistoryModal";
+import { useRefreshAccountPrices } from "../refresh_prices/useRefreshAccountPrices";
 import { SellTransactionModal } from "../sell_transaction/SellTransactionModal";
 import { WithdrawalTransactionModal } from "../withdrawal_transaction/WithdrawalTransactionModal";
 import { ClosedHoldingRow } from "./ClosedHoldingRow";
@@ -20,6 +21,8 @@ export function AccountDetailsView() {
   const { t } = useTranslation();
   const { accountId } = useParams({ from: "/accounts/$accountId" });
   const view = useAccountDetailsView(accountId);
+  const { isPending: isRefreshPending, refresh: refreshPrices } =
+    useRefreshAccountPrices(accountId);
 
   useEffect(() => {
     logger.info("[AccountDetailsView] mounted");
@@ -73,6 +76,18 @@ export function AccountDetailsView() {
               {/* TRX-055 — open balance always accessible (migration tool for any account state) */}
               {/* ACD-036 — add transaction only when active holdings exist */}
               <div className="flex gap-2">
+                {/* MKT-131 — per-account "Refresh prices" entry point */}
+                <Button
+                  id="account-details-refresh-prices"
+                  variant="secondary"
+                  size="sm"
+                  icon={<RefreshCw size={14} />}
+                  loading={isRefreshPending}
+                  onClick={() => void refreshPrices()}
+                  aria-label={t("account_details.action_refresh_prices")}
+                >
+                  {t("account_details.action_refresh_prices")}
+                </Button>
                 <Button variant="secondary" size="sm" onClick={view.handleOpenBalanceOpen}>
                   {t("account_details.action_open_balance")}
                 </Button>

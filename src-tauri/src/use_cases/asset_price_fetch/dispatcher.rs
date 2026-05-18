@@ -46,7 +46,7 @@ impl Dispatcher {
             let date_string = today.format("%Y-%m-%d").to_string();
             for (asset, symbol) in scope {
                 match self.provider.fetch_price(&symbol).await {
-                    Ok(price_micros) => {
+                    Ok(Some(price_micros)) => {
                         let record = AssetPrice::restore(
                             asset.id.clone(),
                             date_string.clone(),
@@ -64,6 +64,14 @@ impl Dispatcher {
                             continue;
                         }
                         self.event_bus.publish(Event::AssetPriceUpdated);
+                    }
+                    Ok(None) => {
+                        tracing::debug!(
+                            target: BACKEND,
+                            asset_id = %asset.id,
+                            symbol = %symbol,
+                            "asset_price_fetch: provider reports no data for symbol; skipping (MKT-114)"
+                        );
                     }
                     Err(e) => {
                         tracing::warn!(

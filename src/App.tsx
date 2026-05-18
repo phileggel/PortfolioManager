@@ -2,7 +2,9 @@ import { RouterProvider } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { accountGateway } from "@/features/accounts/gateway";
 import { shellGateway } from "@/features/shell/gateway";
+import { getAutoFetch } from "@/lib/autoFetchStorage";
 import { logger } from "@/lib/logger";
 import { useAppStore } from "@/lib/store";
 import { router } from "./router";
@@ -27,6 +29,25 @@ function App() {
   useEffect(() => {
     return init();
   }, [init]);
+
+  // MKT-121 — fire-and-forget auto-fetch when the user has enabled the setting.
+  // Runs once after init completes; per-asset results arrive via AssetPriceUpdated events.
+  // Dispatch-level failures (FetchAlreadyRunning, NoFetchableHoldings, DatabaseError) are
+  // logged server-side via the FE logger — no startup snackbar to avoid noise on launch.
+  useEffect(() => {
+    if (!isInitialized) return;
+    if (!getAutoFetch()) return;
+    (async () => {
+      try {
+        const result = await accountGateway.fetchAllAssetPrices();
+        if (result.status === "error") {
+          logger.warn("[App] auto-fetch dispatch returned error", { code: result.error.code });
+        }
+      } catch (error) {
+        logger.error("[App] auto-fetch dispatch threw", { error });
+      }
+    })();
+  }, [isInitialized]);
 
   // R18 — critical migration error: app blocked with error message
   if (dbError) {
