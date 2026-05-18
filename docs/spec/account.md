@@ -152,12 +152,6 @@ Full-width table, default sort by Name ascending. Floating action button (bottom
 
 ---
 
-## Open Questions
-
-**~~OQ-1~~ — ACC-020 implementation scope** _(resolved)_: New use case under `use_cases/account_deletion/` per ADR-003/ADR-004. After Phase 7, both holdings and transactions live in `context/account/` — `AccountService` is the only service injected. The use case is a thin read-only orchestrator that counts active holdings and transactions, then returns `AccountDeletionSummary`.
-
----
-
 ## Future Improvements
 
 - **Archiving**: Implement account archiving (soft-delete) instead of permanent deletion to preserve transaction history.

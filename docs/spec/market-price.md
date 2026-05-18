@@ -573,11 +573,3 @@ Each row in the price-history list (MKT-071) gains a small badge to the right of
 4. Backend writes `AssetPrice(AAPL, 2026-05-17) = $189, source: Manual` — overwrites the Stooq row (per ADR-012; MKT-025, MKT-101).
 5. Account Details shows $189; the badge becomes "Manual".
 6. On the next launch, auto-fetch will overwrite $189 with the new day's Stooq value (per ADR-012). The user's correction is for today; tomorrow brings tomorrow's price.
-
----
-
-## Open Questions
-
-- [x] **OQ-1** — Should the standalone "Enter price" action on the holding row (MKT-010) be removed? **Decision: keep both.** MKT-010 remains as a fast path for the common case (record today's price without opening history). MKT-070 adds a second "Price history" action for review and corrections. The holding row will have five actions: Buy, Sell, Enter price, Price history, and the transaction magnifier.
-
-None — all open questions have a recorded decision.

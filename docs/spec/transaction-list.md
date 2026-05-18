@@ -147,9 +147,3 @@ Actions per row: Edit icon button + Delete icon button.
 4. User can change the account or asset filter to browse other positions.
 5. User clicks Edit on a row → Edit modal opens → saves → table refreshes.
 6. User clicks Delete on a row → Confirmation dialog → confirms → row removed → table refreshes (or navigates back if last transaction).
-
----
-
-## Open Questions
-
-- [x] **TXL-013 — Backend command ownership** _(resolved)_: Implemented as a single-context read in `context/transaction/api.rs` (B5 pattern). The repository method lives on `TransactionRepository`.

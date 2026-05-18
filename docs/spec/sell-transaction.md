@@ -158,14 +158,3 @@ All other fields (`id`, `account_id`, `asset_id`, `transaction_type`, `date`, `q
 5. Total proceeds auto-calculated and shown read-only.
 6. User clicks "Save".
 7. On success: modal closes, holdings table updates, realized P&L appears in the holding row summary.
-
----
-
-## Open Questions
-
-- [x] Can a sell transaction be initiated from the Transaction List page? → No. Account Details holding row is the only entry point (SEL-010).
-- [x] Where should cumulative realized P&L appear in Account Details? → Extra column in the holdings table (SEL-042); neutral placeholder when no sell exists for a holding.
-- [x] `created_at` migration backfill — new rows use `datetime('now')` at insert time (TEXT, ISO 8601). Existing rows are backfilled with `CURRENT_TIMESTAMP` at migration time (application is not live; insertion order of historical data is not critical).
-- [x] ARCHITECTURE.md must be updated as part of implementation (step 18): add `created_at` to the `Transaction` entity field list, add the new `TransactionService` aggregation method (SEL-038), and update `HoldingDetail` to include `realized_pnl`. This is a workflow obligation, not a spec decision.
-
-None — all questions have been resolved.

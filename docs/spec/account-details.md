@@ -222,22 +222,3 @@ UPDATE holdings SET
 3. Data loads: user sees active positions with cost basis and the account totals.
 4. If closed positions exist, they appear below the active table with realized P&L and last sold date.
 5. User can add a transaction via the FAB or "Add Transaction" button.
-
----
-
-## Open Questions
-
-**~~OQ-ACD-003~~ — last_sold_date display format** _(resolved)_: Implemented via `formatIsoDate()` in `ClosedHoldingRow.tsx` — uses `toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })`, consistent with other date displays in the app.
-
-**~~OQ-ACD-004~~ — CTA in "all closed + closed section visible" state** _(resolved)_: ACD-035 governs the CTA when there are no active holdings. When `closed_holdings` is non-empty and active holdings are empty, ACD-035 still fires (the "Add Transaction" button appears). ACD-050 confirms the closed section renders. No ambiguity — ACD-035 and ACD-050 compose correctly without conflict.
-
-**~~OQ-ACD-005~~ — ARCHITECTURE.md update required** _(resolved)_: `ARCHITECTURE.md` updated — `ClosedHoldingDetail` and `closed_holdings` documented at lines 70–71; `pnl_map`/`TransactionService` references removed.
-
-**~~ADR-REQUIRED~~ — Multi-context read orchestration** _(resolved)_: Orchestration strategy and dependency injection boundary are both decided.
-
-- ADR-003: cross-context use cases use sequential service calls.
-- ADR-004: use cases always inject services, never repositories.
-
-The `use_cases/account_details/` use case injects `AccountService` and `AssetService` and calls them in sequence. `TransactionService` was previously injected via ADR-005 for realized P&L aggregation (SEL-042) but is removed by ACD-045 — P&L is now pre-computed on `Holding`.
-
-**~~OQ-ACD-002~~ — Double re-fetch on TransactionUpdated** _(resolved)_: ACD-039 is the authoritative re-fetch for the Account Details view. TRX-038's store action is scoped to the transaction list feature and does not overlap with account details data. No duplication occurs.

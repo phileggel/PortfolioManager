@@ -67,7 +67,7 @@ Display the current state of positions and their performance.
 | Account Details view          | ✅ Done    | Holdings list + total cost basis per account (ACD spec)                        |
 | Holdings reactivity           | ✅ Done    | Re-fetch on `TransactionUpdated` event (ACD-039)                               |
 | Current market price (manual) | ✅ Done    | Manual entry in Account Details holding row; stored as `AssetPrice` (MKT spec) |
-| Current market price (feed)   | 🔲 Future  | Automatic price feed; depends on manual entry being in place                   |
+| Current market price (feed)   | ✅ Done    | Stooq auto-fetch on launch + manual refresh (MKT-100..MKT-142)                 |
 | Unrealized P&L                | ✅ Done    | `(current_price − average_price) × quantity`; displayed per holding (MKT spec) |
 | Performance %                 | ✅ Done    | `unrealized_pnl / cost_basis × 100`; displayed per holding (MKT spec)          |
 | Portfolio summary / dashboard | 🔲 Planned | Aggregate view across all accounts                                             |

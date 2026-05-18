@@ -262,17 +262,3 @@ The Account Details header gains a new total: **Global Value** (cash + market va
 4. User sells half of the asset for €900 → cash credited to €4 300, AAPL holding quantity halved.
 5. User clicks "Withdraw", enters €1 000 → cash drops to €3 300.
 6. User attempts a Buy for €4 000 → form shows "Not enough cash in this account. Current balance: €3 300."
-
----
-
-## Open Questions
-
-- [x] **CSH-061 — OpeningBalance veto on Cash Asset** _(resolved)_: Reject confirmed. OpeningBalance whose `asset_id` is a Cash Asset returns `OpeningBalanceOnCashAsset`; user records initial cash via `Deposit`. Single explicit entry point.
-- [x] **CSH-090 — Cash row in "All positions closed" state** _(resolved)_: Keep `ACD-050` wording unchanged ("All positions are closed"). Cash row remains visible above; no copy variant added.
-- [x] **CSH-094 — Global Value in Account Details header** _(resolved)_: Confirmed. Header displays Total Cost Basis + Total Realized P&L + Global Value (cash + Σ market value of non-cash holdings).
-- [x] **CSH-101 — Cash transactions in the asset filter** _(resolved)_: Deposit/Withdrawal appear under the Cash Asset row in the existing transaction list filter. No dedicated tab in v1.
-- [x] **CSH-013 — Cash Holding lifecycle exception** _(resolved, simplification adopted)_: Initial draft introduced a never-delete invariant for Cash Holdings, justified as a UX continuity guard. On review, that UX concern is fully covered by CSH-097 (cash row always visible when the holding exists). The DB lifecycle of the Cash Holding can therefore follow TRX-034 like any other Holding. No ADR needed; the cash holding is created lazily on first Deposit or Sell and cleaned up by TRX-034 when no cash-affecting transactions remain.
-- [x] **CSH-010 — Cross-context orchestration** _(resolved, prerequisite-refactor)_: Cash Asset seeding lives in `use_cases/holding_transaction/` via a shared `ensure_cash_asset(currency)` helper. The consolidation of the existing buy/sell/edit/delete/opening-balance operations into that module is a **prerequisite refactor shipped before this spec** (its own feature, separate plan and PR). The cash spec assumes the module exists and only declares the observable behaviours that depend on it.
-- [x] **CSH-094 — Price fallback semantic** _(resolved)_: No fallback to `average_price`. A non-cash holding without a recorded `AssetPrice` contributes `0` to `total_global_value`. Confirmed honest market-value semantic at the cost of visible jumps when prices are first added.
-- [x] **UL — Five new domain terms** _(confirmed 2026-05-06)_: `Cash Asset` (system Asset of class `Cash`), `Cash Holding` (Holding whose asset is a Cash Asset), `Deposit` (TransactionType variant), `Withdrawal` (TransactionType variant), `Global Value` (the `total_global_value` metric). All confirmed by user; entries flipped from `pending` to `confirmed` in `docs/ubiquitous-language.md`.
-- [x] **CSH-022/090–098 — Hide cash row when balance is 0** _(resolved 2026-05-06)_: Adopted. CSH-097 flipped from always-visible to hidden-at-zero (cash now follows ACD-020's `quantity > 0` filter without override). CSH-019 — header "Withdraw" button now requires `quantity > 0`, not just the existence of a Cash Holding. CSH-095 — "No cash recorded yet" banner now triggers whenever the cash row is hidden (no holding OR `quantity = 0`). Account-details cross-references in `docs/spec/account-details.md` revert: ACD-020 no longer needs the cash exception.

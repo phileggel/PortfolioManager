@@ -159,11 +159,3 @@ A dialog or modal with two sequential states:
 6. Add Asset form opens with name, reference, currency, asset class pre-filled.
 7. User reviews, adjusts category and risk level if needed, and saves.
 8. Existing `add_asset` command runs; asset appears in the list.
-
----
-
-## Open Questions
-
-- [x] **OQ-1** — After the form is pre-filled (WEB-040), can the user navigate back to the search step to change their selection? **Decision: yes.** A back action returns to the search step; query and results are retained (WEB-047).
-- [x] **OQ-2** — How is the exchange code lookup table maintained? **Decision:** hardcoded in-code constant in `use_cases/asset_web_lookup/primary_listing_processor.rs` (the table moved out of `orchestrator.rs` when WEB-050 was added), updated manually by a developer when new exchange codes are encountered. Unknown codes fall back to the raw string (WEB-049). No external config or database entry is needed.
-- [x] **OQ-3** — What is shown on the second result row line when `exchange` is absent, or when both `asset_class` and `exchange` are absent? **Decision:** (a) class present, exchange absent → show class label only, no separator; (b) both absent → show the localised "unknown type" fallback label only. (WEB-031).

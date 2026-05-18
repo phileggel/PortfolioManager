@@ -203,23 +203,3 @@ _`transaction_type` is not shown in the form. It is hardcoded to `Purchase` unti
 4. User enters Quantity, Unit Price, and Fees.
 5. Total Amount is auto-calculated and read-only.
 6. User clicks "Save".
-
----
-
-## Open Questions
-
-**OQ-1 — ~~`unit_price = 0` validity~~** _(resolved)_: A zero unit price is valid (gifted shares, inherited assets). TRX-020 unchanged.
-
-**OQ-2 — ~~Transaction `date` lower bound~~** _(resolved)_: Minimum date set to `1900-01-01`. Converted to TRX-020.
-
-**OQ-3 — ~~Frontend reactivity after transaction mutation~~** _(resolved)_: `TransactionUpdated` event published by the use case; frontend refreshes holdings on receipt. Implementation mechanism left to feature-planner. Converted to TRX-037 and TRX-038.
-
-**OQ-4 — ~~TRX-040 / Sell scope~~** _(closed)_: Zero-quantity handling and Sell transaction type are out of scope for the initial implementation. TRX-040 remains in spec as forward documentation only.
-
-**OQ-5 — ~~Archived asset behaviour~~** _(resolved)_: Auto-unarchive with user confirmation. Converted to TRX-028 (backend atomicity) and TRX-029 (frontend confirmation dialog).
-
-**~~OQ-6~~ — Asset archiving eligibility rule** _(resolved)_: Implemented in `use_cases/archive_asset/orchestrator.rs` — `ArchiveAssetUseCase` calls `AccountService.has_active_holdings_for_asset()` and returns `ArchiveAssetError::ActiveHoldings` if any active holding exists. Backend rule enforced and covered by `archive_rejected_when_active_holdings` test.
-
-**OQ-7 — ~~Edit/delete workflow diagrams~~** _(deferred)_: Diagrams for the edit and delete paths are out of scope for the initial implementation. To be added in a future spec update alongside the `Sell` transaction type.
-
-**OQ-8 — ~~Opening balance entry point~~** _(resolved)_: Page-level button in the Account Details header only (Option A). No holding row action — opening balance is a one-time migration step and adding it to the row would clutter the UI for an uncommon operation. Converted to TRX-055.
