@@ -167,3 +167,34 @@ export async function seedBuy(
   )) as { id?: string; __error?: string };
   assert.ok(!("__error" in result), `seedBuy failed: ${JSON.stringify(result)}`);
 }
+
+/**
+ * Records a manual asset price via IPC (`record_asset_price`). The written
+ * record carries source=Manual (MKT-101).
+ *
+ * Argument shape is flat (`{ assetId, date, price }`) — the Tauri command
+ * takes positional args, not a `dto` envelope. Other seed helpers wrap in
+ * `{ dto: {...} }` because their commands take DTO structs.
+ *
+ * @param assetId  - UUID of the asset
+ * @param date     - ISO 8601 date string (e.g. "2020-01-15")
+ * @param price    - human-readable decimal (e.g. 42.5); backend converts to i64 micros
+ */
+export async function seedAssetPrice(assetId: string, date: string, price: number): Promise<void> {
+  const result = (await browser.executeAsync(
+    (astId: string, d: string, p: number, done: (r: unknown) => void) => {
+      // @ts-expect-error __TAURI_INTERNALS__ injected by Tauri WebView
+      window.__TAURI_INTERNALS__
+        .invoke("record_asset_price", { assetId: astId, date: d, price: p })
+        .then(done)
+        .catch((err: unknown) => done({ __error: String(err) }));
+    },
+    assetId,
+    date,
+    price,
+  )) as { __error?: string } | null;
+  assert.ok(
+    !(result !== null && typeof result === "object" && "__error" in result),
+    `seedAssetPrice failed: ${JSON.stringify(result)}`,
+  );
+}

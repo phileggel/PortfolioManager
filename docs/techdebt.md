@@ -58,3 +58,13 @@ Entries are observations, not commitments. Triaged by `/whats-next` alongside
      `InfrastructureError` reclassifies as application-layer (it's the typed application translation of opaque infra failures, per the DDD doc's travel rule — the NAME describes the source, the LAYER is application).
 
   Migration is mechanical (folder moves + module-path updates, ~50–100 import sites total). Cleanest as a single dedicated chore PR after the kit proposals land (so the project mirrors the kit-ratified spec). Track in `docs/plan/error-model-refactor.md` § Out of scope (already lists "Folder reshape" as deferred — this entry expands the scope to all three deltas).
+
+---
+
+## 2026-05-18 — E2E nav selectors are locale-coupled (E4 violation)
+
+- Found by: reviewer-e2e
+- Where: `e2e/account_details/auto_fetch.test.ts`, `e2e/account_details/buy_sell.test.ts`, `e2e/account_details/cash.test.ts`, `e2e/accounts/accounts.test.ts` (all use aria-label-based nav selectors)
+- Context: branch `feat/mkt-stooq-autofetch-e2e` @ `da7471f`
+- Severity: low
+- Observation: E2E nav selectors target `button[aria-label="Assets"]`, `aria-label="Accounts"`, `aria-label="Settings"`, `aria-label="Price history"` — all locale-coupled per E4. `wdio.conf.ts` forces English so they work today, but rename of any i18n key or non-English run silently breaks navigation. Pattern is established across 4+ E2E files and not introduced by any single PR.
