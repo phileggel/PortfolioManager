@@ -193,11 +193,14 @@ if (result.status === "error") {
 
 ## Where things live
 
-| What                                          | Where                                                |
-| --------------------------------------------- | ---------------------------------------------------- |
-| Per-BC flat enum (`{BC}Error`)                | `src-tauri/src/context/{bc}/error.rs`                |
-| Use-case composite + flat guards              | `src-tauri/src/use_cases/{name}/error.rs`            |
-| All composites + BC enums on the FE wire      | `src/bindings.ts` (auto-generated; do not edit)      |
-| Per-command wire variants                     | `docs/contracts/{bc}-contract.md`                    |
-| Layering rules within a BC (domain / service) | [`docs/ddd-reference.md`](ddd-reference.md) § Errors |
-| Backend coding rules (B31 in particular)      | [`docs/backend-rules.md`](backend-rules.md)          |
+| What                                     | Where                                           |
+| ---------------------------------------- | ----------------------------------------------- |
+| Per-BC flat enum (`{BC}Error`)           | `src-tauri/src/context/{bc}/error.rs`           |
+| Use-case composite + flat guards         | `src-tauri/src/use_cases/{name}/error.rs`       |
+| All composites + BC enums on the FE wire | `src/bindings.ts` (auto-generated; do not edit) |
+| Per-command wire variants                | `docs/contracts/{bc}-contract.md`               |
+
+Related convention docs:
+
+- [`ddd-reference.md`](ddd-reference.md) § Errors — layering rules within a BC (domain / service).
+- [`backend-rules.md`](backend-rules.md) — backend coding rules, especially B31.

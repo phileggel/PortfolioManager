@@ -2,8 +2,6 @@
 
 > For DDD concept definitions, see [docs/ddd-reference.md](ddd-reference.md).
 
-**AI AGENT SHOULD NEVER UPDATE THIS DOCUMENT**
-
 > Rule numbers (B0, B1, …) are stable IDs — once assigned, they never change. New rules are appended; deprecated rules keep their number with a note.
 
 ## Folder Structure
@@ -174,7 +172,7 @@ implementations, `sqlx::Pool`, `sqlx::Transaction`, `sqlx::query!`, or any other
 
 **B26** — For cross-aggregate writes (operations that must write to more than one aggregate
 atomically), the use case orchestrator MUST use the UnitOfWork pattern (`TransactionManager`
-from `core/uow.rs`). Single-aggregate writes do NOT use UoW — the aggregate's own repository
+from `shared/infrastructure/uow.rs`). Single-aggregate writes do NOT use UoW — the aggregate's own repository
 handles atomicity internally via its `save()` method.
 
 ## Repository
@@ -187,10 +185,10 @@ handles atomicity internally via its `save()` method.
 
 **B29** — MUST use `target:` field when adding a new backend specific log.
 
-**B30** — When using the `target:` field in tracing calls, MUST use a named constant instead of a string literal. Define `BACKEND` / `FRONTEND` constants in a shared `core::logger` module and reference them:
+**B30** — When using the `target:` field in tracing calls, MUST use a named constant instead of a string literal. Define `BACKEND` / `FRONTEND` constants in a shared `shared::infrastructure::logger` module and reference them:
 
 ```rust
-// Define once in core/logger.rs:
+// Define once in shared/infrastructure/logger.rs:
 pub const BACKEND: &str = "backend";
 
 // Use everywhere:
