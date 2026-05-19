@@ -48,6 +48,8 @@
     "form_category_label": "Category",
     "form_class_label": "Class",
     "form_risk_label": "Risk level",
+    "field_exchange": "Exchange",
+    "exchange_none_option": "(none)",
     "warning_duplicate_reference": "This reference matches an existing asset. You may continue if the instruments are distinct.",
     "archive_confirm_title": "Archive this asset",
     "archive_confirm_message": "The asset will be removed from active lists and will no longer receive new prices. All historical data is preserved.",
@@ -362,6 +364,7 @@
     "form_price_placeholder": "0.00"
   },
   "error": {
+    "InvalidExchange": "The selected exchange is not in the supported list.",
     "Unknown": "An unexpected error occurred. Please try again.",
     "DatabaseError": "An unexpected database error occurred. Please try again.",
     "NameEmpty": "Name cannot be empty.",

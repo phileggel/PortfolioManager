@@ -26,6 +26,7 @@ export function EditAssetModal({ isOpen, onClose, asset }: EditAssetModalProps) 
     duplicateWarning,
     handleChange,
     handleClassChange,
+    handleExchangeChange,
     handleSubmit,
     categories,
   } = useEditAssetModal({ asset, onClose });
@@ -63,11 +64,16 @@ export function EditAssetModal({ isOpen, onClose, asset }: EditAssetModalProps) 
           formData={formData}
           handleChange={handleChange}
           onClassChange={handleClassChange}
+          onExchangeChange={handleExchangeChange}
           categories={categories}
           duplicateWarning={duplicateWarning}
           idPrefix="edit-asset"
         />
-        {error && <p className="mt-3 text-sm text-m3-error">{error}</p>}
+        {error && (
+          <p role="alert" className="mt-3 text-sm text-m3-error">
+            {t(error)}
+          </p>
+        )}
       </form>
     </Dialog>
   );

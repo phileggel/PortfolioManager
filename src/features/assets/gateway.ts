@@ -7,6 +7,7 @@ import {
   type CreateAssetDTO,
   commands,
   type DeleteAssetError,
+  type Exchange,
   type Result,
   type UpdateAssetDTO,
   type WebLookupApplicationError,
@@ -49,5 +50,9 @@ export const assetGateway = {
     query: string,
   ): Promise<Result<AssetLookupResult[], WebLookupApplicationError>> {
     return await commands.lookupAsset(query);
+  },
+
+  async getSupportedExchanges(): Promise<Exchange[]> {
+    return await commands.getSupportedExchanges();
   },
 };

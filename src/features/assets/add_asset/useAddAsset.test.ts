@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Asset, AssetLookupResult } from "@/bindings";
+import type { Asset, AssetLookupResult, Exchange } from "@/bindings";
 import { DEFAULT_RISK_BY_CLASS, SYSTEM_CATEGORY_ID } from "../shared/constants";
 import { useAddAsset } from "./useAddAsset";
 
@@ -245,5 +245,86 @@ describe("useAddAsset", () => {
     expect(result.current.formData.class).toBe("Stocks");
     expect(result.current.formData.risk_level).toBe(DEFAULT_RISK_BY_CLASS.Stocks);
     expect(result.current.formData.category_id).toBe(SYSTEM_CATEGORY_ID);
+  });
+
+  // AST-021 — exchange defaults to null when no prefill
+  it("initialises exchange as null when no prefill is provided", () => {
+    const { result } = renderHook(() => useAddAsset());
+    expect(result.current.formData.exchange).toBeNull();
+  });
+
+  // WEB-041 — prefill.exchange seeds the exchange picker (AST-021)
+  it("seeds exchange from prefill when prefill carries an exchange", () => {
+    const exchange: Exchange = { code: "XPAR", label: "Euronext Paris" };
+    const prefill: AssetLookupResult = {
+      name: "Total SE",
+      reference: "TTE",
+      currency: "EUR",
+      asset_class: "Stocks",
+      exchange,
+    };
+    const { result } = renderHook(() => useAddAsset({ prefill }));
+    expect(result.current.formData.exchange).toEqual(exchange);
+  });
+
+  // WEB-041 — prefill with null exchange keeps form exchange null
+  it("leaves exchange null when prefill exchange is null", () => {
+    const prefill: AssetLookupResult = {
+      name: "No Exchange Fund",
+      reference: "NEF",
+      currency: "EUR",
+      asset_class: "ETF",
+      exchange: null,
+    };
+    const { result } = renderHook(() => useAddAsset({ prefill }));
+    expect(result.current.formData.exchange).toBeNull();
+  });
+
+  // AST-021 — exchange is forwarded to the gateway on submit
+  it("forwards formData.exchange to the gateway call on submit", async () => {
+    const exchange: Exchange = { code: "XNAS", label: "NASDAQ" };
+    mockAddAsset.mockResolvedValue({ data: { id: "new-1" }, error: null });
+
+    const { result } = renderHook(() => useAddAsset());
+
+    act(() => {
+      result.current.handleChange({
+        target: { name: "name", value: "Apple Inc." },
+      } as React.ChangeEvent<HTMLInputElement>);
+      result.current.handleChange({
+        target: { name: "reference", value: "AAPL" },
+      } as React.ChangeEvent<HTMLInputElement>);
+      result.current.handleExchangeChange(exchange);
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit);
+    });
+
+    expect(mockAddAsset).toHaveBeenCalledWith(expect.objectContaining({ exchange }));
+  });
+
+  // AST-021 — exchange resets to null after successful submit
+  it("resets exchange to null after successful submit", async () => {
+    const exchange: Exchange = { code: "XNAS", label: "NASDAQ" };
+    mockAddAsset.mockResolvedValue({ data: { id: "new-2" }, error: null });
+
+    const { result } = renderHook(() => useAddAsset());
+
+    act(() => {
+      result.current.handleChange({
+        target: { name: "name", value: "Apple Inc." },
+      } as React.ChangeEvent<HTMLInputElement>);
+      result.current.handleChange({
+        target: { name: "reference", value: "AAPL" },
+      } as React.ChangeEvent<HTMLInputElement>);
+      result.current.handleExchangeChange(exchange);
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit);
+    });
+
+    expect(result.current.formData.exchange).toBeNull();
   });
 });

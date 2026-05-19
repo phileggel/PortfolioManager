@@ -48,6 +48,8 @@
     "form_category_label": "Catégorie",
     "form_class_label": "Classe",
     "form_risk_label": "Niveau de risque",
+    "field_exchange": "Place de cotation",
+    "exchange_none_option": "(aucune)",
     "warning_duplicate_reference": "Cette référence correspond à un asset existant. Vous pouvez continuer si les instruments sont distincts.",
     "archive_confirm_title": "Archiver cet asset",
     "archive_confirm_message": "L'asset sera retiré des listes actives et ne pourra plus recevoir de nouveaux prix. Toutes les données historiques sont conservées.",
@@ -362,6 +364,7 @@
     "form_price_placeholder": "0,00"
   },
   "error": {
+    "InvalidExchange": "La place de cotation sélectionnée n'est pas dans la liste prise en charge.",
     "Unknown": "Une erreur inattendue est survenue. Veuillez réessayer.",
     "DatabaseError": "Une erreur de base de données inattendue est survenue. Veuillez réessayer.",
     "NameEmpty": "Le nom ne peut pas être vide.",

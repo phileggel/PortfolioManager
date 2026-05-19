@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { AssetClass, AssetLookupResult } from "@/bindings";
+import type { AssetClass, AssetLookupResult, Exchange } from "@/bindings";
 import { useAppStore } from "@/lib/store";
 import { DEFAULT_RISK_BY_CLASS, SYSTEM_CATEGORY_ID } from "../shared/constants";
 import { hasDuplicateReference } from "../shared/validateAsset";
@@ -16,7 +16,15 @@ export function useAddAsset({ onSubmitSuccess, prefill }: UseAddAssetProps = {})
 
   // CSH-015 — default class is `Stocks` (the dropdown's first user-selectable
   // entry). `Cash` is reserved for the system Cash Asset and never available here.
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    name: string;
+    reference: string;
+    class: AssetClass;
+    currency: string;
+    risk_level: number;
+    category_id: string;
+    exchange: Exchange | null;
+  }>({
     name: prefill?.name ?? "",
     reference: prefill?.reference ?? "",
     class: (prefill?.asset_class ?? "Stocks") as AssetClass,
@@ -25,6 +33,7 @@ export function useAddAsset({ onSubmitSuccess, prefill }: UseAddAssetProps = {})
       ? DEFAULT_RISK_BY_CLASS[prefill.asset_class as AssetClass]
       : DEFAULT_RISK_BY_CLASS.Stocks,
     category_id: SYSTEM_CATEGORY_ID,
+    exchange: prefill?.exchange ?? null,
   });
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -52,6 +61,11 @@ export function useAddAsset({ onSubmitSuccess, prefill }: UseAddAssetProps = {})
     }));
   };
 
+  // AST-021 — exchange picker change handler
+  const handleExchangeChange = (exchange: Exchange | null) => {
+    setFormData((prev) => ({ ...prev, exchange }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -64,7 +78,7 @@ export function useAddAsset({ onSubmitSuccess, prefill }: UseAddAssetProps = {})
       currency: formData.currency,
       risk_level: formData.risk_level,
       category_id: formData.category_id || SYSTEM_CATEGORY_ID,
-      exchange: null,
+      exchange: formData.exchange,
     });
 
     setIsSubmitting(false);
@@ -85,6 +99,7 @@ export function useAddAsset({ onSubmitSuccess, prefill }: UseAddAssetProps = {})
       currency: "EUR",
       risk_level: DEFAULT_RISK_BY_CLASS.Stocks,
       category_id: SYSTEM_CATEGORY_ID,
+      exchange: null,
     });
   };
 
@@ -95,6 +110,7 @@ export function useAddAsset({ onSubmitSuccess, prefill }: UseAddAssetProps = {})
     duplicateWarning,
     handleChange,
     handleClassChange,
+    handleExchangeChange,
     handleSubmit,
     categories,
   };

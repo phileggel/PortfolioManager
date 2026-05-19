@@ -1,8 +1,9 @@
 import { useTranslation } from "react-i18next";
-import type { AssetCategory, AssetClass } from "@/bindings";
+import type { AssetCategory, AssetClass, Exchange } from "@/bindings";
 import { SelectField } from "@/ui/components/field/SelectField";
 import { TextField } from "@/ui/components/field/TextField";
 import { ASSET_CLASSES, RISK_LEVELS } from "./constants";
+import { ExchangePicker } from "./ExchangePicker";
 
 interface AssetFormData {
   name: string;
@@ -11,12 +12,14 @@ interface AssetFormData {
   currency: string;
   risk_level: number;
   category_id: string;
+  exchange: Exchange | null;
 }
 
 interface AssetFormProps {
   formData: AssetFormData;
   handleChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => void;
   onClassChange?: (assetClass: AssetClass) => void;
+  onExchangeChange: (exchange: Exchange | null) => void;
   categories: AssetCategory[];
   duplicateWarning?: boolean;
   idPrefix?: string;
@@ -26,6 +29,7 @@ export function AssetForm({
   formData,
   handleChange,
   onClassChange,
+  onExchangeChange,
   categories,
   duplicateWarning = false,
   idPrefix = "asset",
@@ -112,6 +116,8 @@ export function AssetForm({
         onChange={handleClassSelect}
         options={classOptions}
       />
+
+      <ExchangePicker value={formData.exchange} onChange={onExchangeChange} idPrefix={idPrefix} />
 
       <fieldset className="flex flex-col gap-1.5 border-none p-0 m-0">
         <legend className="m3-input-label">{t("asset.form_risk_label")}</legend>
