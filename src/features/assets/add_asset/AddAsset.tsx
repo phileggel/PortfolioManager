@@ -24,6 +24,7 @@ export function AddAssetModal({ isOpen, onClose, prefill, onBack, onSuccess }: A
     duplicateWarning,
     handleChange,
     handleClassChange,
+    handleExchangeChange,
     handleSubmit,
     categories,
   } = useAddAsset({
@@ -81,13 +82,14 @@ export function AddAssetModal({ isOpen, onClose, prefill, onBack, onSuccess }: A
           formData={formData}
           handleChange={handleChange}
           onClassChange={handleClassChange}
+          onExchangeChange={handleExchangeChange}
           categories={categories}
           duplicateWarning={duplicateWarning}
           idPrefix="add-asset"
         />
         {error && (
           <p role="alert" className="mt-3 text-sm text-m3-error">
-            {error}
+            {t(error)}
           </p>
         )}
       </form>

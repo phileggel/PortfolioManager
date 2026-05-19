@@ -254,6 +254,94 @@ describe("asset gateway — CRUD", () => {
   });
 });
 
+describe("asset gateway — getSupportedExchanges", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // get_supported_exchanges — infallible, returns Exchange[]
+  it("getSupportedExchanges returns the full curated list", async () => {
+    const exchanges = [
+      { code: "XPAR", label: "Euronext Paris" },
+      { code: "XNAS", label: "NASDAQ" },
+    ];
+    // getSupportedExchanges is infallible: the binding returns the raw array directly
+    // (no Result wrapper). The gateway wraps it the same way.
+    mockInvoke.mockResolvedValue(exchanges);
+    const result = await assetGateway.getSupportedExchanges();
+    expect(result).toEqual(exchanges);
+    expect(mockInvoke).toHaveBeenCalledWith("get_supported_exchanges");
+  });
+
+  it("getSupportedExchanges returns empty list when BE constant is empty", async () => {
+    mockInvoke.mockResolvedValue([]);
+    const result = await assetGateway.getSupportedExchanges();
+    expect(result).toEqual([]);
+  });
+});
+
+describe("asset gateway — exchange DTO pass-through", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // createAsset — exchange field forwarded to add_asset
+  it("createAsset forwards exchange object in DTO", async () => {
+    const asset = makeAsset();
+    const exchange = { code: "XPAR", label: "Euronext Paris" };
+    mockInvoke.mockResolvedValue(asset);
+    const dto: CreateAssetDTO = { ...baseCreateDto, exchange };
+    const result = await assetGateway.createAsset(dto);
+    expect(result).toEqual({ status: "ok", data: asset });
+    expect(mockInvoke).toHaveBeenCalledWith("add_asset", { dto });
+  });
+
+  it("createAsset with exchange: null forwards null in DTO", async () => {
+    const asset = makeAsset();
+    mockInvoke.mockResolvedValue(asset);
+    const result = await assetGateway.createAsset(baseCreateDto);
+    expect(result).toEqual({ status: "ok", data: asset });
+    expect(mockInvoke).toHaveBeenCalledWith("add_asset", { dto: baseCreateDto });
+  });
+
+  // createAsset — InvalidExchange error surface (AST-001)
+  it("createAsset surfaces InvalidExchange with exchange_code payload", async () => {
+    const err: AssetDomainError = { code: "InvalidExchange", exchange_code: "BOGUS" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.createAsset({
+      ...baseCreateDto,
+      exchange: { code: "BOGUS", label: "" },
+    });
+    expect(result).toEqual({ status: "error", error: err });
+  });
+
+  // updateAsset — exchange field forwarded to update_asset
+  it("updateAsset forwards exchange object in DTO", async () => {
+    const asset = makeAsset();
+    const exchange = { code: "XNAS", label: "NASDAQ" };
+    mockInvoke.mockResolvedValue(asset);
+    const dto: UpdateAssetDTO = { ...baseUpdateDto, exchange };
+    const result = await assetGateway.updateAsset(dto);
+    expect(result).toEqual({ status: "ok", data: asset });
+    expect(mockInvoke).toHaveBeenCalledWith("update_asset", { dto });
+  });
+
+  it("updateAsset with exchange: null clears the exchange field", async () => {
+    const asset = makeAsset();
+    mockInvoke.mockResolvedValue(asset);
+    const result = await assetGateway.updateAsset(baseUpdateDto);
+    expect(result).toEqual({ status: "ok", data: asset });
+    expect(mockInvoke).toHaveBeenCalledWith("update_asset", { dto: baseUpdateDto });
+  });
+
+  // updateAsset — InvalidExchange error surface (AST-001)
+  it("updateAsset surfaces InvalidExchange with exchange_code payload", async () => {
+    const err: AssetDomainError = { code: "InvalidExchange", exchange_code: "BOGUS" };
+    mockInvoke.mockRejectedValue(err);
+    const result = await assetGateway.updateAsset({
+      ...baseUpdateDto,
+      exchange: { code: "BOGUS", label: "" },
+    });
+    expect(result).toEqual({ status: "error", error: err });
+  });
+});
+
 describe("asset gateway — lookupAsset", () => {
   beforeEach(() => {
     vi.clearAllMocks();

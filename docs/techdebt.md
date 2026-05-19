@@ -68,3 +68,11 @@ Entries are observations, not commitments. Triaged by `/whats-next` alongside
 - Context: branch `feat/mkt-stooq-autofetch-e2e` @ `da7471f`
 - Severity: low
 - Observation: E2E nav selectors target `button[aria-label="Assets"]`, `aria-label="Accounts"`, `aria-label="Settings"`, `aria-label="Price history"` — all locale-coupled per E4. `wdio.conf.ts` forces English so they work today, but rename of any i18n key or non-English run silently breaks navigation. Pattern is established across 4+ E2E files and not introduced by any single PR.
+
+## 2026-05-19 — Hook-layer stringification breaks F27 presenter pipeline
+
+- Found by: reviewer-frontend
+- Where: src/features/assets/useAssets.ts and equivalents in features/categories, features/accounts
+- Context: branch `feat/asset-exchange-fe` @ `7df4a9c`
+- Severity: 🟡
+- Observation: Hook layer stringifies typed errors to `error.${code}` before they reach component layer, so the F27 layer-3 presenter is bypassed across the asset/category/account features. Symptom: per-variant payloads (e.g. `InvalidExchange.exchange_code`) cannot be interpolated into the user-facing message because the typed shape is already lost by the time the component renders.

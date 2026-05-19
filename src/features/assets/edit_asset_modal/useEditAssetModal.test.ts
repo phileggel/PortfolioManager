@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Asset } from "@/bindings";
+import type { Asset, Exchange } from "@/bindings";
 import { useEditAssetModal } from "./useEditAssetModal";
 
 const mockUpdateAsset = vi.fn();
@@ -98,5 +98,62 @@ describe("useEditAssetModal", () => {
 
     expect(result.current.error).toBeNull();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // AST-012 — editing an asset with an existing exchange pre-fills the picker
+  it("pre-fills exchange from asset when asset has an exchange (AST-012)", () => {
+    const exchange: Exchange = { code: "XPAR", label: "Euronext Paris" };
+    const assetWithExchange: Asset = { ...mockAsset, exchange };
+    const onClose = vi.fn();
+    const { result } = renderHook(() => useEditAssetModal({ asset: assetWithExchange, onClose }));
+    expect(result.current.formData.exchange).toEqual(exchange);
+  });
+
+  // AST-012 — asset with no exchange initialises picker to null
+  it("initialises exchange to null when asset has no exchange", () => {
+    const onClose = vi.fn();
+    const { result } = renderHook(() => useEditAssetModal({ asset: mockAsset, onClose }));
+    expect(result.current.formData.exchange).toBeNull();
+  });
+
+  // AST-022 — clearing the picker submits exchange: null
+  it("submits exchange: null when picker is cleared (AST-022 — clear)", async () => {
+    const exchange: Exchange = { code: "XPAR", label: "Euronext Paris" };
+    const assetWithExchange: Asset = { ...mockAsset, exchange };
+    mockUpdateAsset.mockResolvedValue({ data: assetWithExchange, error: null });
+    const onClose = vi.fn();
+    const { result } = renderHook(() => useEditAssetModal({ asset: assetWithExchange, onClose }));
+
+    act(() => {
+      result.current.handleExchangeChange(null);
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit);
+    });
+
+    expect(mockUpdateAsset).toHaveBeenCalledWith(expect.objectContaining({ exchange: null }));
+  });
+
+  // AST-022 — changing the picker submits the new exchange
+  it("submits the new exchange when picker value changes (AST-022 — change)", async () => {
+    const oldExchange: Exchange = { code: "XPAR", label: "Euronext Paris" };
+    const newExchange: Exchange = { code: "XNAS", label: "NASDAQ" };
+    const assetWithExchange: Asset = { ...mockAsset, exchange: oldExchange };
+    mockUpdateAsset.mockResolvedValue({ data: assetWithExchange, error: null });
+    const onClose = vi.fn();
+    const { result } = renderHook(() => useEditAssetModal({ asset: assetWithExchange, onClose }));
+
+    act(() => {
+      result.current.handleExchangeChange(newExchange);
+    });
+
+    await act(async () => {
+      await result.current.handleSubmit(fakeSubmit);
+    });
+
+    expect(mockUpdateAsset).toHaveBeenCalledWith(
+      expect.objectContaining({ exchange: newExchange }),
+    );
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Asset, AssetClass } from "@/bindings";
+import type { Asset, AssetClass, Exchange } from "@/bindings";
 import { logger } from "@/lib/logger";
 import { useAppStore } from "@/lib/store";
 import { hasDuplicateReference } from "../shared/validateAsset";
@@ -14,13 +14,22 @@ export function useEditAssetModal({ asset, onClose }: UseEditAssetModalProps) {
   const { updateAsset, assets } = useAssets();
   const categories = useAppStore((s) => s.categories);
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    name: string;
+    reference: string;
+    class: AssetClass;
+    currency: string;
+    risk_level: number;
+    category_id: string;
+    exchange: Exchange | null;
+  }>({
     name: "",
     reference: "",
-    class: "Stocks" as AssetClass,
+    class: "Stocks",
     currency: "USD",
     risk_level: 3,
     category_id: "",
+    exchange: null,
   });
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -35,6 +44,7 @@ export function useEditAssetModal({ asset, onClose }: UseEditAssetModalProps) {
         currency: asset.currency,
         risk_level: asset.risk_level,
         category_id: asset.category.id,
+        exchange: asset.exchange,
       });
       setError(null);
     }
@@ -59,6 +69,11 @@ export function useEditAssetModal({ asset, onClose }: UseEditAssetModalProps) {
     // intentionally a no-op — risk_level suggestion only applies at creation (R10)
   };
 
+  // AST-022 — exchange picker change handler (freely set/change/clear)
+  const handleExchangeChange = (exchange: Exchange | null) => {
+    setFormData((prev) => ({ ...prev, exchange }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!asset) return;
@@ -73,7 +88,7 @@ export function useEditAssetModal({ asset, onClose }: UseEditAssetModalProps) {
       currency: formData.currency,
       risk_level: formData.risk_level,
       category_id: formData.category_id,
-      exchange: asset.exchange,
+      exchange: formData.exchange,
     });
 
     setIsSubmitting(false);
@@ -96,6 +111,7 @@ export function useEditAssetModal({ asset, onClose }: UseEditAssetModalProps) {
     duplicateWarning,
     handleChange,
     handleClassChange,
+    handleExchangeChange,
     handleSubmit,
     categories,
   };
