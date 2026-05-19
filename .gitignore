@@ -29,6 +29,8 @@ dist-ssr
 screenshots/e2e-failures/
 tmp/
 coverage/
+# Reviewer reports (local triage artifacts, consumed by /review-triage)
+.review/
 
 # Python
 __pycache__/
