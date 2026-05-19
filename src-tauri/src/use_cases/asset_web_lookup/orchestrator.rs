@@ -143,6 +143,8 @@ struct OpenFigiHit {
     currency: Option<String>,
     #[serde(rename = "exchCode")]
     exchange_code: Option<String>,
+    #[serde(rename = "micCode")]
+    mic_code: Option<String>,
     #[serde(rename = "shareClassFIGI")]
     share_class_figi: Option<String>,
     #[serde(rename = "compositeFIGI")]
@@ -288,6 +290,7 @@ fn hit_to_raw(h: OpenFigiHit) -> RawFigiHit {
         security_type: h.security_type,
         currency: h.currency,
         exchange_code: h.exchange_code,
+        mic_code: h.mic_code,
         share_class_figi: h.share_class_figi,
         composite_figi: h.composite_figi,
     }
@@ -316,6 +319,7 @@ mod tests {
             security_type: security_type.map(str::to_string),
             currency: currency.map(str::to_string),
             exchange_code: exchange.map(str::to_string),
+            mic_code: None,
             share_class_figi: share_class.map(str::to_string),
             composite_figi: None,
         }
@@ -566,10 +570,12 @@ mod tests {
 
         let uc = AssetWebLookupUseCase::new(Arc::new(mock));
         let results = uc.search(isin.to_string()).await.unwrap();
-        assert_eq!(
-            results[0].exchange.as_deref(),
-            Some("Euronext Paris Stock Exchange")
-        );
+        // exchange is now Option<Exchange>; verify the canonical code is resolved
+        let exchange = results[0]
+            .exchange
+            .as_ref()
+            .expect("exchange should be resolved for FP → XPAR");
+        assert_eq!(exchange.code, "XPAR");
     }
 
     // ------------------------------------------------------------------

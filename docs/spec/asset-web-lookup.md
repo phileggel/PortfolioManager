@@ -20,7 +20,7 @@ A transient value object returned by the OpenFIGI API. Not persisted; used only 
 | `reference`   | ISIN or ticker symbol; pre-fills the Add Asset `reference` field. Absent when the keyword search path finds no ticker for the result (WEB-046).         |
 | `currency`    | ISO 4217 trading currency of the instrument (e.g. "USD"). Absent if OpenFIGI does not return one for the result.                                        |
 | `asset_class` | Classification of the instrument mapped from the OpenFIGI `securityType`. Absent if the type is unrecognised (WEB-023).                                 |
-| `exchange`    | Human-readable market name derived from the OpenFIGI `exchCode` (e.g. "Euronext Paris", "NYSE"). Absent if OpenFIGI returns no exchange code (WEB-049). |
+| `exchange`    | Canonical `Exchange` value (per AST Entity Definition) resolved from the OpenFIGI response. Absent when OpenFIGI returns no recognized venue (WEB-049). |
 
 ---
 
@@ -56,7 +56,7 @@ A transient value object returned by the OpenFIGI API. Not persisted; used only 
 
 **WEB-030 — Loading state (frontend)**: While `lookup_asset` is in progress, a loading indicator is shown and the search action is disabled to prevent duplicate requests.
 
-**WEB-031 — Results display (frontend)**: Each `AssetLookupResult` is shown as a two-line selectable row. First line: reference code (if present, displayed as a muted prefix) followed by the instrument name. Second line: the asset class label if present, otherwise a localised "unknown type" fallback label; if `exchange` is also present it is shown alongside, separated by a visual separator. When `exchange` is absent the second line shows only the type label (or the fallback). When both `asset_class` and `exchange` are absent the second line shows only the fallback label. The currency field is not shown in the results list; it is pre-filled silently into the form on selection (WEB-041).
+**WEB-031 — Results display (frontend)**: Each `AssetLookupResult` is shown as a two-line selectable row. First line: reference code (if present, displayed as a muted prefix) followed by the instrument name. Second line: the asset class label if present, otherwise a localised "unknown type" fallback label; if `exchange` is also present, its `label` (e.g. "Euronext Paris") is shown alongside, separated by a visual separator. When `exchange` is absent the second line shows only the type label (or the fallback). When both `asset_class` and `exchange` are absent the second line shows only the fallback label. The currency field is not shown in the results list; it is pre-filled silently into the form on selection (WEB-041).
 
 **WEB-032 — Empty results state (frontend)**: When the command returns an empty list, a message indicates no instruments were found. The user can modify the query and search again, or use the "Fill manually" bypass (WEB-013).
 
@@ -66,7 +66,7 @@ A transient value object returned by the OpenFIGI API. Not persisted; used only 
 
 **WEB-040 — Result selection (frontend)**: Selecting a result from the list transitions to the Add Asset form with fields pre-filled from the selected `AssetLookupResult`.
 
-**WEB-041 — Pre-filled fields (frontend)**: The following Add Asset form fields are pre-filled from the selected result: `name` ← `AssetLookupResult.name`; `reference` ← `AssetLookupResult.reference` (blank if absent); `currency` ← `AssetLookupResult.currency` (blank if absent); `asset_class` ← `AssetLookupResult.asset_class` (no selection if absent).
+**WEB-041 — Pre-filled fields (frontend)**: The following Add Asset form fields are pre-filled from the selected result: `name` ← `AssetLookupResult.name`; `reference` ← `AssetLookupResult.reference` (blank if absent); `currency` ← `AssetLookupResult.currency` (blank if absent); `asset_class` ← `AssetLookupResult.asset_class` (no selection if absent); `exchange` ← `AssetLookupResult.exchange` (no selection if absent). All pre-filled values remain user-editable per WEB-043.
 
 **WEB-042 — Risk level default from asset class (frontend)**: When opening the Add Asset form from the web lookup path (creation only), if `asset_class` is pre-filled, `risk_level` is automatically set to the class default, consistent with the `AssetClass::default_risk()` behaviour defined in AST-010. When `asset_class` is absent, `risk_level` is left at its form default. This rule applies exclusively to the creation flow; it does not affect the edit form.
 
@@ -82,7 +82,7 @@ A transient value object returned by the OpenFIGI API. Not persisted; used only 
 
 **WEB-048 — Result ordering (backend)**: Results are sorted by instrument type priority before the 10-item truncation (WEB-022). Priority is determined by the resolved `asset_class` value (WEB-023): Priority 1 (top) — `asset_class` ∈ {`Stocks`, `ETF`, `MutualFunds`, `Bonds`, `DigitalAsset`, `RealEstate`, `Cash`}; Priority 2 — `asset_class` = `Derivatives`; Priority 3 — `asset_class` absent (unrecognised `securityType`, including structured products and certificates). Within each priority group, the original OpenFIGI response order is preserved.
 
-**WEB-049 — Exchange field (backend)**: The OpenFIGI `exchCode` field is resolved to a human-readable market name via a static, hardcoded in-code lookup table (e.g. `"FP"` → `"Euronext Paris Stock Exchange"`, `"UN"` → `"New York Stock Exchange"`, `"UW"` → `"Nasdaq Global Select Market"`). The table mirrors OpenFIGI's official exchange-codes dictionary (published as a CSV at `openfigi.com`). Unknown codes fall back to the raw `exchCode` string. The resolved name is forwarded as `exchange` in `AssetLookupResult`. If OpenFIGI returns no `exchCode`, `exchange` is absent.
+**WEB-049 — Exchange field (backend)**: The OpenFIGI response is normalized to a canonical `Exchange` value (per AST Entity Definition) via a per-provider mapper. The mapper consults OpenFIGI's exchange identifier fields (`micCode` when present, otherwise `exchCode`) and returns `Some(Exchange)` when the venue is in the canonical curated set, `None` otherwise (including when OpenFIGI returns no exchange information). The resolved `Exchange` is forwarded as `AssetLookupResult.exchange`. Provider key equality (e.g. OpenFIGI's `micCode` happening to match ISO 10383 MIC) is treated as accidental convergence; the mapper is the contract.
 
 **WEB-050 — Primary listing surfacing (backend)**: The keyword search path applies a deduplication-and-enrichment pipeline so that the user is shown the asset's primary listing(s), not the dozens of secondary OTC/MTF listings OpenFIGI returns by default. The pipeline:
 

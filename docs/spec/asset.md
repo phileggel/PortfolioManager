@@ -36,9 +36,28 @@ Subjective risk score from 1 (low risk) to 5 (high risk). The frontend suggests 
 
 Security identifier: stock ticker (e.g. `AAPL`), ISIN code (e.g. `FR0000131104`), or free-form identifier entered by the user (e.g. `APPART-PARIS-15`) for non-quoted assets. Required.
 
+### `exchange`
+
+Optional canonical market identifier where the instrument is listed. Stored as a value of `Exchange` (see Entity Definition below). Absent for assets that are not listed on a tracked venue (e.g. real estate, free-form references) or for legacy assets created before the exchange field existed. The auto-fetch task uses it to select the correct provider symbol per MKT-110.
+
 ### `is_archived`
 
 Indicates whether the asset is archived (removed from active lists). An archived asset retains all its historical data but cannot be modified or receive new prices.
+
+---
+
+## Entity Definition
+
+### `Exchange`
+
+A canonical reference to a trading venue, independent of any market-data provider.
+
+| Field   | Required | Business meaning                                                                           |
+| ------- | -------- | ------------------------------------------------------------------------------------------ |
+| `code`  | yes      | ISO 10383 Market Identifier Code (MIC), e.g. `XPAR` for Euronext Paris, `XNAS` for NASDAQ. |
+| `label` | yes      | Human-readable display name, e.g. "Euronext Paris", "NASDAQ", "Deutsche Börse Xetra".      |
+
+The list of supported `Exchange` values is finite and curated. Provider keys (Stooq venue suffixes, OpenFIGI exchange codes) are NOT stored on `Exchange` — they are resolved by per-provider mappers at the boundary.
 
 ---
 
@@ -46,7 +65,7 @@ Indicates whether the asset is archived (removed from active lists). An archived
 
 ### Asset — Backend
 
-**AST-001 (was R1) — Field validation (backend)**: An asset is valid if and only if: `name` is non-empty, `reference` is non-empty, `category` is set, `class` is a value of `AssetClass`, `currency` is a valid ISO 4217 code, and `risk_level` is an integer between 1 and 5 inclusive. Any violation is rejected by the backend with an explicit error.
+**AST-001 (was R1) — Field validation (backend)**: An asset is valid if and only if: `name` is non-empty, `reference` is non-empty, `category` is set, `class` is a value of `AssetClass`, `currency` is a valid ISO 4217 code, `risk_level` is an integer between 1 and 5 inclusive, and — if present — `exchange.code` is a member of the canonical curated `Exchange` set. Any violation is rejected by the backend with an explicit error.
 
 **AST-003 (was R3) — Asset classes and default risk (backend)**: Classification (`AssetClass`) is a fixed pre-seeded list, not user-customizable:
 
@@ -94,7 +113,7 @@ The table displays only active assets (`is_archived = false`) by default. A page
 
 **AST-017 (was R17) — Column sorting (frontend)**: Clicking a sortable column header sorts the list by that column ascending. A second click toggles to descending.
 
-**AST-008 (was R8) — Creation via FAB (frontend)**: A floating FAB at the bottom right opens a creation modal. The form contains: Name (required), Reference (required), ISO Currency (required), Category (select, pre-selected to `default-uncategorized`, see AST-002), Class (select, pre-selected to `Cash`), Risk level (1–5 selector, pre-filled per class, see AST-010). Submission is blocked if name, reference, or currency is missing.
+**AST-008 (was R8) — Creation via FAB (frontend)**: A floating FAB at the bottom right opens a creation modal. The form contains: Name (required), Reference (required), ISO Currency (required), Category (select, pre-selected to `default-uncategorized`, see AST-002), Class (select, pre-selected to `Cash`), Risk level (1–5 selector, pre-filled per class, see AST-010). Submission is blocked if name, reference, or currency is missing. The `Exchange` picker is optional and defaults to (none) — see AST-021.
 
 **AST-009 (was R9) — Reference duplicate warning (frontend)**: When creating or modifying an asset, if the entered reference matches (case-insensitive) the reference of an existing asset — active or archived — regardless of class, a non-blocking warning is shown in the form. The user can ignore the warning and confirm. The warning is intentionally non-blocking: the same identifier may legitimately designate distinct instruments depending on quotation currency or marketplace. Archived assets are included in the check to avoid silent duplicates in case of later unarchival.
 
@@ -113,6 +132,10 @@ The table displays only active assets (`is_archived = false`) by default. A page
 **AST-019 (was R19) — Archived assets toggle (frontend)**: The header exposes a "Show archived" toggle. When on, archived assets appear in the table with a dimmed visual style on the entire row (not only the badge), making it immediately clear which assets are active vs archived. The Archive button is replaced by an Unarchive button on archived rows; the Edit button is disabled.
 
 **AST-020 (was R20) — Unarchive from the table (frontend)**: The Unarchive button (visible only on archived rows when the AST-019 toggle is on) opens a confirmation dialog. Confirmation triggers unarchival (AST-018) and the asset reappears in the active list.
+
+**AST-021 — Optional exchange picker (frontend)**: The asset creation (AST-008) and edit (AST-012) forms expose an optional `Exchange` picker. The picker lists the canonical curated set (see Entity Definition). Selecting "(none)" submits `exchange = None`. The picker pre-fill behavior from the web-lookup path is defined in WEB-041.
+
+**AST-022 — Exchange persistence (backend)**: The backend accepts the submitted `Exchange` value as-is and persists it without transformation. Editing an asset MAY freely set, change, or clear `exchange` (subject to AST-005 and AST-001).
 
 ---
 

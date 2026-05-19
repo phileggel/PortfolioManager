@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use super::super::domain::{Asset, AssetCategory, AssetClass, AssetRepository};
+use super::super::domain::{exchange, Asset, AssetCategory, AssetClass, AssetRepository};
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
@@ -15,11 +15,13 @@ struct AssetRow {
     category_id: String,
     category_name: String,
     is_archived: bool,
+    exchange_code: Option<String>,
 }
 
 impl From<AssetRow> for Asset {
     fn from(row: AssetRow) -> Self {
         let asset_class = AssetClass::from_str(&row.asset_class).unwrap_or_default();
+        let exchange = row.exchange_code.as_deref().and_then(exchange::lookup);
         Asset::restore(
             row.id,
             row.name,
@@ -29,6 +31,7 @@ impl From<AssetRow> for Asset {
             row.risk_level.try_into().unwrap_or(0),
             row.reference,
             row.is_archived,
+            exchange,
         )
     }
 }
@@ -56,7 +59,8 @@ impl AssetRepository for SqliteAssetRepository {
                 a.id, a.name, a.reference, a.asset_class, a.currency, a.risk_level,
                 c.id as category_id,
                 c.name as category_name,
-                a.is_archived as "is_archived: bool"
+                a.is_archived as "is_archived: bool",
+                a.exchange_code
             FROM assets a
             JOIN categories c ON a.category_id = c.id
             WHERE a.is_deleted = 0 AND a.is_archived = 0 AND c.is_deleted = 0
@@ -77,7 +81,8 @@ impl AssetRepository for SqliteAssetRepository {
                 a.id, a.name, a.reference, a.asset_class, a.currency, a.risk_level,
                 c.id as category_id,
                 c.name as category_name,
-                a.is_archived as "is_archived: bool"
+                a.is_archived as "is_archived: bool",
+                a.exchange_code
             FROM assets a
             JOIN categories c ON a.category_id = c.id
             WHERE a.is_deleted = 0 AND c.is_deleted = 0
@@ -98,7 +103,8 @@ impl AssetRepository for SqliteAssetRepository {
                 a.id, a.name, a.reference, a.asset_class, a.currency, a.risk_level,
                 c.id as category_id,
                 c.name as category_name,
-                a.is_archived as "is_archived: bool"
+                a.is_archived as "is_archived: bool",
+                a.exchange_code
             FROM assets a
             JOIN categories c ON a.category_id = c.id
             WHERE a.id = ?
@@ -116,15 +122,17 @@ impl AssetRepository for SqliteAssetRepository {
 
     async fn create(&self, asset: Asset) -> Result<Asset> {
         let asset_class_str = asset.class.to_string();
+        let exchange_code = asset.exchange.as_ref().map(|e| e.code.clone());
         sqlx::query!(
-            r#"INSERT INTO assets (id, name, reference, asset_class, currency, risk_level, is_deleted, is_archived, category_id) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)"#,
+            r#"INSERT INTO assets (id, name, reference, asset_class, currency, risk_level, is_deleted, is_archived, category_id, exchange_code) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)"#,
             asset.id,
             asset.name,
             asset.reference,
             asset_class_str,
             asset.currency,
             asset.risk_level,
-            asset.category.id
+            asset.category.id,
+            exchange_code
         )
         .execute(&self.pool)
         .await
@@ -134,14 +142,16 @@ impl AssetRepository for SqliteAssetRepository {
 
     async fn update(&self, asset: Asset) -> Result<Asset> {
         let asset_class_str = asset.class.to_string();
+        let exchange_code = asset.exchange.as_ref().map(|e| e.code.clone());
         sqlx::query!(
-            r#"UPDATE assets SET name = ?, reference = ?, asset_class = ?, currency = ?, risk_level = ?, category_id = ? WHERE id = ? AND is_archived = 0"#,
+            r#"UPDATE assets SET name = ?, reference = ?, asset_class = ?, currency = ?, risk_level = ?, category_id = ?, exchange_code = ? WHERE id = ? AND is_archived = 0"#,
             asset.name,
             asset.reference,
             asset_class_str,
             asset.currency,
             asset.risk_level,
             asset.category.id,
+            exchange_code,
             asset.id
         )
         .execute(&self.pool)

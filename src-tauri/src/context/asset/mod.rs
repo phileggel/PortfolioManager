@@ -16,6 +16,7 @@ pub use application::{
     AssetApplicationError, AssetCrudError, AssetPriceApplicationError, AssetPriceError,
     CategoryApplicationError, CategoryCrudError,
 };
+pub use domain::exchange;
 pub use domain::*;
 pub use error::AssetError;
 pub use repository::*;

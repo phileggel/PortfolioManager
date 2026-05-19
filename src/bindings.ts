@@ -64,6 +64,13 @@ async unarchiveAsset(id: string) : Promise<Result<null, AssetCrudError>> {
 }
 },
 /**
+ * Returns the canonical curated set of supported trading venues (AST-021).
+ * Infallible — backed by an in-binary constant.
+ */
+async getSupportedExchanges() : Promise<Exchange[]> {
+    return await TAURI_INVOKE("get_supported_exchanges");
+},
+/**
  * Fetches all active categories.
  * 
  * Read-only — only infrastructure failures can fire here, so the surface is
@@ -717,7 +724,11 @@ reference: string;
 /**
  * Whether the asset is archived (soft-archived, reversible).
  */
-is_archived: boolean }
+is_archived: boolean; 
+/**
+ * Optional canonical trading venue (AST-021).
+ */
+exchange: Exchange | null }
 /**
  * Application-layer rejections for the Asset aggregate of the Asset BC —
  * concerns raised at the service layer rather than by an aggregate method on
@@ -852,7 +863,11 @@ export type AssetDomainError =
 /**
  * The asset is a system Cash Asset and cannot be edited, archived, unarchived, or deleted (CSH-016).
  */
-{ code: "CashAssetNotEditable" }
+{ code: "CashAssetNotEditable" } | 
+/**
+ * The supplied exchange code is not a member of the canonical curated set (AST-001).
+ */
+{ code: "InvalidExchange"; exchange_code: string }
 /**
  * Flat error enum for the asset bounded context (per error-model.md).
  * 
@@ -890,9 +905,10 @@ currency: string | null;
  */
 asset_class: AssetClass | null; 
 /**
- * Human-readable exchange name resolved from `exchCode` (WEB-049).
+ * Canonical exchange resolved via WEB-049 mapper; absent when the venue
+ * is not in the curated set.
  */
-exchange: string | null }
+exchange: Exchange | null }
 /**
  * A recorded market price for a financial asset on a specific date.
  * Owned by the `asset` bounded context (MKT spec).
@@ -1232,7 +1248,11 @@ risk_level: number;
 /**
  * ID of the primary category.
  */
-category_id: string }
+category_id: string; 
+/**
+ * Optional canonical trading venue (AST-021).
+ */
+exchange: Exchange | null }
 /**
  * Application-layer rejection specific to the `delete_asset` use case —
  * the cross-BC transaction-history check performed by the orchestrator
@@ -1335,6 +1355,18 @@ export type Event =
  * A market price was recorded or updated for an asset (MKT-026)
  */
 { type: "AssetPriceUpdated" }
+/**
+ * A canonical trading venue identified by its ISO 10383 MIC code.
+ */
+export type Exchange = { 
+/**
+ * ISO 10383 Market Identifier Code (e.g. "XPAR", "XNAS").
+ */
+code: string; 
+/**
+ * Human-readable display name (e.g. "Euronext Paris").
+ */
+label: string }
 /**
  * Wire-facing error composite for `fetch_account_asset_prices` (MKT-113, MKT-111, MKT-132).
  * 
@@ -1823,7 +1855,11 @@ risk_level: number;
 /**
  * New category link.
  */
-category_id: string }
+category_id: string; 
+/**
+ * New optional canonical trading venue (AST-021 / AST-022).
+ */
+exchange: Exchange | null }
 /**
  * Defines how often an account's data should be updated.
  */

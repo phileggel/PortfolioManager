@@ -64,6 +64,7 @@ export function useAddAsset({ onSubmitSuccess, prefill }: UseAddAssetProps = {})
       currency: formData.currency,
       risk_level: formData.risk_level,
       category_id: formData.category_id || SYSTEM_CATEGORY_ID,
+      exchange: null,
     });
 
     setIsSubmitting(false);

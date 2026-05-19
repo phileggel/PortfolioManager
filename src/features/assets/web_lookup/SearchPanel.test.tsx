@@ -112,7 +112,7 @@ describe("SearchPanel — result row layout (WEB-031)", () => {
     reference: "AAPL",
     currency: "USD",
     asset_class: "Stocks",
-    exchange: "NYSE",
+    exchange: { code: "XNYS", label: "New York Stock Exchange" },
   };
 
   // WEB-031 — first line shows reference code and instrument name
@@ -125,7 +125,7 @@ describe("SearchPanel — result row layout (WEB-031)", () => {
   // WEB-031 — second line shows formatted class label and exchange separated by · (U+00B7 middle dot)
   it("shows class label · exchange on the second line when both present", () => {
     renderPanel({ status: "results", results: [stockResult] });
-    expect(screen.getByText("Stocks · NYSE")).toBeInTheDocument();
+    expect(screen.getByText("Stocks · New York Stock Exchange")).toBeInTheDocument();
   });
 
   // WEB-031 — multi-word class names are human-readable on the second line
@@ -162,7 +162,7 @@ describe("SearchPanel — result row layout (WEB-031)", () => {
       reference: null,
       currency: null,
       asset_class: null,
-      exchange: "London Stock Exchange",
+      exchange: { code: "XLON", label: "London Stock Exchange" },
     };
     renderPanel({ status: "results", results: [noClass] });
     expect(

@@ -8,7 +8,7 @@ use specta::Type;
 
 use tauri::State;
 
-use super::domain::{Asset, AssetCategory, AssetClass, AssetPrice};
+use super::domain::{exchange, Asset, AssetCategory, AssetClass, AssetPrice, Exchange};
 
 // --- DTOs ---
 
@@ -27,6 +27,8 @@ pub struct CreateAssetDTO {
     pub risk_level: u8,
     /// ID of the primary category.
     pub category_id: String,
+    /// Optional canonical trading venue (AST-021).
+    pub exchange: Option<Exchange>,
 }
 
 /// Parameters for updating an existing asset.
@@ -46,6 +48,8 @@ pub struct UpdateAssetDTO {
     pub risk_level: u8,
     /// New category link.
     pub category_id: String,
+    /// New optional canonical trading venue (AST-021 / AST-022).
+    pub exchange: Option<Exchange>,
 }
 
 // --- Assets ---
@@ -91,6 +95,14 @@ pub async fn update_asset(
 #[specta::specta]
 pub async fn unarchive_asset(state: State<'_, AppState>, id: String) -> Result<(), AssetCrudError> {
     state.asset_service.unarchive_asset(&id).await
+}
+
+/// Returns the canonical curated set of supported trading venues (AST-021).
+/// Infallible — backed by an in-binary constant.
+#[tauri::command]
+#[specta::specta]
+pub fn get_supported_exchanges() -> Vec<Exchange> {
+    exchange::all()
 }
 
 // --- Categories ---

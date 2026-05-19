@@ -118,6 +118,7 @@ impl AssetService {
             1,
             currency.to_uppercase(),
             false,
+            None,
         )?;
         let asset = self.asset_repo.create(asset).await?;
         tracing::info!(target: BACKEND, asset_id = %asset.id, currency = %currency, "Seeded Cash Asset");
@@ -140,6 +141,7 @@ impl AssetService {
             dto.currency,
             dto.risk_level,
             dto.reference,
+            dto.exchange,
         )?;
 
         let asset = self.asset_repo.create(asset).await.map_err(|e| {
@@ -169,6 +171,7 @@ impl AssetService {
             dto.currency,
             dto.risk_level,
             dto.reference,
+            dto.exchange,
         )?;
 
         let asset = self.asset_repo.update(asset).await.map_err(|e| {
@@ -634,6 +637,7 @@ mod tests {
             1,
             "REF".to_string(),
             archived,
+            None,
         )
     }
 
@@ -647,6 +651,7 @@ mod tests {
             1,
             "USD".to_string(),
             false,
+            None,
         )
     }
 
@@ -674,6 +679,7 @@ mod tests {
             currency: "USD".to_string(),
             risk_level: 1,
             category_id: SYSTEM_CATEGORY_ID.to_string(),
+            exchange: None,
         }
     }
 
@@ -855,6 +861,7 @@ mod tests {
                 currency: "USD".to_string(),
                 risk_level: 4,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap_err();
@@ -1777,6 +1784,7 @@ mod tests {
                 currency: "USD".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap_err();
@@ -1806,6 +1814,7 @@ mod tests {
                 currency: "USD".to_string(),
                 risk_level: 1,
                 category_id: "missing-cat".to_string(),
+                exchange: None,
             })
             .await
             .unwrap_err();
@@ -1908,6 +1917,7 @@ mod tests {
                 currency: "USD".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap_err();

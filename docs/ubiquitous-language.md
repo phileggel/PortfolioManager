@@ -62,6 +62,12 @@ A value-object enum qualifying the provenance of an `AssetPrice` record. Variant
 
 > Status: confirmed
 
+### Exchange
+
+A canonical reference to a trading venue, independent of any market-data provider. Carries an ISO 10383 Market Identifier Code (MIC) as `code` (e.g. `XPAR`, `XNAS`) and a human-readable `label`. Optional field on `Asset`. Auto-filled by the OpenFIGI lookup path (WEB-049) or selected by the user via a curated picker on the Add/Edit Asset form (AST-021). Used by the auto-fetch task to resolve the Stooq provider symbol (MKT-110). Provider keys (Stooq venue suffixes, OpenFIGI exchange codes) are NOT stored on `Exchange` — they are resolved by per-provider mappers at the boundary.
+
+> Status: confirmed
+
 ---
 
 ## Aggregate Root Methods (Account)

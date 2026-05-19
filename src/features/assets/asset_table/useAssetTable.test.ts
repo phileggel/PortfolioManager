@@ -13,6 +13,7 @@ const makeAsset = (overrides: Partial<Asset> = {}): Asset => ({
   category: { id: "cat-1", name: "US Stocks" },
   is_archived: false,
   ...overrides,
+  exchange: null,
 });
 
 const activeAsset = makeAsset({
@@ -25,6 +26,7 @@ const archivedAsset = makeAsset({
   name: "Bond Fund",
   reference: "BND",
   is_archived: true,
+  exchange: null,
 });
 
 describe("useAssetTable", () => {
