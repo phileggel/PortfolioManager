@@ -11,20 +11,9 @@
 import assert from "node:assert";
 import { $, browser } from "@wdio/globals";
 import { dismissLeftoverModal } from "../helpers/modal";
+import { navigateToAssets } from "../helpers/navigation";
 import { setReactInputValue } from "../helpers/react";
 import { seedAsset, seedCategory } from "../helpers/seed";
-
-// ---------------------------------------------------------------------------
-// Navigation
-// ---------------------------------------------------------------------------
-
-async function navigateToAssets(): Promise<void> {
-  const nav = await $('button[aria-label="Assets"]');
-  await nav.waitForExist({ timeout: 15000 });
-  await nav.click();
-  const fab = await $('button[aria-label="Add asset"]');
-  await fab.waitForExist({ timeout: 10000 });
-}
 
 // ---------------------------------------------------------------------------
 // Suite
