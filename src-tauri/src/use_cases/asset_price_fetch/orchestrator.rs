@@ -1,6 +1,6 @@
 use crate::context::account::{AccountApplicationError, AccountService};
 use crate::context::asset::{
-    derive_stooq_symbol, Asset, AssetApplicationError, AssetError, AssetService,
+    derive_stooq_symbol_with_exchange, Asset, AssetApplicationError, AssetError, AssetService,
 };
 use crate::core::cash::system_cash_asset_id;
 use crate::core::logger::BACKEND;
@@ -143,7 +143,9 @@ impl AssetPriceFetchUseCase {
                     return Err(translate_asset_application_error(application_error));
                 }
             };
-            let Some(symbol) = derive_stooq_symbol(&asset.reference) else {
+            let Some(symbol) =
+                derive_stooq_symbol_with_exchange(&asset.reference, asset.exchange.as_ref())
+            else {
                 continue;
             };
             scope.push((asset, symbol));
