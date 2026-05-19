@@ -52,30 +52,6 @@ OpenFIGI's no-API-key tier caps `/v3/search` at 5 requests/minute. Today every 4
 
 Surfaced 2026-05-16 during a manual test session (`api.openfigi.com 429 Too Many Requests`).
 
-## (asset) — Add `exchange` field on Asset (anti-corruption mapped from FIGI / to Stooq)
-
-Auto-fetch shipped (MKT-100..MKT-142 across PRs #29, #30, #31). The `derive_stooq_symbol` helper currently lowercases the asset's `reference` field, which works for US tickers but fails for Euronext / LSE / Frankfurt listings where Stooq expects a venue suffix (e.g. `ai.fr` for Air Liquide on Paris, `bmw.de` for BMW on Frankfurt). N/D responses degrade silently per MKT-114, so non-US assets quietly never get a price. The root cause is that `Asset` does not carry the venue it trades on — the spec acknowledges this gap on asset.md line 9. Web-lookup already captures `exchange` on `AssetLookupResult` but discards it at persist time.
-
-**Shape (ports-and-adapters)**:
-
-- New domain value object `Exchange { code: String /* ISO 10383 MIC */, label: String }` — canonical list, no provider fields
-- Optional `Asset.exchange: Option<Exchange>` field (nullable column)
-- Two pure mapper modules in the asset BC infrastructure:
-  - `openfigi_exchange_mapper::openfigi_mic_to_exchange(mic) -> Option<Exchange>` — inbound (web lookup)
-  - `stooq_exchange_mapper::exchange_to_stooq_suffix(exchange) -> Option<&str>` — outbound (price fetch)
-- AST-008 (create) + AST-012 (edit) gain an optional exchange picker over the canonical list
-- WEB-049 extracts OpenFIGI's `micCode` (currently uses human-readable `exchange` string) and maps via `openfigi_mic_to_exchange`
-- MKT-110 derives Stooq symbol from `(reference, exchange)` via `exchange_to_stooq_suffix`; falls back to lowercase `reference` when exchange is missing or unmapped (preserves US happy path for legacy assets)
-- Canonical list = intersection of OpenFIGI's `micCode` coverage and Stooq's venue list (~18–22 venues); confirm in implementation phase
-
-**Why decoupled from any provider**: Exchange is a domain concept. OpenFIGI's `micCode` happening to match ISO 10383 MIC is accidental convergence — we still go through a mapper. This keeps the model usable for KEY/Finnhub or any future provider without entity churn.
-
-**Why this replaces the previous `stooq_symbol` proposal**: a user-typed provider-specific override would be a workaround for missing semantic data. Adding `exchange` as a first-class field captures the real meaning and is reusable across providers.
-
-Surfaced 2026-05-18 after a manual test against `FR0000120073` (Air Liquide) where Stooq returned all-N/D.
-
-Workflow-A: amend AST + WEB + MKT specs → `spec-reviewer` → `/contract` refresh → `feature-planner` → implementation.
-
 ## (spec) — Write KEY spec (User API Key Management)
 
 ADR-011 captures the BYOK + OS keychain + 3-tier fallback decision. The spec to write — trigram `KEY` — covers the Tauri command surface, state machine, Connections settings panel UX, link-out to provider signup, "test connection" probe, and the Linux-without-keyring detection + UX flow.

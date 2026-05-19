@@ -156,3 +156,121 @@ async fn fetch_all_returns_fetch_already_running_while_guard_held() {
         "expected FetchAlreadyRunning, got: {result:?}"
     );
 }
+
+/// MKT-110 — fetch_for_account uses derive_stooq_symbol_with_exchange so an asset
+/// carrying `exchange = Some(XPAR)` resolves to `<ref>.fr` (exchange-qualified)
+/// rather than the bare-ticker legacy form. Guards the wiring of the picker-driven
+/// exchange field into the actual Stooq fetch URL.
+#[tokio::test]
+async fn fetch_for_account_passes_exchange_qualified_symbol_to_provider() {
+    use std::sync::Mutex;
+    use vault_compass_lib::context::account::{
+        AccountService, SqliteAccountRepository, SqliteHoldingRepository,
+        SqliteTransactionRepository, UpdateFrequency,
+    };
+    use vault_compass_lib::context::asset::{
+        AssetPriceRepository, AssetService, CreateAssetDTO, PriceProvider,
+        SqliteAssetCategoryRepository, SqliteAssetPriceRepository, SqliteAssetRepository,
+        SYSTEM_CATEGORY_ID,
+    };
+    use vault_compass_lib::core::SideEffectEventBus;
+    use vault_compass_lib::use_cases::asset_price_fetch::dispatcher::Dispatcher;
+
+    struct CapturingProvider {
+        seen: Arc<Mutex<Vec<String>>>,
+    }
+    #[async_trait::async_trait]
+    impl PriceProvider for CapturingProvider {
+        async fn fetch_price(&self, symbol: &str) -> anyhow::Result<Option<i64>> {
+            self.seen.lock().unwrap().push(symbol.to_string());
+            Ok(Some(100_000_000))
+        }
+    }
+
+    let pool = make_pool().await;
+    let bus = Arc::new(SideEffectEventBus::new());
+    let account_service = Arc::new(AccountService::new(
+        Box::new(SqliteAccountRepository::new(pool.clone())),
+        Box::new(SqliteHoldingRepository::new(pool.clone())),
+        Box::new(SqliteTransactionRepository::new(pool.clone())),
+    ));
+    let asset_service = Arc::new(AssetService::new(
+        Box::new(SqliteAssetRepository::new(pool.clone())),
+        Box::new(SqliteAssetCategoryRepository::new(pool.clone())),
+        Box::new(SqliteAssetPriceRepository::new(pool.clone())),
+    ));
+
+    let asset = asset_service
+        .create_asset(CreateAssetDTO {
+            name: "Air Liquide".to_string(),
+            reference: "AI".to_string(),
+            class: vault_compass_lib::context::asset::AssetClass::Stocks,
+            currency: "EUR".to_string(),
+            risk_level: 4,
+            category_id: SYSTEM_CATEGORY_ID.to_string(),
+            exchange: Some(vault_compass_lib::context::asset::Exchange {
+                code: "XPAR".to_string(),
+                label: "Euronext Paris".to_string(),
+            }),
+        })
+        .await
+        .expect("seed asset with XPAR exchange");
+
+    let account = account_service
+        .create(
+            "Test".to_string(),
+            "EUR".to_string(),
+            UpdateFrequency::ManualMonth,
+        )
+        .await
+        .expect("seed account");
+    account_service
+        .open_holding(
+            &account.id,
+            asset.id.clone(),
+            "2024-01-01".to_string(),
+            1_000_000,
+            100_000_000,
+        )
+        .await
+        .expect("seed holding");
+
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let provider = Arc::new(CapturingProvider {
+        seen: Arc::clone(&seen),
+    });
+    let price_repo: Arc<dyn AssetPriceRepository> =
+        Arc::new(SqliteAssetPriceRepository::new(pool.clone()));
+    let dispatcher = Arc::new(Dispatcher::new(
+        provider,
+        price_repo,
+        Arc::clone(&bus),
+        Arc::new(|| chrono::Local::now().date_naive()),
+    ));
+    let use_case = AssetPriceFetchUseCase::new(
+        Arc::clone(&account_service),
+        Arc::clone(&asset_service),
+        Arc::new(FetchGuard::new()),
+        dispatcher,
+    );
+
+    use_case
+        .fetch_for_account(&account.id)
+        .await
+        .expect("fetch_for_account dispatch");
+
+    // Dispatcher::spawn launches an async task — give it a moment to call the provider.
+    for _ in 0..50 {
+        if !seen.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    let symbols = seen.lock().unwrap().clone();
+    assert_eq!(
+        symbols,
+        vec!["ai.fr".to_string()],
+        "MKT-110: orchestrator must derive `ai.fr` (XPAR → .fr suffix) for an asset carrying `exchange = Some(XPAR)`, not the bare `ai` legacy form"
+    );
+}
