@@ -13,19 +13,7 @@
 import assert from "node:assert";
 import { $ } from "@wdio/globals";
 import { dismissLeftoverModal } from "../helpers/modal";
-
-// ---------------------------------------------------------------------------
-// Navigation helper — navigate to the Assets page via the sidebar nav button.
-// Never calls browser.url() (E2E rule E8).
-// ---------------------------------------------------------------------------
-async function navigateToAssets(): Promise<void> {
-  const assetsNav = await $('button[aria-label="Assets"]');
-  await assetsNav.waitForExist({ timeout: 15000 });
-  await assetsNav.click();
-  // Wait for the FAB to confirm the route is active.
-  const fab = await $('button[aria-label="Add asset"]');
-  await fab.waitForExist({ timeout: 10000 });
-}
+import { navigateToAssets } from "../helpers/navigation";
 
 // ---------------------------------------------------------------------------
 // Suite
