@@ -13,13 +13,14 @@
 
 ### Asset CRUD
 
-| Command                    | Args                                                                                                                                              | Return       | Errors                                                                                                                                                                                                                                                    |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `get_assets`               | —                                                                                                                                                 | `Vec<Asset>` | `DatabaseError` _(returns active assets only)_                                                                                                                                                                                                            |
-| `get_assets_with_archived` | —                                                                                                                                                 | `Vec<Asset>` | `DatabaseError` _(returns all assets including archived)_                                                                                                                                                                                                 |
-| `add_asset`                | `CreateAssetDTO { name: String, class: AssetClass, category_id: String, currency: String, risk_level: i32, reference: String }`                   | `Asset`      | `NameEmpty` (R1), `ReferenceEmpty` (R1), `InvalidRiskLevel { received: i32 }` (AST-002), `InvalidCurrency { currency }` (TRX-021), `NotFound { id }` (when `category_id` missing), `DatabaseError`                                                        |
-| `update_asset`             | `UpdateAssetDTO { asset_id: String, name: String, reference: String, class: AssetClass, currency: String, risk_level: i32, category_id: String }` | `Asset`      | `NotFound { id }` (asset or category missing), `Archived` (R18 — archived asset cannot be edited), `CashAssetNotEditable` (CSH-016), `NameEmpty`, `ReferenceEmpty`, `InvalidRiskLevel { received: i32 }`, `InvalidCurrency { currency }`, `DatabaseError` |
-| `unarchive_asset`          | `id: String`                                                                                                                                      | `()`         | `NotFound { id }`, `CashAssetNotEditable` (CSH-016), `DatabaseError`                                                                                                                                                                                      |
+| Command                    | Args                                                                                                                                                                          | Return          | Errors                                                                                                                                                                                                                                                                                                           |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_assets`               | —                                                                                                                                                                             | `Vec<Asset>`    | `DatabaseError` _(returns active assets only)_                                                                                                                                                                                                                                                                   |
+| `get_assets_with_archived` | —                                                                                                                                                                             | `Vec<Asset>`    | `DatabaseError` _(returns all assets including archived)_                                                                                                                                                                                                                                                        |
+| `add_asset`                | `CreateAssetDTO { name: String, class: AssetClass, category_id: String, currency: String, risk_level: i32, reference: String, exchange: Option<Exchange> }`                   | `Asset`         | `NameEmpty` (R1), `ReferenceEmpty` (R1), `InvalidRiskLevel { received: i32 }` (AST-002), `InvalidCurrency { currency }` (TRX-021), `InvalidExchange { exchange_code: String }` (AST-001), `NotFound { id }` (when `category_id` missing), `DatabaseError`                                                        |
+| `update_asset`             | `UpdateAssetDTO { asset_id: String, name: String, reference: String, class: AssetClass, currency: String, risk_level: i32, category_id: String, exchange: Option<Exchange> }` | `Asset`         | `NotFound { id }` (asset or category missing), `Archived` (R18 — archived asset cannot be edited), `CashAssetNotEditable` (CSH-016), `NameEmpty`, `ReferenceEmpty`, `InvalidRiskLevel { received: i32 }`, `InvalidCurrency { currency }`, `InvalidExchange { exchange_code: String }` (AST-001), `DatabaseError` |
+| `unarchive_asset`          | `id: String`                                                                                                                                                                  | `()`            | `NotFound { id }`, `CashAssetNotEditable` (CSH-016), `DatabaseError`                                                                                                                                                                                                                                             |
+| `get_supported_exchanges`  | —                                                                                                                                                                             | `Vec<Exchange>` | _(infallible — returns the canonical curated set from the BE constant; FE picker source per AST-021)_                                                                                                                                                                                                            |
 
 ### Categories
 
@@ -84,12 +85,21 @@ struct Asset {
     currency: String,            // ISO 4217 (TRX-021)
     risk_level: u8,              // 1..=5 (AST-002); DTOs accept `i32` input and the backend validates with `InvalidRiskLevel { received: i32 }`
     reference: String,           // ticker / ISIN / freeform reference (mandatory — R1)
+    exchange: Option<Exchange>,  // canonical trading venue (AST-021); absent for legacy / non-listed assets
     is_archived: bool,           // R18
 }
 
 struct AssetCategory {
     id: String,
     name: String,
+}
+
+// Canonical reference to a trading venue, independent of any market-data provider.
+// AST Entity Definition. Provider keys (Stooq venue suffixes, OpenFIGI exchange
+// codes) are resolved by per-provider mappers at the boundary, NOT stored here.
+struct Exchange {
+    code: String,                // ISO 10383 Market Identifier Code (MIC), e.g. "XPAR", "XNAS"
+    label: String,               // human-readable display name, e.g. "Euronext Paris"
 }
 
 // Note on write DTOs: CreateAssetDTO and UpdateAssetDTO carry `category_id: String`
@@ -112,7 +122,7 @@ struct AssetLookupResult {
     reference: Option<String>,       // absent for keyword results with no ticker (WEB-046)
     currency: Option<String>,        // absent when OpenFIGI returns no currency (WEB-024)
     asset_class: Option<AssetClass>, // absent when securityType unrecognised (WEB-023)
-    exchange: Option<String>,        // human-readable market name from exchCode; absent when OpenFIGI returns none (WEB-049)
+    exchange: Option<Exchange>,      // canonical Exchange resolved via per-provider mapper (WEB-049); absent when the venue is not in the curated set
 }
 ```
 

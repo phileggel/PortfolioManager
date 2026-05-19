@@ -91,9 +91,11 @@ export function SearchPanel({
               const typeLabel = result.asset_class
                 ? formatAssetClass(result.asset_class, t)
                 : t("asset.web_lookup.type_unknown");
-              const secondLine = result.exchange ? `${typeLabel} · ${result.exchange}` : typeLabel;
+              const secondLine = result.exchange
+                ? `${typeLabel} · ${result.exchange.label}`
+                : typeLabel;
               return (
-                <li key={`${result.name}|${result.reference ?? ""}|${result.exchange ?? ""}`}>
+                <li key={`${result.name}|${result.reference ?? ""}|${result.exchange?.code ?? ""}`}>
                   <button
                     type="button"
                     aria-label={t("asset.web_lookup.select_result", {

@@ -14,6 +14,7 @@ const mockAsset: Asset = {
   risk_level: 4,
   category: { id: "cat-1", name: "US Stocks" },
   is_archived: false,
+  exchange: null,
 };
 
 vi.mock("../useAssets", () => ({

@@ -56,6 +56,7 @@ const makeAsset = (overrides: Partial<Asset> = {}): Asset => ({
   category: { id: "cat-1", name: "US Stocks" },
   is_archived: false,
   ...overrides,
+  exchange: null,
 });
 
 describe("useAssets", () => {
@@ -71,8 +72,8 @@ describe("useAssets", () => {
     // without exercising the real gateway path.
     useAppStore.setState({
       assets: [
-        { id: "a1", name: "Apple", is_archived: false },
-        { id: "a2", name: "OldCo", is_archived: true },
+        { id: "a1", name: "Apple", is_archived: false, exchange: null },
+        { id: "a2", name: "OldCo", is_archived: true, exchange: null },
       ] as Asset[],
       isLoadingAssets: false,
       assetsError: null,
@@ -104,6 +105,7 @@ describe("useAssets", () => {
       currency: "USD",
       risk_level: 4,
       reference: "AAPL",
+      exchange: null,
     };
     await act(async () => {
       ret = await result.current.addAsset(dto);
@@ -132,6 +134,7 @@ describe("useAssets", () => {
       currency: "USD",
       risk_level: 4,
       reference: "AAPL",
+      exchange: null,
     };
     await act(async () => {
       ret = await result.current.addAsset(dto);
@@ -154,6 +157,7 @@ describe("useAssets", () => {
       currency: "USD",
       risk_level: 4,
       reference: "AAPL",
+      exchange: null,
     };
     let ret: { data: Asset | null; error: string | null } = {
       data: null,
@@ -182,6 +186,7 @@ describe("useAssets", () => {
       currency: "USD",
       risk_level: 4,
       reference: "AAPL",
+      exchange: null,
     };
     let ret: { data: Asset | null; error: string | null } = {
       data: null,

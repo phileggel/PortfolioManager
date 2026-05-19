@@ -11,6 +11,7 @@ const makeAsset = (id: string, reference: string, is_archived = false): Asset =>
   risk_level: 4,
   category: { id: "cat-1", name: "Cat" },
   is_archived,
+  exchange: null,
 });
 
 const assets: Asset[] = [

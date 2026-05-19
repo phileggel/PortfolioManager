@@ -1,5 +1,6 @@
 use super::category::AssetCategory;
 use super::error::AssetDomainError;
+use super::exchange::{self, Exchange};
 use anyhow::Result;
 use async_trait::async_trait;
 use iso_currency::Currency;
@@ -78,10 +79,13 @@ pub struct Asset {
     pub reference: String,
     /// Whether the asset is archived (soft-archived, reversible).
     pub is_archived: bool,
+    /// Optional canonical trading venue (AST-021).
+    pub exchange: Option<Exchange>,
 }
 
 impl Asset {
     /// Creates a new Asset.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         class: AssetClass,
@@ -89,8 +93,9 @@ impl Asset {
         currency: String,
         risk_level: u8,
         reference: String,
+        exchange: Option<Exchange>,
     ) -> StdResult<Self, AssetDomainError> {
-        Self::validate(&name, risk_level, &currency, &reference)?;
+        Self::validate(&name, risk_level, &currency, &reference, exchange.as_ref())?;
 
         let reference = reference.trim().to_uppercase();
 
@@ -103,6 +108,7 @@ impl Asset {
             risk_level,
             reference,
             is_archived: false,
+            exchange,
         })
     }
 
@@ -117,8 +123,9 @@ impl Asset {
         risk_level: u8,
         reference: String,
         is_archived: bool,
+        exchange: Option<Exchange>,
     ) -> StdResult<Self, AssetDomainError> {
-        Self::validate(&name, risk_level, &currency, &reference)?;
+        Self::validate(&name, risk_level, &currency, &reference, exchange.as_ref())?;
 
         let reference = reference.trim().to_uppercase();
 
@@ -131,6 +138,7 @@ impl Asset {
             risk_level,
             reference,
             is_archived,
+            exchange,
         })
     }
 
@@ -139,6 +147,7 @@ impl Asset {
         risk_level: u8,
         currency: &str,
         reference: &str,
+        exchange: Option<&Exchange>,
     ) -> StdResult<(), AssetDomainError> {
         if name.trim().is_empty() {
             return Err(AssetDomainError::NameEmpty);
@@ -156,6 +165,13 @@ impl Asset {
                 currency: currency.to_string(),
             });
         }
+        if let Some(exchange) = exchange {
+            if exchange::lookup(&exchange.code).is_none() {
+                return Err(AssetDomainError::InvalidExchange {
+                    exchange_code: exchange.code.clone(),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -170,6 +186,7 @@ impl Asset {
         risk_level: u8,
         reference: String,
         is_archived: bool,
+        exchange: Option<Exchange>,
     ) -> Self {
         Self {
             id: asset_id,
@@ -180,6 +197,7 @@ impl Asset {
             risk_level,
             reference,
             is_archived,
+            exchange,
         }
     }
 
@@ -222,10 +240,11 @@ impl Asset {
         currency: String,
         risk_level: u8,
         reference: String,
+        exchange: Option<Exchange>,
     ) -> Result<Self, AssetDomainError> {
         self.ensure_user_managed()?;
         self.ensure_not_archived()?;
-        Self::validate(&name, risk_level, &currency, &reference)?;
+        Self::validate(&name, risk_level, &currency, &reference, exchange.as_ref())?;
         let reference = reference.trim().to_uppercase();
         Ok(Self {
             id: self.id,
@@ -236,6 +255,7 @@ impl Asset {
             risk_level,
             reference,
             is_archived: self.is_archived,
+            exchange,
         })
     }
 
@@ -274,6 +294,7 @@ mod aggregate_tests {
             3,
             "AAPL".to_string(),
             archived,
+            None,
         )
     }
 
@@ -287,6 +308,7 @@ mod aggregate_tests {
             1,
             "USD".to_string(),
             false,
+            None,
         )
     }
 
@@ -301,6 +323,7 @@ mod aggregate_tests {
                 "USD".into(),
                 3,
                 "AAPL".into(),
+                None,
             )
             .unwrap_err();
         assert!(matches!(err, AssetDomainError::CashAssetNotEditable));
@@ -317,6 +340,7 @@ mod aggregate_tests {
                 "USD".into(),
                 3,
                 "AAPL".into(),
+                None,
             )
             .unwrap_err();
         assert!(matches!(err, AssetDomainError::Archived));
@@ -333,6 +357,7 @@ mod aggregate_tests {
                 "USD".into(),
                 3,
                 "AAPL".into(),
+                None,
             )
             .unwrap_err();
         assert!(matches!(err, AssetDomainError::NameEmpty));
@@ -390,6 +415,7 @@ mod aggregate_tests {
                 "EUR".into(),
                 2,
                 "MSFT".into(),
+                None,
             )
             .unwrap();
         assert_eq!(updated.id, "a1");
@@ -413,6 +439,7 @@ mod aggregate_tests {
                 "USD".into(),
                 3,
                 "  msft  ".into(),
+                None,
             )
             .unwrap();
         assert_eq!(updated.reference, "MSFT");
@@ -431,6 +458,7 @@ mod aggregate_tests {
             1,
             "USD".into(),
             true,
+            None,
         );
         let err = archived_cash
             .update_from(
@@ -440,6 +468,7 @@ mod aggregate_tests {
                 "USD".into(),
                 3,
                 "AAPL".into(),
+                None,
             )
             .unwrap_err();
         assert!(matches!(err, AssetDomainError::CashAssetNotEditable));
@@ -471,6 +500,190 @@ mod aggregate_tests {
         assert_eq!(after.currency, before.currency);
         assert_eq!(after.risk_level, before.risk_level);
         assert_eq!(after.reference, before.reference);
+    }
+}
+
+#[cfg(test)]
+mod exchange_tests {
+    use super::super::exchange::Exchange;
+    use super::*;
+
+    /// Constructs a canonical exchange value for use in tests.
+    fn xpar() -> Exchange {
+        super::super::exchange::lookup("XPAR").expect("XPAR must be in the curated set")
+    }
+
+    /// Constructs a non-canonical exchange value for use in tests (AST-001 rejection path).
+    fn bogus_exchange() -> Exchange {
+        Exchange {
+            code: "BOGUS".to_string(),
+            label: "Bogus Exchange".to_string(),
+        }
+    }
+
+    fn equity_with_exchange(id: &str, exchange: Option<Exchange>) -> Asset {
+        Asset::restore(
+            id.to_string(),
+            "Apple".to_string(),
+            AssetClass::Stocks,
+            AssetCategory::default(),
+            "USD".to_string(),
+            3,
+            "AAPL".to_string(),
+            false,
+            exchange,
+        )
+    }
+
+    // Asset::restore round-trips exchange = None
+    #[test]
+    fn restore_accepts_exchange_none() {
+        let asset = equity_with_exchange("a1", None);
+        assert!(asset.exchange.is_none());
+    }
+
+    // Asset::restore round-trips exchange = Some(canonical)
+    #[test]
+    fn restore_accepts_canonical_exchange() {
+        let asset = equity_with_exchange("a1", Some(xpar()));
+        let exchange = asset.exchange.expect("exchange should be Some");
+        assert_eq!(exchange.code, "XPAR");
+    }
+
+    // Asset::new accepts exchange = None (AST-001 — absent is always valid)
+    #[test]
+    fn new_accepts_no_exchange() {
+        let result = Asset::new(
+            "Apple".to_string(),
+            AssetClass::Stocks,
+            AssetCategory::default(),
+            "USD".to_string(),
+            3,
+            "AAPL".to_string(),
+            None,
+        );
+        assert!(result.is_ok());
+        assert!(result.unwrap().exchange.is_none());
+    }
+
+    // Asset::new accepts exchange = Some(canonical) (AST-001 — curated membership passes)
+    #[test]
+    fn new_accepts_canonical_exchange() {
+        let result = Asset::new(
+            "Air Liquide".to_string(),
+            AssetClass::Stocks,
+            AssetCategory::default(),
+            "EUR".to_string(),
+            4,
+            "AI".to_string(),
+            Some(xpar()),
+        );
+        assert!(result.is_ok());
+        let asset = result.unwrap();
+        let exchange = asset.exchange.expect("exchange should be Some");
+        assert_eq!(exchange.code, "XPAR");
+    }
+
+    // Asset::new rejects exchange = Some(non-curated) with InvalidExchange (AST-001)
+    #[test]
+    fn new_rejects_non_curated_exchange() {
+        let err = Asset::new(
+            "Some Asset".to_string(),
+            AssetClass::Stocks,
+            AssetCategory::default(),
+            "USD".to_string(),
+            3,
+            "REF".to_string(),
+            Some(bogus_exchange()),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, AssetDomainError::InvalidExchange { exchange_code } if exchange_code == "BOGUS"),
+            "expected InvalidExchange {{ code: \"BOGUS\" }}, got: {err:?}"
+        );
+    }
+
+    // update_from accepts exchange = None → no exchange after update (AST-022 clear)
+    #[test]
+    fn update_from_clears_exchange_when_none_passed() {
+        let asset = equity_with_exchange("a1", Some(xpar()));
+        let updated = asset
+            .update_from(
+                "Apple".to_string(),
+                AssetClass::Stocks,
+                AssetCategory::default(),
+                "USD".to_string(),
+                3,
+                "AAPL".to_string(),
+                None,
+            )
+            .unwrap();
+        assert!(updated.exchange.is_none());
+    }
+
+    // update_from accepts exchange = Some(canonical) when currently None (AST-022 set)
+    #[test]
+    fn update_from_sets_exchange_when_previously_none() {
+        let asset = equity_with_exchange("a1", None);
+        let updated = asset
+            .update_from(
+                "Air Liquide".to_string(),
+                AssetClass::Stocks,
+                AssetCategory::default(),
+                "EUR".to_string(),
+                4,
+                "AI".to_string(),
+                Some(xpar()),
+            )
+            .unwrap();
+        let exchange = updated
+            .exchange
+            .expect("exchange should be Some after update");
+        assert_eq!(exchange.code, "XPAR");
+    }
+
+    // update_from changes exchange from one canonical value to another (AST-022 change)
+    #[test]
+    fn update_from_changes_exchange_to_different_canonical_value() {
+        let initial =
+            super::super::exchange::lookup("XNAS").expect("XNAS must be in the curated set");
+        let asset = equity_with_exchange("a1", Some(initial));
+        let updated = asset
+            .update_from(
+                "Air Liquide".to_string(),
+                AssetClass::Stocks,
+                AssetCategory::default(),
+                "EUR".to_string(),
+                4,
+                "AI".to_string(),
+                Some(xpar()),
+            )
+            .unwrap();
+        let exchange = updated
+            .exchange
+            .expect("exchange should be Some after update");
+        assert_eq!(exchange.code, "XPAR");
+    }
+
+    // update_from rejects non-curated exchange with InvalidExchange (AST-001)
+    #[test]
+    fn update_from_rejects_non_curated_exchange() {
+        let asset = equity_with_exchange("a1", None);
+        let err = asset
+            .update_from(
+                "Some Asset".to_string(),
+                AssetClass::Stocks,
+                AssetCategory::default(),
+                "USD".to_string(),
+                3,
+                "REF".to_string(),
+                Some(bogus_exchange()),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&err, AssetDomainError::InvalidExchange { exchange_code } if exchange_code == "BOGUS"),
+            "expected InvalidExchange {{ code: \"BOGUS\" }}, got: {err:?}"
+        );
     }
 }
 

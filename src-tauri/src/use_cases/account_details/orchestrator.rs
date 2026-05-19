@@ -374,6 +374,7 @@ mod tests {
                 currency: "USD".to_string(),
                 risk_level: 3,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -418,6 +419,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -469,6 +471,7 @@ mod tests {
                 currency: "USD".to_string(),
                 risk_level: 2,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -543,6 +546,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -589,6 +593,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -636,6 +641,7 @@ mod tests {
                 currency: "USD".to_string(),
                 risk_level: 3,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -682,6 +688,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -727,6 +734,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -772,6 +780,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -810,6 +819,7 @@ mod tests {
                     currency: "EUR".to_string(),
                     risk_level: 1,
                     category_id: SYSTEM_CATEGORY_ID.to_string(),
+                    exchange: None,
                 })
                 .await
                 .unwrap();
@@ -863,6 +873,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -890,6 +901,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -970,6 +982,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -1015,6 +1028,7 @@ mod tests {
                 currency: "EUR".to_string(), // same as account
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -1065,6 +1079,7 @@ mod tests {
                 currency: "USD".to_string(), // differs from account EUR
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -1116,6 +1131,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -1157,6 +1173,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -1207,6 +1224,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -1257,6 +1275,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -1329,6 +1348,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -1360,6 +1380,7 @@ mod tests {
                 currency: "USD".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -1416,6 +1437,7 @@ mod tests {
                     currency: "USD".to_string(),
                     risk_level: 2,
                     category_id: SYSTEM_CATEGORY_ID.to_string(),
+                    exchange: None,
                 })
                 .await
                 .unwrap();
@@ -1474,6 +1496,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -1609,6 +1632,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();
@@ -1650,6 +1674,7 @@ mod tests {
                 currency: "EUR".to_string(),
                 risk_level: 1,
                 category_id: SYSTEM_CATEGORY_ID.to_string(),
+                exchange: None,
             })
             .await
             .unwrap();

@@ -52,20 +52,29 @@ OpenFIGI's no-API-key tier caps `/v3/search` at 5 requests/minute. Today every 4
 
 Surfaced 2026-05-16 during a manual test session (`api.openfigi.com 429 Too Many Requests`).
 
-## (asset) — Amend MKT spec: add explicit `stooq_symbol` field on Asset
+## (asset) — Add `exchange` field on Asset (anti-corruption mapped from FIGI / to Stooq)
 
-Auto-fetch shipped (MKT-100..MKT-142 across PRs #29, #30, and the E2E + closure PR). The `derive_stooq_symbol` helper currently lowercases the asset's `reference` field, which works for US tickers (`AAPL` → `aapl`) but fails for Euronext / LSE / Frankfurt listings where Stooq expects a suffix (e.g. `ai.fr` for Air Liquide on Paris, `bmw.de` for BMW on Frankfurt). N/D responses degrade silently per MKT-114, so non-US assets quietly never get a price.
+Auto-fetch shipped (MKT-100..MKT-142 across PRs #29, #30, #31). The `derive_stooq_symbol` helper currently lowercases the asset's `reference` field, which works for US tickers but fails for Euronext / LSE / Frankfurt listings where Stooq expects a venue suffix (e.g. `ai.fr` for Air Liquide on Paris, `bmw.de` for BMW on Frankfurt). N/D responses degrade silently per MKT-114, so non-US assets quietly never get a price. The root cause is that `Asset` does not carry the venue it trades on — the spec acknowledges this gap on asset.md line 9. Web-lookup already captures `exchange` on `AssetLookupResult` but discards it at persist time.
 
-**Proposed shape**:
+**Shape (ports-and-adapters)**:
 
-- New nullable `stooq_symbol: Option<String>` column on `Asset` (migration)
-- Add/Edit Asset form gains an optional "Stooq symbol" field with a help link / examples
-- `derive_stooq_symbol` prefers `asset.stooq_symbol` when set, falls back to current behaviour
-- Spec amendment to MKT-110 covering the user-provided symbol; UL entry for "Stooq symbol"
+- New domain value object `Exchange { code: String /* ISO 10383 MIC */, label: String }` — canonical list, no provider fields
+- Optional `Asset.exchange: Option<Exchange>` field (nullable column)
+- Two pure mapper modules in the asset BC infrastructure:
+  - `openfigi_exchange_mapper::openfigi_mic_to_exchange(mic) -> Option<Exchange>` — inbound (web lookup)
+  - `stooq_exchange_mapper::exchange_to_stooq_suffix(exchange) -> Option<&str>` — outbound (price fetch)
+- AST-008 (create) + AST-012 (edit) gain an optional exchange picker over the canonical list
+- WEB-049 extracts OpenFIGI's `micCode` (currently uses human-readable `exchange` string) and maps via `openfigi_mic_to_exchange`
+- MKT-110 derives Stooq symbol from `(reference, exchange)` via `exchange_to_stooq_suffix`; falls back to lowercase `reference` when exchange is missing or unmapped (preserves US happy path for legacy assets)
+- Canonical list = intersection of OpenFIGI's `micCode` coverage and Stooq's venue list (~18–22 venues); confirm in implementation phase
 
-**Why separate from the auto-fetch walk**: shipping the auto-fetch core without this means US-only users still benefit immediately; non-US users get a follow-up patch that improves coverage. Surfaced 2026-05-18 after a manual test against `FR0000120073` (Air Liquide ISIN — Stooq returned all-N/D) and `ai.fr` (Stooq returned real price).
+**Why decoupled from any provider**: Exchange is a domain concept. OpenFIGI's `micCode` happening to match ISO 10383 MIC is accidental convergence — we still go through a mapper. This keeps the model usable for KEY/Finnhub or any future provider without entity churn.
 
-Workflow-A: `/spec-writer market-price` (amend MKT-110) → `spec-reviewer` → `/contract` refresh → `feature-planner` → implementation.
+**Why this replaces the previous `stooq_symbol` proposal**: a user-typed provider-specific override would be a workaround for missing semantic data. Adding `exchange` as a first-class field captures the real meaning and is reusable across providers.
+
+Surfaced 2026-05-18 after a manual test against `FR0000120073` (Air Liquide) where Stooq returned all-N/D.
+
+Workflow-A: amend AST + WEB + MKT specs → `spec-reviewer` → `/contract` refresh → `feature-planner` → implementation.
 
 ## (spec) — Write KEY spec (User API Key Management)
 

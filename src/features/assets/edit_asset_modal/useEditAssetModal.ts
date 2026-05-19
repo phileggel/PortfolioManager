@@ -73,6 +73,7 @@ export function useEditAssetModal({ asset, onClose }: UseEditAssetModalProps) {
       currency: formData.currency,
       risk_level: formData.risk_level,
       category_id: formData.category_id,
+      exchange: asset.exchange,
     });
 
     setIsSubmitting(false);

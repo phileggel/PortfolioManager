@@ -216,7 +216,11 @@ This section adds an automated price-update mechanism that complements the exist
 
 #### Shared behaviors (110–119)
 
-**MKT-110 — Symbol derivation (backend)**: The external provider symbol is derived from `Asset.reference` per ADR-008. When a valid symbol cannot be derived, the asset is skipped per MKT-114.
+**MKT-110 — Symbol derivation (backend)**: The Stooq provider symbol is resolved per ADR-008 with the following precedence:
+
+1. If `Asset.exchange` is set, the symbol is the lowercased `Asset.reference` joined by `.` to the Stooq venue suffix of the exchange (the suffix is produced by a per-provider mapper from the canonical `Exchange`).
+2. If `Asset.exchange` is unset, the symbol is the lowercased `Asset.reference`. This branch preserves the US-ticker happy path and covers legacy assets created before the exchange field existed.
+3. If the mapper returns no suffix for the chosen exchange, or the resolved string is empty, the asset is skipped per MKT-114.
 
 **MKT-111 — Empty-holdings rejection (backend)**: When the task's scope contains no holding asset that is both active (quantity > 0) and has a derivable provider symbol (MKT-110), the fetch task is rejected with a specific error so the frontend can give feedback. No external calls are made. Applies to every fetch task path (launch MKT-122, global refresh MKT-130, account refresh MKT-132).
 

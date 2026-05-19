@@ -32,6 +32,13 @@ pub enum AssetDomainError {
     /// The asset is a system Cash Asset and cannot be edited, archived, unarchived, or deleted (CSH-016).
     #[error("Cannot edit a system Cash Asset")]
     CashAssetNotEditable,
+    /// The supplied exchange code is not a member of the canonical curated set (AST-001).
+    #[error("Invalid exchange code: {exchange_code}")]
+    InvalidExchange {
+        /// The MIC code the caller supplied. Named `exchange_code` (not `code`) to avoid
+        /// a conflict with the `#[serde(tag = "code")]` discriminant field.
+        exchange_code: String,
+    },
 }
 
 /// Typed errors for asset price value-object validation. Only aggregate-method

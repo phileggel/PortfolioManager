@@ -31,6 +31,7 @@ const makeAsset = (): Asset => ({
   currency: "USD",
   risk_level: 3,
   is_archived: false,
+  exchange: null,
 });
 
 const baseCreateDto: CreateAssetDTO = {
@@ -40,6 +41,7 @@ const baseCreateDto: CreateAssetDTO = {
   currency: "USD",
   risk_level: 3,
   category_id: "cat-1",
+  exchange: null,
 };
 
 const baseUpdateDto: UpdateAssetDTO = {
@@ -50,6 +52,7 @@ const baseUpdateDto: UpdateAssetDTO = {
   currency: "USD",
   risk_level: 3,
   category_id: "cat-1",
+  exchange: null,
 };
 
 describe("asset gateway — CRUD", () => {
@@ -120,7 +123,11 @@ describe("asset gateway — CRUD", () => {
   it("createAsset surfaces CategoryApplicationError NotFound from cross-aggregate lookup", async () => {
     const err: CategoryApplicationError = { code: "NotFound", id: "missing-cat" };
     mockInvoke.mockRejectedValue(err);
-    const result = await assetGateway.createAsset({ ...baseCreateDto, category_id: "missing-cat" });
+    const result = await assetGateway.createAsset({
+      ...baseCreateDto,
+      category_id: "missing-cat",
+      exchange: null,
+    });
     expect(result).toEqual({ status: "error", error: err });
   });
 
@@ -144,7 +151,11 @@ describe("asset gateway — CRUD", () => {
   it("updateAsset surfaces NotFound with asset id payload", async () => {
     const err: AssetApplicationError = { code: "NotFound", id: "missing-id" };
     mockInvoke.mockRejectedValue(err);
-    const result = await assetGateway.updateAsset({ ...baseUpdateDto, asset_id: "missing-id" });
+    const result = await assetGateway.updateAsset({
+      ...baseUpdateDto,
+      asset_id: "missing-id",
+      exchange: null,
+    });
     expect(result).toEqual({ status: "error", error: err });
   });
 
@@ -161,6 +172,7 @@ describe("asset gateway — CRUD", () => {
     const result = await assetGateway.updateAsset({
       ...baseUpdateDto,
       asset_id: "system-cash-eur",
+      exchange: null,
     });
     expect(result).toEqual({ status: "error", error: err });
   });

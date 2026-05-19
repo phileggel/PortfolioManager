@@ -25,6 +25,7 @@ pub fn create_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .typ::<asset::AssetPriceApplicationError>()
         .typ::<asset::AssetPriceError>()
         .typ::<asset::AssetError>()
+        .typ::<asset::Exchange>()
         // ----- account BC -----
         .typ::<account::Account>()
         .typ::<account::UpdateFrequency>()
@@ -64,6 +65,7 @@ pub fn create_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             asset::add_asset,
             asset::update_asset,
             asset::unarchive_asset,
+            asset::get_supported_exchanges,
             asset::get_categories,
             asset::add_category,
             asset::update_category,
