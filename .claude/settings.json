@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git show *)",
+      "Bash(git rev-parse *)",
+      "Bash(bash scripts/branch-files.sh *)",
+      "Bash(bash scripts/branch.sh *)",
+      "Bash(bash scripts/review-path.sh *)",
+      "Bash(just check *)",
+      "Bash(just check-full *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr list *)",
+      "Bash(gh issue view *)",
+      "Bash(gh issue list *)",
+      "Bash(gh run view *)",
+      "Bash(gh run list *)",
+      "Bash(gh repo view *)",
+      "Write(.review/**)"
+    ]
+  }
+}
