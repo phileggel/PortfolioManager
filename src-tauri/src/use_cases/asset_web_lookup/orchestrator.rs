@@ -4,6 +4,7 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use reqwest::StatusCode;
 use serde::Deserialize;
 use std::result::Result as StdResult;
 use std::sync::Arc;
@@ -11,6 +12,14 @@ use std::sync::Arc;
 use super::error::WebLookupApplicationError;
 use super::primary_listing_processor::{self, AssetLookupResult, QueryContext, RawFigiHit};
 use crate::core::logger::BACKEND;
+
+/// Sentinel error raised by `ReqwestOpenFigiClient` when OpenFIGI returns
+/// HTTP 429. Translation closures in `search` / `collect_keyword_hits`
+/// downcast against this type to route to `WebLookupApplicationError::RateLimited`
+/// (WEB-025) instead of the generic `NetworkError`.
+#[derive(Debug, thiserror::Error)]
+#[error("OpenFIGI rate-limit (HTTP 429)")]
+struct RateLimitedError;
 
 // ---------------------------------------------------------------------------
 // OpenFigiClient trait (allows test mocking per B26)
@@ -60,9 +69,9 @@ impl AssetWebLookupUseCase {
     /// listings, so primary venues missing from `/v3/search` (notably Euronext
     /// Paris for European stocks) are surfaced.
     ///
-    /// Any client error is surfaced as `WebLookupApplicationError::NetworkError`
-    /// (WEB-025); the full diagnostic chain is preserved server-side via
-    /// `tracing::warn!` at the translation site.
+    /// Client errors are routed by [`translate_client_error`] (WEB-025): HTTP 429
+    /// → `RateLimited`, everything else → `NetworkError`. The full diagnostic
+    /// chain is preserved server-side via `tracing::warn!`.
     pub async fn search(
         &self,
         query: String,
@@ -79,10 +88,10 @@ impl AssetWebLookupUseCase {
         };
 
         let raw_hits = if is_isin {
-            self.client.map_isin(trimmed).await.map_err(|e| {
-                tracing::warn!(target: BACKEND, query = %trimmed, err = ?e, "search: ISIN lookup failed (WEB-025)");
-                WebLookupApplicationError::NetworkError
-            })?
+            self.client
+                .map_isin(trimmed)
+                .await
+                .map_err(|e| translate_client_error(e, trimmed, "search: ISIN lookup"))?
         } else {
             self.collect_keyword_hits(trimmed).await?
         };
@@ -103,8 +112,7 @@ impl AssetWebLookupUseCase {
         query: &str,
     ) -> StdResult<Vec<RawFigiHit>, WebLookupApplicationError> {
         let initial = self.client.search_keyword(query).await.map_err(|e| {
-            tracing::warn!(target: BACKEND, query = %query, err = ?e, "collect_keyword_hits: search_keyword failed (WEB-025)");
-            WebLookupApplicationError::NetworkError
+            translate_client_error(e, query, "collect_keyword_hits: search_keyword")
         })?;
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let mut share_class_ids: Vec<String> = Vec::new();
@@ -123,8 +131,7 @@ impl AssetWebLookupUseCase {
             .map_share_classes(&share_class_ids)
             .await
             .map_err(|e| {
-                tracing::warn!(target: BACKEND, query = %query, err = ?e, "collect_keyword_hits: map_share_classes failed (WEB-025)");
-                WebLookupApplicationError::NetworkError
+                translate_client_error(e, query, "collect_keyword_hits: map_share_classes")
             })?;
         Ok(enriched.into_iter().flatten().collect())
     }
@@ -203,6 +210,9 @@ impl OpenFigiClient for ReqwestOpenFigiClient {
             .await
             .with_context(|| format!("OpenFIGI ISIN mapping request failed for ISIN: {isin}"))?;
 
+        if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+            return Err(anyhow::Error::from(RateLimitedError));
+        }
         if !resp.status().is_success() {
             anyhow::bail!("OpenFIGI mapping returned {}", resp.status());
         }
@@ -233,6 +243,9 @@ impl OpenFigiClient for ReqwestOpenFigiClient {
             .await
             .context("OpenFIGI keyword search request failed")?;
 
+        if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+            return Err(anyhow::Error::from(RateLimitedError));
+        }
         if !resp.status().is_success() {
             anyhow::bail!("OpenFIGI search returned {}", resp.status());
         }
@@ -262,6 +275,9 @@ impl OpenFigiClient for ReqwestOpenFigiClient {
             .await
             .context("OpenFIGI share-class mapping request failed")?;
 
+        if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+            return Err(anyhow::Error::from(RateLimitedError));
+        }
         if !resp.status().is_success() {
             anyhow::bail!("OpenFIGI share-class mapping returned {}", resp.status());
         }
@@ -293,6 +309,37 @@ fn hit_to_raw(h: OpenFigiHit) -> RawFigiHit {
         mic_code: h.mic_code,
         share_class_figi: h.share_class_figi,
         composite_figi: h.composite_figi,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Application-layer translation
+// ---------------------------------------------------------------------------
+
+/// Routes a client error to the right [`WebLookupApplicationError`] variant
+/// (WEB-025): `RateLimitedError` → `RateLimited` (transient, user-recoverable);
+/// every other error → `NetworkError`. The full diagnostic chain is preserved
+/// server-side via `tracing::warn!`.
+fn translate_client_error(
+    err: anyhow::Error,
+    query: &str,
+    site: &str,
+) -> WebLookupApplicationError {
+    if err.downcast_ref::<RateLimitedError>().is_some() {
+        tracing::warn!(
+            target: BACKEND,
+            query = %query,
+            "{site} rate-limited (WEB-025)",
+        );
+        WebLookupApplicationError::RateLimited
+    } else {
+        tracing::warn!(
+            target: BACKEND,
+            query = %query,
+            err = ?err,
+            "{site} failed (WEB-025)",
+        );
+        WebLookupApplicationError::NetworkError
     }
 }
 
@@ -691,6 +738,66 @@ mod tests {
         let err = uc.search("FR0000120073".to_string()).await.unwrap_err();
         assert!(
             matches!(err, WebLookupApplicationError::NetworkError),
+            "got: {err:?}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // WEB-025 — 429 routes to RateLimited (distinct from NetworkError)
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn map_isin_rate_limit_translates_to_rate_limited() {
+        let mut mock = MockOpenFigiClient::new();
+        mock.expect_map_isin()
+            .times(1)
+            .returning(|_| Err(anyhow::Error::from(RateLimitedError)));
+
+        let uc = AssetWebLookupUseCase::new(Arc::new(mock));
+        let err = uc.search("FR0000120073".to_string()).await.unwrap_err();
+        assert!(
+            matches!(err, WebLookupApplicationError::RateLimited),
+            "got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_keyword_rate_limit_translates_to_rate_limited() {
+        let mut mock = MockOpenFigiClient::new();
+        mock.expect_search_keyword()
+            .times(1)
+            .returning(|_| Err(anyhow::Error::from(RateLimitedError)));
+
+        let uc = AssetWebLookupUseCase::new(Arc::new(mock));
+        let err = uc.search("AAPL".to_string()).await.unwrap_err();
+        assert!(
+            matches!(err, WebLookupApplicationError::RateLimited),
+            "got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_share_classes_rate_limit_translates_to_rate_limited() {
+        let initial = vec![raw_hit(
+            "X",
+            Some("UV"),
+            Some("SC1"),
+            None,
+            None,
+            Some("Common Stock"),
+        )];
+        let mut mock = MockOpenFigiClient::new();
+        mock.expect_search_keyword()
+            .times(1)
+            .returning(move |_| Ok(initial.clone()));
+        mock.expect_map_share_classes()
+            .times(1)
+            .returning(|_| Err(anyhow::Error::from(RateLimitedError)));
+
+        let uc = AssetWebLookupUseCase::new(Arc::new(mock));
+        let err = uc.search("anything".to_string()).await.unwrap_err();
+        assert!(
+            matches!(err, WebLookupApplicationError::RateLimited),
             "got: {err:?}"
         );
     }

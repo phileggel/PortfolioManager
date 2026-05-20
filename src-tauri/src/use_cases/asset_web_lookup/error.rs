@@ -1,12 +1,14 @@
-/// Application-layer errors raised by the asset web-lookup use case.
-///
-/// Single variant — covers all failure modes: network unreachable, connection
-/// timeout, and any non-2xx HTTP status (including rate-limiting responses)
-/// from the OpenFIGI client (WEB-025).
+/// Application-layer errors raised by the asset web-lookup use case (WEB-025).
 #[derive(Debug, thiserror::Error, serde::Serialize, specta::Type, Clone)]
 #[serde(tag = "code")]
 pub enum WebLookupApplicationError {
-    /// All network or HTTP-level failures.
+    /// OpenFIGI returned HTTP 429 Too Many Requests — transient, recoverable
+    /// after a short wait. Surfaced distinctly so the frontend can render
+    /// retry-after-wait copy (WEB-033).
+    #[error("Lookup service rate limit reached — wait a moment and retry")]
+    RateLimited,
+    /// Network unreachable, connection timeout, or any non-2xx HTTP status
+    /// other than 429.
     #[error("Network error while contacting the lookup service")]
     NetworkError,
 }

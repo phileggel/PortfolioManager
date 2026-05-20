@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { AssetLookupResult } from "@/bindings";
+import type { AssetLookupResult, WebLookupApplicationError } from "@/bindings";
 import { assetGateway } from "../gateway";
 
 export type WebLookupSearchState =
@@ -7,7 +7,7 @@ export type WebLookupSearchState =
   | { status: "loading" }
   | { status: "results"; results: AssetLookupResult[] }
   | { status: "empty" }
-  | { status: "error" };
+  | { status: "error"; code: WebLookupApplicationError["code"] };
 
 export interface UseWebLookupSearchReturn {
   query: string;
@@ -25,7 +25,7 @@ export function useWebLookupSearch(): UseWebLookupSearchReturn {
     setState({ status: "loading" });
     const result = await assetGateway.lookupAsset(q);
     if (result.status === "error") {
-      setState({ status: "error" });
+      setState({ status: "error", code: result.error.code });
     } else if (result.data.length === 0) {
       setState({ status: "empty" });
     } else {

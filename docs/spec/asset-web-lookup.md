@@ -50,7 +50,12 @@ A transient value object returned by the OpenFIGI API. Not persisted; used only 
 
 **WEB-024 — Currency passthrough (backend)**: The ISO 4217 currency code returned by OpenFIGI is forwarded unchanged. If OpenFIGI does not return a currency for a result, the `currency` field is absent.
 
-**WEB-025 — Error handling (backend)**: `WebLookupCommandError` has a single variant: `NetworkError`. It covers all failure modes: network unreachable, connection timeout, and any non-2xx HTTP status returned by OpenFIGI (including rate-limiting responses). No partial result list is returned on error. The enum is intentionally closed; rate-limiting is not surfaced as a distinct variant — the client receives `NetworkError` in all failure cases.
+**WEB-025 — Error handling (backend)**: `WebLookupCommandError` has two variants:
+
+- `RateLimited` — OpenFIGI returned `HTTP 429 Too Many Requests`. This is a transient, recoverable condition: the user can wait a short while and retry. Surfaced distinctly so the frontend can display retry-after-wait copy (WEB-033).
+- `NetworkError` — every other failure mode: network unreachable, connection timeout, any other non-2xx HTTP status returned by OpenFIGI.
+
+No partial result list is returned on either error.
 
 ### Search UX (030–039)
 
@@ -60,7 +65,12 @@ A transient value object returned by the OpenFIGI API. Not persisted; used only 
 
 **WEB-032 — Empty results state (frontend)**: When the command returns an empty list, a message indicates no instruments were found. The user can modify the query and search again, or use the "Fill manually" bypass (WEB-013).
 
-**WEB-033 — Error state (frontend)**: When the command returns a `NetworkError`, an inline error message is shown with a retry affordance. The "Fill manually" bypass (WEB-013) remains accessible. No navigation away from the search step occurs on error.
+**WEB-033 — Error state (frontend)**: When the command returns an error, an inline error message is shown with a retry affordance. Copy is per-variant:
+
+- `RateLimited` (WEB-025): "Too many searches. Please wait a minute and try again." — same Retry affordance; the user is expected to wait briefly before retrying.
+- `NetworkError` (WEB-025): generic "Could not reach the lookup service. Try again or fill manually." — same Retry affordance.
+
+In both cases the "Fill manually" bypass (WEB-013) remains accessible. No navigation away from the search step occurs on error.
 
 ### Selection and Pre-fill (040–049)
 
