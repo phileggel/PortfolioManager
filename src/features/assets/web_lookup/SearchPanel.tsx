@@ -73,7 +73,11 @@ export function SearchPanel({
 
         {state.status === "error" && (
           <div role="alert" className="flex flex-col gap-2">
-            <p className="text-sm text-m3-error">{t("asset.web_lookup.error_network")}</p>
+            <p className="text-sm text-m3-error">
+              {state.code === "RateLimited"
+                ? t("asset.web_lookup.error_rate_limit")
+                : t("asset.web_lookup.error_network")}
+            </p>
             <Button
               variant="outline"
               size="sm"

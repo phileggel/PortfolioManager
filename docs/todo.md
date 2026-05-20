@@ -38,20 +38,6 @@ Surfaced 2026-05-17 during `/contract market-price`.
 
 Surfaced 2026-05-17 during `/contract market-price` triage. Spec amendment to MKT-114 (or a new MKT-117+) will be needed.
 
-## (asset) — Surface OpenFIGI 429 (rate-limit) distinctly in web lookup
-
-OpenFIGI's no-API-key tier caps `/v3/search` at 5 requests/minute. Today every 429 maps to `WebLookupApplicationError::NetworkError` → opaque "Network error while contacting the lookup service" — the user has no idea they just need to wait. Manifests as a fragile-feeling search UX during testing/iteration.
-
-**Minimal fix (~1h, Workflow B)**:
-
-- New `WebLookupApplicationError::RateLimited` variant
-- Parse status in `search_keyword` / `map_isin` / `map_share_classes` (orchestrator.rs ReqwestOpenFigiClient impl) — branch on `resp.status() == StatusCode::TOO_MANY_REQUESTS` before the generic non-2xx bail
-- Map to i18n key (e.g. `webLookup.errors.rateLimited`) with copy "Too many searches. Please wait a minute and try again."
-
-**Better long-term fix (subsumes this)**: implement the KEY spec (per ADR-011) so users can paste an optional free OpenFIGI API key → lifts the limit ~20× (5 → 100 req/min on search). Tracked separately as "(spec) — Write KEY spec".
-
-Surfaced 2026-05-16 during a manual test session (`api.openfigi.com 429 Too Many Requests`).
-
 ## (spec) — Write KEY spec (User API Key Management)
 
 ADR-011 captures the BYOK + OS keychain + 3-tier fallback decision. The spec to write — trigram `KEY` — covers the Tauri command surface, state machine, Connections settings panel UX, link-out to provider signup, "test connection" probe, and the Linux-without-keyring detection + UX flow.

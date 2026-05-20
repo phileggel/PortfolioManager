@@ -11,8 +11,9 @@ use super::primary_listing_processor::AssetLookupResult;
 ///
 /// Routing is transparent to the caller: 12-char alphanumeric queries are sent
 /// to the ISIN mapping endpoint; all others to the keyword search endpoint
-/// (WEB-014). Network or HTTP failures surface as
-/// `WebLookupApplicationError::NetworkError` (WEB-025).
+/// (WEB-014). HTTP 429 surfaces as `WebLookupApplicationError::RateLimited`;
+/// every other failure surfaces as `WebLookupApplicationError::NetworkError`
+/// (WEB-025).
 #[tauri::command]
 #[specta::specta]
 pub async fn lookup_asset(

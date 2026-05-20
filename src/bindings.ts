@@ -1893,15 +1893,18 @@ export type UpdateInfo = {
  */
 version: string }
 /**
- * Application-layer errors raised by the asset web-lookup use case.
- * 
- * Single variant — covers all failure modes: network unreachable, connection
- * timeout, and any non-2xx HTTP status (including rate-limiting responses)
- * from the OpenFIGI client (WEB-025).
+ * Application-layer errors raised by the asset web-lookup use case (WEB-025).
  */
 export type WebLookupApplicationError = 
 /**
- * All network or HTTP-level failures.
+ * OpenFIGI returned HTTP 429 Too Many Requests — transient, recoverable
+ * after a short wait. Surfaced distinctly so the frontend can render
+ * retry-after-wait copy (WEB-033).
+ */
+{ code: "RateLimited" } | 
+/**
+ * Network unreachable, connection timeout, or any non-2xx HTTP status
+ * other than 429.
  */
 { code: "NetworkError" }
 /**

@@ -63,14 +63,14 @@ describe("SearchPanel — status states", () => {
     expect(screen.getByText("asset.web_lookup.no_results")).toBeInTheDocument();
   });
 
-  // WEB-033 — error state shows inline error message and retry button
-  it("shows error message and retry button in error state", () => {
+  // WEB-033 — NetworkError state shows the generic network copy
+  it("shows network error message and retry button when state.code is NetworkError", () => {
     const retry = vi.fn();
     render(
       <SearchPanel
         query=""
         setQuery={noop}
-        state={{ status: "error" }}
+        state={{ status: "error", code: "NetworkError" }}
         submit={noop}
         retry={retry}
         onSelect={noop}
@@ -79,6 +79,7 @@ describe("SearchPanel — status states", () => {
     );
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("asset.web_lookup.error_network")).toBeInTheDocument();
+    expect(screen.queryByText("asset.web_lookup.error_rate_limit")).not.toBeInTheDocument();
     const retryBtn = screen.getByRole("button", {
       name: "asset.web_lookup.action_retry",
     });
@@ -223,11 +224,33 @@ describe("SearchPanel — fill manually bypass (WEB-013)", () => {
   });
 
   it("fill manually button is visible even in error state", () => {
-    renderPanel({ status: "error" });
+    renderPanel({ status: "error", code: "NetworkError" });
     expect(
       screen.getByRole("button", {
         name: "asset.web_lookup.action_fill_manually",
       }),
+    ).toBeInTheDocument();
+  });
+
+  // WEB-033 — RateLimited state shows the wait-and-retry copy (not the generic network copy)
+  it("shows rate-limit copy when state.code is RateLimited", () => {
+    const retry = vi.fn();
+    render(
+      <SearchPanel
+        query=""
+        setQuery={noop}
+        state={{ status: "error", code: "RateLimited" }}
+        submit={noop}
+        retry={retry}
+        onSelect={noop}
+        onFillManually={noop}
+      />,
+    );
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("asset.web_lookup.error_rate_limit")).toBeInTheDocument();
+    expect(screen.queryByText("asset.web_lookup.error_network")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "asset.web_lookup.action_retry" }),
     ).toBeInTheDocument();
   });
 });
