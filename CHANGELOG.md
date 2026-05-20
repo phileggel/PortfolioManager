@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-05-20
+
+### Added
+
+- exchange picker in Add/Edit forms + i18n
+  Picker is feature-scoped Zustand cache, session-static — curated list
+  loads once via gateway on first mount. Boyscout: modals now `t()` the
+  error string so InvalidExchange (and pre-existing variants) display.
+- add Exchange value object + BE wiring
+  Exchange is a first-class domain field, decoupled from any web provider.
+  Inbound `openfigi_mic_to_exchange` and outbound `exchange_to_stooq_suffix`
+  mappers form the anti-corruption layer; providers stay swappable.
+- MKT auto-fetch frontend UI + settings toggle (#30)
+- MKT auto-fetch backend (Stooq) + source field (#29)
+- surface primary listing per share class
+  OpenFIGI's keyword search never returns the primary venue for a name
+  search; it floods results with OTC and trade-reporting duplicates of the
+  same share class. Adds a second /v3/mapping call to recover the primary
+  listing, and isolates the opinionated venue-priority and exchange-name
+  tables in a dedicated processor module for auditability.
+
+### Fixed
+
+- surface OpenFIGI 429 as typed RateLimited error
+  Reversed WEB-025's "intentionally closed" decision: 429 deserved
+  distinct user-facing copy ("wait and retry") instead of the opaque
+  generic network error that hid the actual fix from the user.
+- honour Asset.exchange in Stooq symbol derivation
+  The price-fetch orchestrator was still calling the bare-ticker helper,
+  so the picker had no production effect for non-US assets. Wired to
+  derive_stooq_symbol_with_exchange + integration test guards the path.
+- small fixes bundle (CVE + domain hardening) (#25)
+- add error.DatabaseError key for new gold infra wire shape
+  Frontend reviewer caught the missing key. Without it, the new
+  { code: "DatabaseError" } wire shape from PR 6's Category CRUD
+  migration would have rendered the raw key string to users on any DB
+  failure. Surgical fix tied directly to the wire-shape change.
+- preserve typed AccountNotFound in ensure_cash_for
+  PR 3 routed buy/sell/correct/cancel through ensure_cash_for_typed,
+  which opaqued every error to Infrastructure(Unknown) — including the
+  in-account AccountNotFound that buy_holding etc. previously surfaced
+  as typed AccountNotFound { account_id }. Promote ensure_cash_for to
+  typed Result; opaque only true cross-BC asset-side failures.
+
 ## [0.11.0] - 2026-05-08
 
 ### Added
